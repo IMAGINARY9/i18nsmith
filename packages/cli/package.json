@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "CLI for i18nsmith",
   "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "i18nsmith": "./dist/index.js"
   },
