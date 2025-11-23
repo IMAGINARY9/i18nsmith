@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter \"@i18nsmith/*\" build",
+    "pretest": "pnpm -w -r build",
     "test": "pnpm --filter \"@i18nsmith/*\" test",
     "lint": "pnpm lint --workspaces",
     "external:transform": "node ./scripts/run-external-transform.mjs"
