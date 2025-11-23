@@ -103,6 +103,12 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   Default run performs dry-run (prints plan). `--write` applies file edits + locale updates.
 *   Output summarises: files rewritten, keys added, duplicates skipped, locale files touched. Future enhancement: prompt per candidate/file.
 
+**Progress notes (2025-11-23):**
+- ✅ Reusable `KeyGenerator` now produces slug+hash keys for auditability.
+- ✅ `LocaleStore` introduced with atomic writes and placeholder seeding across locales.
+- ✅ `@i18nsmith/transformer` package implements React writer, plus vitest coverage.
+- ✅ CLI `transform` command (dry-run by default, `--write` to apply) wired end-to-end.
+
 ## Phase 3: State Management & Sync (Weeks 9-10)
 **Objective:** Handle updates, deletions, and synchronization between code and JSON locale files.
 

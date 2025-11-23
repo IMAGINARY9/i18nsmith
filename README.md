@@ -25,8 +25,17 @@ pnpm -w build
 4. Run CLI (from repo root):
 
 ```bash
-pnpm --filter "@i18nsmith/cli" run build
-node packages/cli/dist/index.js init
+pnpm --filter "@i18nsmith/cli" build
+node packages/cli/dist/index.js scan --json
+node packages/cli/dist/index.js transform --write
 ```
 
-See `ARCHITECTURE.md` and `implementation-plan.md` for details.
+## Features so far
+
+- **Scanner** – detects JSX text/attribute/expression candidates with configurability.
+- **Transformer** – injects `useTranslation` bindings, rewrites JSX, and updates locale JSON with deterministic keys.
+- **Locale Store** – writes locale files atomically and seeds placeholders for target languages.
+- **CLI commands** – `init`, `scan`, and the new `transform` (dry-run by default, `--write` to apply changes).
+- **Tests** – vitest suites for scanner, key generation, locale store, and transformer workflows.
+
+See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.

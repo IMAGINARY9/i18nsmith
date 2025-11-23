@@ -61,7 +61,14 @@ export class KeyGenerator {
     const digest = this.createDigest(normalized, context);
     const hash = this.allocateHash(digest, normalized);
     const scopeSlug = this.buildScopeSlug(context.filePath, context.context);
-    const keySegments = [this.namespace, 'auto', scopeSlug, hash].filter(Boolean) as string[];
+    const textSlug = this.buildTextSlug(normalized);
+    const keySegments = [
+      this.namespace,
+      'auto',
+      scopeSlug,
+      textSlug,
+      hash,
+    ].filter(Boolean) as string[];
     const key = keySegments.join('.');
 
     const generated: GeneratedKey = {
@@ -108,5 +115,19 @@ export class KeyGenerator {
     }
 
     return fileSlug ?? contextSlug ?? undefined;
+  }
+
+  private buildTextSlug(text: string): string | undefined {
+    const slug = slugify(text);
+    if (!slug) {
+      return undefined;
+    }
+
+    const parts = slug.split('-').filter(Boolean).slice(0, 4);
+    if (parts.length === 0) {
+      return undefined;
+    }
+
+    return parts.join('-');
   }
 }
