@@ -1,5 +1,14 @@
 import fs from 'fs/promises';
 
+type PrettierModule = {
+  resolveConfig(filePath: string): Promise<Record<string, unknown> | null>;
+  format(content: string, options: Record<string, unknown>): Promise<string> | string;
+};
+
+type PrettierLoader = () => Promise<PrettierModule>;
+
+const defaultLoader: PrettierLoader = () => import('prettier');
+
 function isModuleNotFound(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
@@ -14,9 +23,9 @@ function isModuleNotFound(error: unknown): boolean {
   return message.includes("Cannot find module 'prettier'");
 }
 
-export async function formatFileWithPrettier(filePath: string) {
+export async function formatFileWithPrettier(filePath: string, loadPrettier: PrettierLoader = defaultLoader) {
   try {
-    const prettier = await import('prettier');
+    const prettier = await loadPrettier();
     const fileContent = await fs.readFile(filePath, 'utf8');
     const config = await prettier.resolveConfig(filePath).catch(() => null);
     const formatted = await prettier.format(fileContent, {
