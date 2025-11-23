@@ -21,6 +21,7 @@ import {
   ensureUseTranslationImport,
   findNearestFunctionScope,
 } from './react-adapter.js';
+import { formatFileWithPrettier } from './formatting.js';
 import {
   CandidateStatus,
   FileTransformRecord,
@@ -106,7 +107,10 @@ export class Transformer {
       }
 
       await Promise.all(
-        Array.from(filesChanged.values()).map((file) => file.save())
+        Array.from(filesChanged.values()).map(async (file) => {
+          await file.save();
+          await formatFileWithPrettier(file.getFilePath());
+        })
       );
     }
 
