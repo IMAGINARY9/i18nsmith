@@ -23,3 +23,10 @@ pnpm-debug.log*
 
 # macOS
 *.DS_Store
+
+# Local external testing folders (do not commit local projects or artifacts)
+external-projects/
+.local-i18n/
+.local-testing/
+tmp-transformer-*
+*.local-transform-*

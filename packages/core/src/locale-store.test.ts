@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocaleStore } from './locale-store';
 
 let tempDir: string;
@@ -60,5 +60,52 @@ describe('LocaleStore', () => {
     const file = path.join(tempDir, 'en.json');
     const contents = JSON.parse(await fs.readFile(file, 'utf8'));
     expect(contents.key).toBe('v2');
+  });
+
+  it('retries rename on transient filesystem errors and removes temp files', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'key', 'value');
+
+    const originalRename = fs.rename;
+    const renameSpy = vi.spyOn(fs, 'rename');
+    let attempts = 0;
+    renameSpy.mockImplementation(async (...args: Parameters<typeof originalRename>) => {
+      attempts += 1;
+      if (attempts === 1) {
+        const err = new Error('exists') as NodeJS.ErrnoException;
+        err.code = 'EEXIST';
+        throw err;
+      }
+      return originalRename(...args);
+    });
+
+    const stats = await store.flush();
+
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    expect(stats[0].added).toEqual(['key']);
+
+    const diskFiles = await fs.readdir(tempDir);
+    expect(diskFiles.some((name) => name.endsWith('.tmp'))).toBe(false);
+
+    renameSpy.mockRestore();
+  });
+
+  it('cleans up temp files when rename ultimately fails', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'key', 'value');
+
+    const renameSpy = vi.spyOn(fs, 'rename').mockImplementation(async () => {
+      const err = new Error('boom') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    });
+
+    await expect(store.flush()).rejects.toThrow('boom');
+
+    const files = await fs.readdir(tempDir);
+    expect(files.some((name) => name.endsWith('.tmp'))).toBe(false);
+    expect(files.includes('en.json')).toBe(false);
+
+    renameSpy.mockRestore();
   });
 });
