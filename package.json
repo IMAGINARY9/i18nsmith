@@ -1,0 +1,20 @@
+{
+  "name": "i18nsmith-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter \"@i18nsmith/*\" build",
+    "test": "pnpm test --workspaces",
+    "lint": "pnpm lint --workspaces"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^0.34.0",
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0",
+    "@types/node": "^20.0.0",
+    "@types/inquirer": "^9.0.0"
+  }
+}

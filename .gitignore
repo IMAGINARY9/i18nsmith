@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+.env
+.DS_Store
+.vscode/
+.idea/
+
+# pnpm
+.pnpm-store/
+
+# Build outputs
+packages/*/dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env files
+*.local.env
+
+# macOS
+*.DS_Store
