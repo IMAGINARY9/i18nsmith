@@ -31,6 +31,10 @@ describe('LocaleStore', () => {
       'common.auto.app.subtitle.bbbb2222',
       'common.auto.app.title.aaaa1111',
     ]);
+
+    const filesOnDisk = await fs.readdir(tempDir);
+    const tempFiles = filesOnDisk.filter((name) => name.endsWith('.tmp'));
+    expect(tempFiles).toHaveLength(0);
   });
 
   it('tracks updates separately from additions', async () => {
@@ -43,5 +47,18 @@ describe('LocaleStore', () => {
 
     expect(stats[0].added).toHaveLength(0);
     expect(stats[0].updated).toEqual(['key']);
+  });
+
+  it('overwrites existing files using temp rename', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'key', 'v1');
+    await store.flush();
+
+    await store.upsert('en', 'key', 'v2');
+    await store.flush();
+
+    const file = path.join(tempDir, 'en.json');
+    const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+    expect(contents.key).toBe('v2');
   });
 });
