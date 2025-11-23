@@ -18,6 +18,12 @@ export interface ScanCandidate {
   kind: CandidateKind;
   text: string;
   context?: string;
+  /**
+   * Optional fields populated by downstream tooling (e.g., transformer)
+   * to keep key suggestions close to the source candidate.
+   */
+  suggestedKey?: string;
+  hash?: string;
   position: {
     line: number;
     column: number;

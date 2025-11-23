@@ -42,17 +42,66 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 ## Phase 2: The Transformer (Weeks 5-8)
 **Objective:** Safely modify source code to inject i18n keys.
 
-### 2.1. Key Generation
-*   **Strategy:** Start with a simple, deterministic hash of the string content. This ensures stability and deduplication.
-*   **Implementation:** Create a `KeyGenerator` utility within `@i18nsmith/transformer`.
+### 2.0. Architecture Snapshot
+*   **Packages working together**
+  *   `@i18nsmith/core`: still responsible for scanning + shared models. Gains a `KeyGenerator` contract and locale JSON helpers so Phase 3 can reuse them.
+  *   `@i18nsmith/transformer`: consumes scanner output, asks the key generator for IDs, mutates the AST, and flushes locale JSON updates.
+  *   `@i18nsmith/cli`: orchestrates end-to-end (scan → transform) and handles interactive prompts / dry runs.
+*   **Primary data flow**
+  1.  `Scanner.scan()` → `ScanSummary`.
+  2.  `KeyGenerator.generate(text, ctx)` returns `{ key, hash }` for stable deduplication.
+  3.  Transformer maps `ScanCandidate` → `TransformCandidate` (text + key + file + kind).
+  4.  Transformer rewrites files via `ts-morph`, persists updated locale JSON through a deterministic `LocaleStore`, and hands back a `TransformSummary` (changed files, new keys, skipped items).
 
-### 2.2. AST Transformer (The "Writer")
-*   **Import Injection:** Check if a `t` function is imported; if not, add a placeholder import.
-*   **Hook Injection:** For React/Vue, identify the component body and insert a `const { t } = useTranslation()` hook.
+### 2.1. Key Generation
+*   **Strategy:** Deterministic hash of normalized text + optional component context, yielding predictable keys.
+*   **Implementation:** Create a reusable `KeyGenerator` in `@i18nsmith/core` so both scanner (for previews) and transformer can agree on keys.
+*   **Contract:**
+  ```ts
+  interface KeyGenerationContext {
+    filePath: string;
+    kind: CandidateKind;
+    context?: string;
+  }
+  interface GeneratedKey { key: string; hash: string; preview: string; }
+  interface KeyGenerator {
+    generate(text: string, ctx: KeyGenerationContext): GeneratedKey;
+  }
+  ```
+*   **Collision handling:** keep a per-run map `<hash -> key>`; if a duplicate text appears, reuse the existing key and mark the candidate as deduplicated.
+
+### 2.2. Locale Store (JSON manager pulled forward)
+*   Build a helper inside `@i18nsmith/core` (reused by Phase 3) to load/update `<localesDir>/<locale>.json` with sorted keys.
+*   Responsibilities: lazy loading, ensuring files exist, deterministic ordering, and tracking `{ added: string[]; existing: string[] }` for reports.
+
+### 2.3. Candidate Enrichment
+*   Extend `ScanCandidate` downstream with `suggestedKey`, `hash`, and `status`.
+  ```ts
+  type CandidateStatus = 'pending' | 'duplicate' | 'existing';
+  interface TransformCandidate extends ScanCandidate {
+    suggestedKey: string;
+    hash: string;
+    status: CandidateStatus;
+  }
+  ```
+*   Enrichment steps:
+  1.  Run `KeyGenerator.generate` per candidate.
+  2.  Check `LocaleStore` for an existing translation; mark as `existing` and skip mutation.
+  3.  Otherwise leave as `pending` so the transformer replaces text + inserts locale entries.
+
+### 2.4. AST Transformer (The "Writer")
+*   **Import Injection:** Ensure `import { useTranslation } from 'react-i18next';` (configurable later). Provide a small adapter interface for future frameworks.
+*   **Hook Injection:** Locate the closest function component body and insert `const { t } = useTranslation();` if missing.
 *   **Text Replacement:**
-    *   Replace `<div>Hello</div>` with `<div>{t('key_abc123')}</div>`.
-    *   Replace `placeholder="Name"` with `placeholder={t('key_def456')}`.
-*   **Formatting:** Run `prettier` on modified files to ensure code style consistency.
+  *   `<div>Hello</div>` → `<div>{t('auto.abc123')}</div>`.
+  *   `placeholder="Name"` → `placeholder={t('auto.def456')}`.
+*   **Safety rails:** dry-run mode, skip files with syntax errors, and surface conflicts in the summary.
+*   **Formatting:** Run `prettier` (when available) after writes; fall back to `ts-morph` printer.
+
+### 2.5. CLI Workflow
+*   New command: `i18nsmith transform [--write] [--config path] [--json]`.
+*   Default run performs dry-run (prints plan). `--write` applies file edits + locale updates.
+*   Output summarises: files rewritten, keys added, duplicates skipped, locale files touched. Future enhancement: prompt per candidate/file.
 
 ## Phase 3: State Management & Sync (Weeks 9-10)
 **Objective:** Handle updates, deletions, and synchronization between code and JSON locale files.
