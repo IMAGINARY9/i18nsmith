@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import {
   JsxAttribute,
@@ -60,6 +61,10 @@ export class Transformer {
   public async run(runOptions: TransformRunOptions = {}): Promise<TransformSummary> {
     const write = runOptions.write ?? this.defaultWrite;
 
+    if (write) {
+      this.checkDependencies();
+    }
+
     const scanner = new Scanner(this.config, {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
@@ -91,12 +96,10 @@ export class Transformer {
           ensureUseTranslationBinding(scope);
           this.applyCandidate(candidate);
           await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
-          for (const locale of this.targetLocales) {
-            if (locale === this.sourceLocale) {
-              continue;
-            }
-            await this.localeStore.upsert(locale, candidate.suggestedKey, '');
-          }
+          
+          // Skip seeding target locales to avoid creating empty files
+          // for (const locale of this.targetLocales) { ... }
+
           candidate.status = 'applied';
           filesChanged.set(candidate.filePath, sourceFile);
         } catch (error) {
@@ -119,11 +122,32 @@ export class Transformer {
     return {
       filesScanned: summary.filesScanned,
       filesChanged: Array.from(filesChanged.keys()),
-      candidates: enriched,
+      candidates: enriched.map(({ raw, ...rest }) => rest),
       localeStats,
       skippedFiles,
       write,
     };
+  }
+
+  private checkDependencies() {
+    const pkgPath = path.resolve(this.workspaceRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+      return;
+    }
+
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      if (!deps['react-i18next']) {
+        console.warn(
+          '\n⚠️  Warning: "react-i18next" is missing from package.json.\n' +
+          '   The transformed code relies on it. Please install it:\n' +
+          '   npm install react-i18next i18next --save\n'
+        );
+      }
+    } catch (e) {
+      // Ignore errors reading package.json
+    }
   }
 
   private async enrichCandidates(nodes: ScannerNodeCandidate[]): Promise<InternalCandidate[]> {
