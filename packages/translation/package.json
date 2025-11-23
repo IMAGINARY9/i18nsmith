@@ -1,0 +1,15 @@
+{
+  "name": "@i18nsmith/translation",
+  "version": "0.1.0",
+  "description": "Translation adapters for i18nsmith",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@i18nsmith/core": "workspace:*",
+    "axios": "^1.6.0"
+  }
+}

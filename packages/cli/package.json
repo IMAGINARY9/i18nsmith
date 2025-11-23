@@ -1,0 +1,19 @@
+{
+  "name": "@i18nsmith/cli",
+  "version": "0.1.0",
+  "description": "CLI for i18nsmith",
+  "main": "dist/index.js",
+  "bin": {
+    "i18nsmith": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@i18nsmith/core": "workspace:*",
+    "commander": "^11.0.0",
+    "inquirer": "^9.0.0",
+    "chalk": "^5.0.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@i18nsmith/core",
+  "version": "0.1.0",
+  "description": "Core logic for i18nsmith: AST scanning and key management",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "ts-morph": "^21.0.0"
+  }
+}
