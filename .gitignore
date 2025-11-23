@@ -12,6 +12,10 @@ dist/
 # Build outputs
 packages/*/dist/
 
+# TypeScript incremental build files
+*.tsbuildinfo
+packages/*/*.tsbuildinfo
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
