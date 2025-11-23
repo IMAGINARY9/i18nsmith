@@ -64,7 +64,20 @@ export class LocaleStore {
       await fs.mkdir(path.dirname(entry.path), { recursive: true });
       const sortedData = this.sortKeys(entry.data);
       const serialized = JSON.stringify(sortedData, null, 2);
-      await fs.writeFile(entry.path, `${serialized}\n`, 'utf8');
+      const tempPath = `${entry.path}.tmp`;
+      await fs.writeFile(tempPath, `${serialized}\n`, 'utf8');
+
+      try {
+        await fs.rename(tempPath, entry.path);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EEXIST') {
+          await fs.rm(entry.path, { force: true });
+          await fs.rename(tempPath, entry.path);
+        } else {
+          throw error;
+        }
+      }
 
       entry.dirty = false;
 
@@ -97,7 +110,7 @@ export class LocaleStore {
 
     try {
       const contents = await fs.readFile(filePath, 'utf8');
-      data = JSON.parse(contents);
+  data = JSON.parse(contents);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error;

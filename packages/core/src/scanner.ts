@@ -35,10 +35,25 @@ export interface ScanSummary {
   candidates: ScanCandidate[];
 }
 
+export interface ScannerNodeCandidate extends ScanCandidate {
+  node: Node;
+  sourceFile: SourceFile;
+}
+
+export interface DetailedScanSummary extends ScanSummary {
+  detailedCandidates: ScannerNodeCandidate[];
+}
+
 export interface ScannerOptions {
   workspaceRoot?: string;
   project?: Project;
 }
+
+export interface ScanExecutionOptions {
+  collectNodes?: boolean;
+}
+
+type CandidateRecorder = (candidate: ScanCandidate, node: Node, file: SourceFile) => void;
 
 const TRANSLATABLE_ATTRIBUTES = new Set([
   'alt',
@@ -65,7 +80,10 @@ export class Scanner {
     });
   }
 
-  public scan(): ScanSummary {
+  public scan(): ScanSummary;
+  public scan(options: ScanExecutionOptions & { collectNodes: true }): DetailedScanSummary;
+  public scan(options?: ScanExecutionOptions): ScanSummary | DetailedScanSummary {
+    const collectNodes = options?.collectNodes ?? false;
     const patterns = this.getGlobPatterns();
     let files = this.project.getSourceFiles();
 
@@ -74,48 +92,69 @@ export class Scanner {
     }
 
     const candidates: ScanCandidate[] = [];
+    const detailedCandidates: ScannerNodeCandidate[] = [];
+
+    const record: CandidateRecorder = (candidate, node, file) => {
+      candidates.push(candidate);
+      if (collectNodes) {
+        detailedCandidates.push({
+          ...candidate,
+          node,
+          sourceFile: file,
+        });
+      }
+    };
 
     for (const file of files) {
       file.forEachDescendant((node) => {
         if (Node.isJsxText(node)) {
-          this.captureJsxText(node, file, candidates);
+          this.captureJsxText(node, file, record);
           return;
         }
 
         if (Node.isJsxAttribute(node)) {
-          this.captureJsxAttribute(node, file, candidates);
+          this.captureJsxAttribute(node, file, record);
           return;
         }
 
         if (Node.isJsxExpression(node)) {
-          this.captureJsxExpression(node, file, candidates);
+          this.captureJsxExpression(node, file, record);
         }
       });
     }
 
-    return {
+    const summary: ScanSummary = {
       filesScanned: files.length,
       candidates,
     };
+
+    if (collectNodes) {
+      return {
+        ...summary,
+        detailedCandidates,
+      };
+    }
+
+    return summary;
   }
 
-  private captureJsxText(node: JsxText, file: SourceFile, bucket: ScanCandidate[]) {
+  private captureJsxText(node: JsxText, file: SourceFile, record: CandidateRecorder) {
     const text = this.normalizeText(node.getText());
     if (!text) {
       return;
     }
 
-    bucket.push(this.createCandidate({
+    record(this.createCandidate({
       node,
       file,
       kind: 'jsx-text',
       text,
       context: this.getJsxContext(node),
-    }));
+    }), node, file);
   }
 
-  private captureJsxAttribute(node: JsxAttribute, file: SourceFile, bucket: ScanCandidate[]) {
-  const attributeName = node.getNameNode().getText();
+  private captureJsxAttribute(node: JsxAttribute, file: SourceFile, record: CandidateRecorder) {
+    const attributeName = node.getNameNode().getText();
     if (!TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
       return;
     }
@@ -141,16 +180,16 @@ export class Scanner {
       return;
     }
 
-    bucket.push(this.createCandidate({
+    record(this.createCandidate({
       node,
       file,
       kind: 'jsx-attribute',
       text,
       context: `${attributeName} attribute`,
-    }));
+    }), node, file);
   }
 
-  private captureJsxExpression(node: JsxExpression, file: SourceFile, bucket: ScanCandidate[]) {
+  private captureJsxExpression(node: JsxExpression, file: SourceFile, record: CandidateRecorder) {
     const expression = node.getExpression();
     if (!expression || !Node.isStringLiteral(expression)) {
       return;
@@ -161,13 +200,13 @@ export class Scanner {
       return;
     }
 
-    bucket.push(this.createCandidate({
+    record(this.createCandidate({
       node,
       file,
       kind: 'jsx-expression',
       text,
       context: this.getJsxContext(node),
-    }));
+    }), node, file);
   }
 
   private createCandidate(params: {

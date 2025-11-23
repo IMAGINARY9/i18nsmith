@@ -2,6 +2,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { Scanner, ScanCandidate } from '@i18nsmith/core';
+import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInitCommand } from './commands/init.js';
 import { loadConfig } from './utils/config.js';
 
@@ -72,6 +73,80 @@ function printCandidateTable(candidates: ScanCandidate[]) {
 
   if (candidates.length > 50) {
     console.log(chalk.gray(`Showing first 50 of ${candidates.length} candidates.`));
+  }
+}
+
+program
+  .command('transform')
+  .description('Scan project and apply i18n transformations')
+  .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+  .option('--json', 'Print raw JSON results', false)
+  .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .action(async (options: ScanOptions & { write?: boolean }) => {
+    console.log(
+      chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
+    );
+
+    try {
+      const config = await loadConfig(options.config);
+      const transformer = new Transformer(config);
+      const summary = await transformer.run({ write: options.write });
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+
+      printTransformSummary(summary);
+
+      if (!options.write && summary.candidates.some((candidate) => candidate.status === 'pending')) {
+        console.log(chalk.yellow('Run again with --write to apply these changes.'));
+      }
+    } catch (error) {
+      console.error(chalk.red('Transform failed:'), (error as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+function printTransformSummary(summary: TransformSummary) {
+  console.log(
+    chalk.green(
+      `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'}; ` +
+        `${summary.candidates.length} candidate${summary.candidates.length === 1 ? '' : 's'} processed.`
+    )
+  );
+
+  const preview = summary.candidates.slice(0, 50).map((candidate) => ({
+    File: candidate.filePath,
+    Line: candidate.position.line,
+    Kind: candidate.kind,
+    Status: candidate.status,
+    Key: candidate.suggestedKey,
+    Preview:
+      candidate.text.length > 40
+        ? `${candidate.text.slice(0, 37)}...`
+        : candidate.text,
+  }));
+
+  console.table(preview);
+
+  if (summary.filesChanged.length) {
+    console.log(chalk.blue(`Files changed (${summary.filesChanged.length}):`));
+    summary.filesChanged.forEach((file) => console.log(`  • ${file}`));
+  }
+
+  if (summary.localeStats.length) {
+    console.log(chalk.blue('Locale updates:'));
+    summary.localeStats.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated (total ${stat.totalKeys})`
+      );
+    });
+  }
+
+  if (summary.skippedFiles.length) {
+    console.log(chalk.yellow('Skipped items:'));
+    summary.skippedFiles.forEach((item) => console.log(`  • ${item.filePath}: ${item.reason}`));
   }
 }
 
