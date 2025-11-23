@@ -45,7 +45,7 @@ export class KeyGenerator {
 
   constructor(options: KeyGeneratorOptions = {}) {
     this.namespace = options.namespace ?? 'common';
-    this.hashLength = options.hashLength ?? 8;
+    this.hashLength = options.hashLength ?? 6;
   }
 
   public generate(text: string, context: KeyGenerationContext): GeneratedKey {
@@ -64,7 +64,7 @@ export class KeyGenerator {
     const textSlug = this.buildTextSlug(normalized);
     const keySegments = [
       this.namespace,
-      'auto',
+      // 'auto', // Removed to simplify key structure
       scopeSlug,
       textSlug,
       hash,

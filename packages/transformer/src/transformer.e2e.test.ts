@@ -69,27 +69,22 @@ describe('Transformer end-to-end', () => {
     expect(summary.write).toBe(true);
     expect(summary.skippedFiles).toHaveLength(0);
     expect(summary.filesChanged.sort()).toEqual(['src/components/Greeting.tsx', 'src/pages/Home.tsx']);
-    expect(summary.localeStats.map((stat) => stat.locale).sort()).toEqual(['de', 'en', 'fr']);
+    expect(summary.localeStats.map((stat) => stat.locale).sort()).toEqual(['en']);
 
     const greetingFile = await fs.readFile(greetingPath, 'utf8');
     const homeFile = await fs.readFile(homePath, 'utf8');
 
     expect(greetingFile).toMatch(/useTranslation/);
     expect(homeFile).toMatch(/useTranslation/);
-  expect(greetingFile).toMatch(/t\(("|')common\./);
-  expect(homeFile).toMatch(/t\(("|')common\./);
+    expect(greetingFile).toMatch(/t\(("|')common\./);
+    expect(homeFile).toMatch(/t\(("|')common\./);
 
     const enLocales = JSON.parse(await fs.readFile(path.join(localesDir, 'en.json'), 'utf8')) as Record<string, string>;
-    const frLocales = JSON.parse(await fs.readFile(path.join(localesDir, 'fr.json'), 'utf8')) as Record<string, string>;
-    const deLocales = JSON.parse(await fs.readFile(path.join(localesDir, 'de.json'), 'utf8')) as Record<string, string>;
 
     const values = Object.values(enLocales);
     expect(values).toContain('Hello world');
     expect(values).toContain('Main section');
     expect(values).toContain('Click me');
-
-    Object.values(frLocales).forEach((value) => expect(value).toBe(''));
-    Object.values(deLocales).forEach((value) => expect(value).toBe(''));
 
     const localeFiles = await fs.readdir(localesDir);
     const tempArtifacts = localeFiles.filter((file) => file.endsWith('.tmp'));

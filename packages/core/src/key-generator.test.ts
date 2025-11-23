@@ -13,8 +13,8 @@ describe('KeyGenerator', () => {
     const generator = new KeyGenerator({ namespace: 'demo' });
     const result = generator.generate('Hello world', baseContext);
 
-    expect(result.key.startsWith('demo.auto.app.div.')).toBe(true);
-    expect(result.hash).toHaveLength(8);
+    expect(result.key.startsWith('demo.app.div.')).toBe(true);
+    expect(result.hash).toHaveLength(6);
 
     const second = generator.generate('Hello world', baseContext);
     expect(second.key).toBe(result.key);
