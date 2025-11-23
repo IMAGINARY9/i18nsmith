@@ -16,10 +16,28 @@
 *   `init` command created to generate `i18n.config.json`.
 *   **Config Options:** `sourceLanguage`, `targetLanguages`, `localesDir`, `include`, `exclude`, `translation`.
 
+**Progress notes (2025-11-23):**
+- ✅ `init` command implemented in `packages/cli/src/commands/init.ts` and writes `i18n.config.json`.
+- ✅ Config normalization and loader added at `packages/cli/src/utils/config.ts` (supports string/array inputs, sensible defaults, helpful errors).
+
+
 ### 1.3. AST Scanner (The "Reader")
 *   **Library:** `ts-morph`.
 *   **Logic:** A `Scanner` class in `@i18nsmith/core` is responsible for traversing the AST.
 *   **Output:** A structured list of "Candidates" to be processed by the transformer.
+
+**Progress notes (2025-11-23):**
+- ✅ `Scanner` implemented in `packages/core/src/scanner.ts` using `ts-morph`.
+  - Captures JSX text, common translatable JSX attributes (e.g., `placeholder`, `label`, `alt`), and string literals inside JSX expressions.
+  - Produces `ScanSummary` with `ScanCandidate[]` entries that include file, position, normalized text, and context.
+- ✅ CLI `scan` command wired to the scanner in `packages/cli/src/index.ts` and supports `--json` output and `--config` override.
+
+Run notes:
+- Build and run the CLI to scan a project:
+  - `pnpm --filter @i18nsmith/cli build`
+  - `node packages/cli/dist/index.js scan --json`
+
+These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (key generation + transformer).
 
 ## Phase 2: The Transformer (Weeks 5-8)
 **Objective:** Safely modify source code to inject i18n keys.

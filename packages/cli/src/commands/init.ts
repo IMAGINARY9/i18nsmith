@@ -4,6 +4,15 @@ import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 
+interface InitAnswers {
+  sourceLanguage: string;
+  targetLanguages: string;
+  localesDir: string;
+  include: string;
+  exclude: string;
+  service: 'google' | 'deepl' | 'manual';
+}
+
 export function registerInitCommand(program: Command) {
   program
     .command('init')
@@ -11,12 +20,18 @@ export function registerInitCommand(program: Command) {
     .action(async () => {
       console.log(chalk.blue('Initializing i18nsmith configuration...'));
 
-      const answers = await inquirer.prompt([
+      const answers = await inquirer.prompt<InitAnswers>([
         {
           type: 'input',
           name: 'sourceLanguage',
           message: 'What is the source language?',
           default: 'en',
+        },
+        {
+          type: 'input',
+          name: 'targetLanguages',
+          message: 'Which target languages do you need? (comma separated)',
+          default: 'fr',
         },
         {
           type: 'input',
@@ -27,8 +42,14 @@ export function registerInitCommand(program: Command) {
         {
           type: 'input',
           name: 'include',
-          message: 'Which files should be scanned? (glob pattern)',
+          message: 'Which files should be scanned? (comma separated glob patterns)',
           default: 'src/**/*.{ts,tsx,js,jsx}',
+        },
+        {
+          type: 'input',
+          name: 'exclude',
+          message: 'Which files should be excluded? (comma separated glob patterns)',
+          default: 'node_modules/**,**/*.test.*',
         },
         {
           type: 'list',
@@ -39,12 +60,18 @@ export function registerInitCommand(program: Command) {
         },
       ]);
 
+      const parseList = (value: string) =>
+        value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+
       const config = {
         sourceLanguage: answers.sourceLanguage,
-        targetLanguages: [], // User can add these later or we could ask
+        targetLanguages: parseList(answers.targetLanguages),
         localesDir: answers.localesDir,
-        include: [answers.include],
-        exclude: ['node_modules/**'],
+        include: parseList(answers.include),
+        exclude: parseList(answers.exclude),
         translation: {
           service: answers.service,
         },
