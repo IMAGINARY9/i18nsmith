@@ -10,6 +10,7 @@ interface InitAnswers {
   localesDir: string;
   include: string;
   exclude: string;
+  minTextLength: string;
   service: 'google' | 'deepl' | 'manual';
 }
 
@@ -52,6 +53,16 @@ export function registerInitCommand(program: Command) {
           default: 'node_modules/**,**/*.test.*',
         },
         {
+          type: 'input',
+          name: 'minTextLength',
+          message: 'Minimum length for translatable text?',
+          default: '1',
+          validate: (input) => {
+            const num = parseInt(input, 10);
+            return !isNaN(num) && num >= 0 ? true : 'Please enter a non-negative number';
+          },
+        },
+        {
           type: 'list',
           name: 'service',
           message: 'Which translation service do you want to use?',
@@ -72,6 +83,7 @@ export function registerInitCommand(program: Command) {
         localesDir: answers.localesDir,
         include: parseList(answers.include),
         exclude: parseList(answers.exclude),
+        minTextLength: parseInt(answers.minTextLength, 10),
         translation: {
           service: answers.service,
         },

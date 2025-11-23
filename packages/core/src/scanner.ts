@@ -29,6 +29,11 @@ export interface ScanSummary {
   candidates: ScanCandidate[];
 }
 
+export interface ScannerOptions {
+  workspaceRoot?: string;
+  project?: Project;
+}
+
 const TRANSLATABLE_ATTRIBUTES = new Set([
   'alt',
   'aria-label',
@@ -46,17 +51,22 @@ export class Scanner {
   private config: I18nConfig;
   private workspaceRoot: string;
 
-  constructor(config: I18nConfig) {
+  constructor(config: I18nConfig, options: ScannerOptions = {}) {
     this.config = config;
-    this.workspaceRoot = process.cwd();
-    this.project = new Project({
+    this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+    this.project = options.project ?? new Project({
       skipAddingFilesFromTsConfig: true,
     });
   }
 
   public scan(): ScanSummary {
     const patterns = this.getGlobPatterns();
-    const files = this.project.addSourceFilesAtPaths(patterns);
+    let files = this.project.getSourceFiles();
+
+    if (files.length === 0) {
+      files = this.project.addSourceFilesAtPaths(patterns);
+    }
+
     const candidates: ScanCandidate[] = [];
 
     for (const file of files) {
@@ -180,7 +190,16 @@ export class Scanner {
     }
 
     const normalized = raw.replace(/\s+/g, ' ').trim();
-    return normalized.length > 0 ? normalized : undefined;
+    if (normalized.length === 0) {
+      return undefined;
+    }
+
+    const minLength = this.config.minTextLength ?? 1;
+    if (normalized.length < minLength) {
+      return undefined;
+    }
+
+    return normalized;
   }
 
   private getJsxContext(node: Node): string | undefined {

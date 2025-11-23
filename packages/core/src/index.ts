@@ -1,2 +1,2 @@
-export * from './config';
-export * from './scanner';
+export * from './config.js';
+export * from './scanner.js';

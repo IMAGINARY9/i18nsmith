@@ -2,8 +2,8 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { Scanner, ScanCandidate } from '@i18nsmith/core';
-import { registerInitCommand } from './commands/init';
-import { loadConfig } from './utils/config';
+import { registerInitCommand } from './commands/init.js';
+import { loadConfig } from './utils/config.js';
 
 interface ScanOptions {
   config?: string;
