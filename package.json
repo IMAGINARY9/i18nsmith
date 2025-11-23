@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter \"@i18nsmith/*\" build",
-    "test": "pnpm test --workspaces",
+    "test": "pnpm --filter \"@i18nsmith/*\" test",
     "lint": "pnpm lint --workspaces"
   },
   "workspaces": [

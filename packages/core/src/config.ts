@@ -20,6 +20,10 @@ export interface I18nConfig {
    */
   exclude?: string[];
   /**
+   * Minimum length for translatable text (default: 1)
+   */
+  minTextLength?: number;
+  /**
    * Translation service configuration
    */
   translation?: {

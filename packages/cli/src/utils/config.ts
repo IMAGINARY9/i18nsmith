@@ -61,6 +61,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     localesDir: parsed.localesDir ?? 'locales',
     include: ensureArray(parsed.include, DEFAULT_INCLUDE),
     exclude: ensureArray(parsed.exclude, DEFAULT_EXCLUDE),
+    minTextLength: typeof parsed.minTextLength === 'number' && parsed.minTextLength >= 0 ? parsed.minTextLength : 1,
     translation: parsed.translation,
   };
 }

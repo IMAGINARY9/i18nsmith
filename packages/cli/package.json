@@ -2,13 +2,14 @@
   "name": "@i18nsmith/cli",
   "version": "0.1.0",
   "description": "CLI for i18nsmith",
+  "type": "module",
   "main": "dist/index.js",
   "bin": {
     "i18nsmith": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -b",
-    "test": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
     "@i18nsmith/core": "workspace:*",
