@@ -84,7 +84,8 @@ program
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
-  .action(async (options: ScanOptions & { write?: boolean }) => {
+  .option('--check', 'Exit with error code if changes are needed', false)
+  .action(async (options: ScanOptions & { write?: boolean; check?: boolean }) => {
     console.log(
       chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
     );
@@ -100,6 +101,12 @@ program
       }
 
       printTransformSummary(summary);
+
+      if (options.check && summary.candidates.some((candidate) => candidate.status === 'pending')) {
+        console.error(chalk.red('\nCheck failed: Pending translations found. Run with --write to fix.'));
+        process.exitCode = 1;
+        return;
+      }
 
       if (!options.write && summary.candidates.some((candidate) => candidate.status === 'pending')) {
         console.log(chalk.yellow('Run again with --write to apply these changes.'));

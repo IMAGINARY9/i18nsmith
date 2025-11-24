@@ -6,44 +6,69 @@ Quick start
 
 1. Install pnpm (if you don't have it):
 
-```bash
-npm install -g pnpm
-```
+### Scaffold Adapter & Runtime
 
-2. Install dependencies:
+`i18nsmith scaffold-adapter` now offers two guided flows, and the `init` command exposes the same prompts so you can wire everything up in one pass.
 
-```bash
-pnpm install
-```
+#### Custom context (zero dependencies)
 
-3. Build packages:
+Generates a `'use client'` React context (`TranslationProvider` + `useTranslation`) backed by your locale JSON. Ideal when you don't want to add `react-i18next`.
 
 ```bash
-pnpm -w build
-```
-
-4. Run CLI (from repo root):
-
-```bash
-pnpm --filter "@i18nsmith/cli" build
-node packages/cli/dist/index.js scan --json
-node packages/cli/dist/index.js transform --write
-```
-
-## Features so far
-
-- **Scanner** – detects JSX text/attribute/expression candidates with configurability.
-- **Transformer** – injects `useTranslation` bindings, rewrites JSX, and updates locale JSON with deterministic keys.
-- **Locale Store** – writes locale files atomically and seeds placeholders for target languages.
-- **CLI commands** – `init`, `scan`, and the new `transform` (dry-run by default, `--write` to apply changes).
 - **Tests** – vitest suites for scanner, key generation, locale store, and transformer workflows.
-
+2. Initialize `i18next` once (the scaffolded files already do this, but you can also roll your own):
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
 
+```
+
+#### react-i18next runtime
+
+Generates `src/lib/i18n.ts` (initializer) and `src/components/i18n-provider.tsx` (provider that waits for `initI18next()`). Perfect when you want to keep the standard `react-i18next` API but avoid boilerplate bugs like `NO_I18NEXT_INSTANCE`.
+
+```bash
 ## Configuration
 
 Run `i18nsmith init` to generate an `i18n.config.json` file interactively. The config includes all available options:
 
+```
+
+Both flows respect `--locales-dir`, refuse to overwrite existing files unless you confirm `--force`, and warn if `react-i18next` / `i18next` are missing from `package.json`. During `i18nsmith init`, choosing **Custom hook/module** or **react-i18next** surfaces the same scaffolding choices, so your adapter, runtime, and config stay in sync.
+
+Regardless of the path you choose, the transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. If you stick with `react-i18next`, you still need to install the dependencies and initialize them early in your app shell (the scaffolded files already do this for you, but you can roll your own):
+
+1. Install and configure the dependencies:
+
+	 ```bash
+	 pnpm add react-i18next i18next
+	 ```
+
+2. Initialize `i18next` once (for example in `app/providers.tsx`):
+
+	 ```tsx
+	 'use client';
+
+	 import { useEffect } from 'react';
+	 import i18next from 'i18next';
+	 import { initReactI18next } from 'react-i18next';
+	 import en from './locales/en.json';
+
+	 export function I18nsmithProvider({ children }: { children: React.ReactNode }) {
+		 useEffect(() => {
+			 if (!i18next.isInitialized) {
+				 i18next
+					 .use(initReactI18next)
+					 .init({
+						 lng: 'en',
+						 fallbackLng: 'en',
+						 resources: { en: { translation: en } },
+					 })
+					 .catch(console.error);
+			 }
+		 }, []);
+
+		 return children;
+	 }
+	 ```
 ```json
 {
   "sourceLanguage": "en",
@@ -172,3 +197,30 @@ export function useTranslation() {
 ```
 
 Hooking the adapter into config removes the `react-i18next` dependency, which is useful for projects that already ship their own translation layer.
+
+## Quick Start (Zero-Dependency Adapter)
+
+If you don't want to pull in `react-i18next`, the CLI can scaffold a lightweight adapter that works out of the box:
+
+1. Run `i18nsmith init` and choose **Custom hook/module** when prompted for the adapter.
+2. Accept the prompt to **Scaffold a lightweight translation context** (or run `i18nsmith scaffold-adapter --type custom --source-language en --path src/contexts/translation-context.tsx`).
+3. Point the generated `i18n.config.json` at your scaffolded module (the init command does this automatically).
+4. Wrap your app with the generated `TranslationProvider`.
+
+No additional packages are required—the scaffolded file uses React state plus the generated locale JSON.
+
+### Next.js App Router Example
+
+Add the provider to your `app/providers.tsx` (or root layout):
+
+```tsx
+'use client';
+
+import { TranslationProvider } from '@/contexts/translation-context';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+	return <TranslationProvider>{children}</TranslationProvider>;
+}
+```
+
+Because the scaffolded file already includes `'use client'`, the provider is fully compatible with Next.js App Router. The transformer-injected `useTranslation` calls will now read from your context without any external runtime.

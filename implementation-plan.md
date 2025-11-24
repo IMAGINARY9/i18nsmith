@@ -103,11 +103,15 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   Default run performs dry-run (prints plan). `--write` applies file edits + locale updates.
 *   Output summarises: files rewritten, keys added, duplicates skipped, locale files touched. Future enhancement: prompt per candidate/file.
 
-**Progress notes (2025-11-23):**
+**Progress notes (2025-11-23 → 2025-11-24):**
 - ✅ Reusable `KeyGenerator` now produces slug+hash keys for auditability.
 - ✅ `LocaleStore` introduced with atomic writes and placeholder seeding across locales.
 - ✅ `@i18nsmith/transformer` package implements React writer, plus vitest coverage.
 - ✅ CLI `transform` command (dry-run by default, `--write` to apply) wired end-to-end.
+- ✅ Added `--check` mode to `transform` for CI failure on pending changes.
+- ✅ Added `translationAdapter` config (react-i18next or custom hook) and scaffolding.
+- ✅ Implemented `scaffold-adapter` flows: zero-deps context & react-i18next runtime (i18n initializer + provider) to eliminate `NO_I18NEXT_INSTANCE`.
+- ✅ Integrated runtime scaffolding into `init` (automatic prompts + dependency warnings).
 
 ## Phase 3: State Management & Sync (Weeks 9-10)
 **Objective:** Handle updates, deletions, and synchronization between code and JSON locale files.
@@ -120,6 +124,12 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   **Unused Keys:** Implement logic to report keys in `en.json` that are no longer found in the AST.
 *   **Missing Keys:** Report `t('new_key')` calls in code that are missing from `en.json`.
 *   **Sync Command:** Create an `i18nsmith sync` command to auto-fix these issues (prune unused, add missing placeholders).
+
+### 3.3. Backlog / Follow-ups (merged from v2/v3)
+* Auto-detect provider/layout files (e.g. Next.js `app/providers.tsx`) and optionally inject generated `I18nProvider`.
+* Offer `--install-deps` flag to auto-install `react-i18next` & `i18next` when scaffolding runtime.
+* Expose key rename workflow (map old keys to new; update code + locale JSON).
+* Dry-run diff summary for locale JSON (added / updated / unchanged counts before write).
 
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
 **Objective:** Integrate optional, pluggable adapters for translation services.
@@ -155,3 +165,22 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 ### 5.3. VS Code Extension (Future)
 *   Highlight hardcoded strings directly in the editor.
 *   Provide a "Quick Fix" action to run `i18nsmith` on the current file.
+
+### 5.4. Extended Backlog
+* Multi-framework adapters (Vue, Solid, Svelte) via unified hook signature.
+* Optional Prettier integration with user config detection.
+* Performance profiling (cache AST parse results between runs).
+* Telemetry opt-in (anonymous stats: candidate kinds, transformation counts).
+* Locale splitting strategy (namespace sharding for large apps).
+
+## Completed Summary (Phases & Extra Enhancements)
+* Phase 1 foundation (scanner + config + init) ✅
+* Transformer end-to-end (scan → key generation → write) ✅
+* `--write` and `--check` CLI modes ✅
+* Deterministic key generation & locale store with seeding ✅
+* Adapter configuration & scaffolding (custom / react-i18next) ✅
+* Runtime auto-setup integrated into `init` & `scaffold-adapter` ✅
+* Documentation refreshed (README runtime & adapter sections) ✅
+
+## Historical Plans Consolidation
+Implementation plans v2 and v3 have been merged here; their future items now live under Backlog sections. Separate files removed.
