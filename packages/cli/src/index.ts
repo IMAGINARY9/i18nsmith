@@ -3,8 +3,8 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { Scanner, ScanCandidate } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
-import { registerInit } from './commands/init.js';
-import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
+import { registerInit } from './commands/init';
+import { registerScaffoldAdapter } from './commands/scaffold-adapter';
 import { loadConfig } from '@i18nsmith/core';
 
 interface ScanOptions {
