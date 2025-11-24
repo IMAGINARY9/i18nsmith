@@ -40,7 +40,61 @@ node packages/cli/dist/index.js transform --write
 
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
 
-## Translation adapters & runtime setup
+## Configuration
+
+Run `i18nsmith init` to generate an `i18n.config.json` file interactively. The config includes all available options:
+
+```json
+{
+  "sourceLanguage": "en",
+  "targetLanguages": ["fr", "de"],
+  "localesDir": "locales",
+  "include": ["src/**/*.{ts,tsx,js,jsx}"],
+  "exclude": ["node_modules/**", "**/*.test.*"],
+  "minTextLength": 1,
+  "translation": {
+    "service": "manual"
+  },
+  "translationAdapter": {
+    "module": "react-i18next",
+    "hookName": "useTranslation"
+  },
+  "keyGeneration": {
+    "namespace": "common",
+    "shortHashLen": 6
+  },
+  "seedTargetLocales": false
+}
+```
+
+### Configuration Options
+
+- `sourceLanguage`: Source language code (default: "en")
+- `targetLanguages`: Array of target language codes
+- `localesDir`: Directory for locale JSON files (default: "locales")
+- `include`: Glob patterns for files to scan (default: ["src/**/*.{ts,tsx,js,jsx}"])
+- `exclude`: Glob patterns to exclude
+- `minTextLength`: Minimum length for translatable text (default: 1)
+- `translation.service`: Translation service ("google", "deepl", or "manual")
+- `translationAdapter.module`: Module to import the translation hook from (default: "react-i18next")
+- `translationAdapter.hookName`: Name of the hook to import (default: "useTranslation")
+- `keyGeneration.namespace`: Prefix for generated keys (default: "common")
+- `keyGeneration.shortHashLen`: Length of hash suffix (default: 6)
+- `seedTargetLocales`: Whether to create empty entries in target locale files (default: false)
+
+### Scaffold Adapter
+
+When choosing a custom translation adapter during `init`, you can opt to scaffold a lightweight `translation-context.tsx` file. This creates a simple React context provider that implements the `useTranslation` hook interface, eliminating the need for `react-i18next` dependencies.
+
+The scaffolded file will be placed at the path you specify (default: `src/contexts/translation-context.tsx`) and the config will be updated to point to it.
+
+Alternatively, you can run the scaffold command separately:
+
+```bash
+i18nsmith scaffold-adapter --source-language en --path src/contexts/translation-context.tsx
+```
+
+This will create the context file and print the config snippet to update your `i18n.config.json`.
 
 The transformer injects `useTranslation` calls but it does **not** magically boot a translation runtime for you. By default we import `useTranslation` from `react-i18next`, so you must:
 

@@ -3,6 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
+import { scaffoldTranslationContext } from '../utils/scaffold.js';
 
 interface InitAnswers {
   sourceLanguage: string;
@@ -15,6 +16,11 @@ interface InitAnswers {
   adapterPreset: 'react-i18next' | 'custom';
   customAdapterModule?: string;
   customAdapterHook?: string;
+  scaffoldAdapter: boolean;
+  scaffoldAdapterPath?: string;
+  keyNamespace: string;
+  shortHashLen: string;
+  seedTargetLocales: boolean;
 }
 
 export function registerInitCommand(program: Command) {
@@ -96,6 +102,42 @@ export function registerInitCommand(program: Command) {
           when: (answers) => answers.adapterPreset === 'custom',
           default: 'useTranslation',
         },
+        {
+          type: 'confirm',
+          name: 'scaffoldAdapter',
+          message: 'Scaffold a lightweight translation context file?',
+          when: (answers) => answers.adapterPreset === 'custom',
+          default: true,
+        },
+        {
+          type: 'input',
+          name: 'scaffoldAdapterPath',
+          message: 'Path to scaffold the translation context file (relative to project root)',
+          when: (answers) => answers.scaffoldAdapter,
+          default: 'src/contexts/translation-context.tsx',
+        },
+        {
+          type: 'input',
+          name: 'keyNamespace',
+          message: 'Namespace prefix for generated keys',
+          default: 'common',
+        },
+        {
+          type: 'input',
+          name: 'shortHashLen',
+          message: 'Length of short hash suffix for keys',
+          default: '6',
+          validate: (input) => {
+            const num = parseInt(input, 10);
+            return !isNaN(num) && num > 0 ? true : 'Please enter a positive number';
+          },
+        },
+        {
+          type: 'confirm',
+          name: 'seedTargetLocales',
+          message: 'Seed target locale files with empty values?',
+          default: false,
+        },
       ]);
 
       const parseList = (value: string) =>
@@ -127,6 +169,11 @@ export function registerInitCommand(program: Command) {
           module: adapterModule ?? 'react-i18next',
           hookName: adapterHook,
         },
+        keyGeneration: {
+          namespace: answers.keyNamespace,
+          shortHashLen: parseInt(answers.shortHashLen, 10),
+        },
+        seedTargetLocales: answers.seedTargetLocales,
       };
 
       const configPath = path.join(process.cwd(), 'i18n.config.json');
@@ -134,8 +181,14 @@ export function registerInitCommand(program: Command) {
       try {
         await fs.writeFile(configPath, JSON.stringify(config, null, 2));
         console.log(chalk.green(`\nConfiguration created at ${configPath}`));
+
+        if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
+          await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage);
+          console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
+        }
       } catch (error) {
         console.error(chalk.red('Failed to write configuration file:'), error);
       }
     });
 }
+

@@ -10,6 +10,19 @@ export interface TranslationAdapterConfig {
   hookName?: string;
 }
 
+export interface KeyGenerationConfig {
+  /**
+   * Namespace prefix for generated keys (e.g. 'common').
+   * Defaults to 'common'.
+   */
+  namespace?: string;
+  /**
+   * Length of the short hash suffix (e.g. 6).
+   * Defaults to 6.
+   */
+  shortHashLen?: number;
+}
+
 export interface I18nConfig {
   /**
    * Source language of the application (default: 'en')
@@ -47,4 +60,12 @@ export interface I18nConfig {
    * Defaults to importing `useTranslation` from `react-i18next`.
    */
   translationAdapter?: TranslationAdapterConfig;
+  /**
+   * Key generation configuration
+   */
+  keyGeneration?: KeyGenerationConfig;
+  /**
+   * Whether to seed target locale files with empty values (default: false)
+   */
+  seedTargetLocales?: boolean;
 }

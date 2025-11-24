@@ -50,8 +50,8 @@ export class Transformer {
   constructor(private readonly config: I18nConfig, options: TransformerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
   this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
-  const namespace = options.keyNamespace ?? this.configTranslationNamespace();
-  this.keyGenerator = options.keyGenerator ?? new KeyGenerator({ namespace });
+  const namespace = options.keyNamespace ?? this.config.keyGeneration?.namespace ?? 'common';
+  this.keyGenerator = options.keyGenerator ?? new KeyGenerator({ namespace, hashLength: this.config.keyGeneration?.shortHashLen ?? 6 });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
   this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
   this.defaultWrite = options.write ?? false;
@@ -102,8 +102,11 @@ export class Transformer {
           this.applyCandidate(candidate);
           await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
           
-          // Skip seeding target locales to avoid creating empty files
-          // for (const locale of this.targetLocales) { ... }
+          if (this.config.seedTargetLocales) {
+            for (const locale of this.targetLocales) {
+              await this.localeStore.upsert(locale, candidate.suggestedKey, '');
+            }
+          }
 
           candidate.status = 'applied';
           filesChanged.set(candidate.filePath, sourceFile);
@@ -241,11 +244,6 @@ export class Transformer {
     }
 
     throw new Error(`Unsupported candidate kind: ${candidate.kind}`);
-  }
-
-  private configTranslationNamespace(): string {
-    const translation = this.config.translation as { namespace?: string } | undefined;
-    return translation?.namespace ?? 'common';
   }
 
   private normalizeTranslationAdapter(
