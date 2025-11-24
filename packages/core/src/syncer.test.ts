@@ -17,6 +17,14 @@ const baseConfig: I18nConfig = {
   translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
   keyGeneration: { namespace: 'common', shortHashLen: 6 },
   seedTargetLocales: true,
+  sync: {
+    translationIdentifier: 't',
+    validateInterpolations: false,
+    placeholderFormats: ['doubleCurly', 'percentCurly', 'percentSymbol'],
+    emptyValuePolicy: 'warn',
+    emptyValueMarkers: ['todo', 'tbd', 'fixme', 'pending', '???'],
+    dynamicKeyAssumptions: [],
+  },
 };
 
 let tempDir: string;
@@ -103,5 +111,115 @@ export default Component;
       'existing.key': 'Existente',
       'new.key': '',
     });
+  });
+
+  it('reports placeholder mismatches when interpolation validation is enabled', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Greeting.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const Greeting = ({ name }: { name: string }) => {
+  const { t } = useTranslation();
+  return <span>{t('greeting', { name })}</span>;
+};
+
+export default Greeting;
+`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ greeting: 'Hello {{name}}' }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'es.json'),
+      JSON.stringify({ greeting: 'Hola' }, null, 2)
+    );
+
+    const syncer = new Syncer(
+      {
+        ...baseConfig,
+        sync: {
+          ...baseConfig.sync!,
+          validateInterpolations: true,
+        },
+      },
+      { workspaceRoot: tempDir }
+    );
+
+    const summary = await syncer.run();
+
+    expect(summary.validation.interpolations).toBe(true);
+    expect(summary.placeholderIssues).toHaveLength(1);
+    expect(summary.placeholderIssues[0]).toMatchObject({
+      key: 'greeting',
+      locale: 'es',
+      missing: ['name'],
+    });
+  });
+
+  it('flags empty locale values based on policy', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Status.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+export const Status = () => {
+  const { t } = useTranslation();
+  return <p>{t('status.ready')}</p>;
+};
+`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ 'status.ready': 'Ready' }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'es.json'),
+      JSON.stringify({ 'status.ready': '' }, null, 2)
+    );
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ emptyValuePolicy: 'fail' });
+
+    expect(summary.validation.emptyValuePolicy).toBe('fail');
+    expect(summary.emptyValueViolations).toHaveLength(1);
+    expect(summary.emptyValueViolations[0]).toMatchObject({
+      key: 'status.ready',
+      locale: 'es',
+      reason: 'empty',
+    });
+  });
+
+  it('reports dynamic key warnings and honors assumed keys', async () => {
+    const dynamicComponent = [
+      "import { useTranslation } from 'react-i18next';",
+      '',
+      'const Errors = ({ code }: { code: number }) => {',
+      '  const { t } = useTranslation();',
+      '  return <span>{t(`errors.${code}`)}</span>;',
+      '};',
+      '',
+      'export default Errors;',
+      '',
+    ].join('\n');
+
+    await fs.writeFile(path.join(tempDir, 'src', 'Errors.tsx'), dynamicComponent);
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ 'errors.404': 'Not found' }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'es.json'),
+      JSON.stringify({ 'errors.404': 'No encontrado' }, null, 2)
+    );
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ assumedKeys: ['errors.404'] });
+
+    expect(summary.dynamicKeyWarnings).toHaveLength(1);
+    expect(summary.assumedKeys).toContain('errors.404');
+    expect(summary.unusedKeys).toHaveLength(0);
   });
 });

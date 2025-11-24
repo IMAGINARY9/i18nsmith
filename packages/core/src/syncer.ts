@@ -1,7 +1,8 @@
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
-import { I18nConfig } from './config.js';
+import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
+import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 
 export interface TranslationReference {
   key: string;
@@ -29,7 +30,48 @@ export interface SyncSummary {
   unusedKeys: UnusedKeyRecord[];
   localeStats: LocaleFileStats[];
   localePreview: LocaleDiffPreview[];
+  placeholderIssues: PlaceholderIssue[];
+  emptyValueViolations: EmptyValueViolation[];
+  dynamicKeyWarnings: DynamicKeyWarning[];
+  validation: SyncValidationState;
+  assumedKeys: string[];
   write: boolean;
+}
+
+export interface PlaceholderIssue {
+  key: string;
+  locale: string;
+  missing: string[];
+  extra: string[];
+  references: TranslationReference[];
+  sourceValue?: string;
+  targetValue?: string;
+}
+
+export type EmptyValueViolationReason = 'empty' | 'whitespace' | 'placeholder' | 'null';
+
+export interface EmptyValueViolation {
+  key: string;
+  locale: string;
+  value: string | null;
+  reason: EmptyValueViolationReason;
+}
+
+export type DynamicKeyReason = 'template' | 'binary' | 'expression';
+
+export interface DynamicKeyWarning {
+  filePath: string;
+  position: {
+    line: number;
+    column: number;
+  };
+  expression: string;
+  reason: DynamicKeyReason;
+}
+
+export interface SyncValidationState {
+  interpolations: boolean;
+  emptyValuePolicy: EmptyValuePolicy;
 }
 
 export interface LocaleDiffPreview {
@@ -47,6 +89,16 @@ export interface SyncerOptions {
 
 export interface SyncRunOptions {
   write?: boolean;
+  validateInterpolations?: boolean;
+  emptyValuePolicy?: EmptyValuePolicy;
+  assumedKeys?: string[];
+}
+
+interface ResolvedSyncRunOptions {
+  write: boolean;
+  validateInterpolations: boolean;
+  emptyValuePolicy: EmptyValuePolicy;
+  assumedKeys: Set<string>;
 }
 
 export class Syncer {
@@ -56,6 +108,11 @@ export class Syncer {
   private readonly translationIdentifier: string;
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
+  private readonly placeholderPatterns: PlaceholderPatternInstance[];
+  private readonly defaultValidateInterpolations: boolean;
+  private readonly defaultEmptyValuePolicy: EmptyValuePolicy;
+  private readonly emptyValueMarkers: Set<string>;
+  private readonly defaultAssumedKeys: string[];
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -63,18 +120,32 @@ export class Syncer {
       skipAddingFilesFromTsConfig: true,
     });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-  this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
-  this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
+    this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+    const syncOptions = this.config.sync ?? {};
+    const placeholderFormats = syncOptions.placeholderFormats?.length
+      ? syncOptions.placeholderFormats
+      : DEFAULT_PLACEHOLDER_FORMATS;
+    this.placeholderPatterns = buildPlaceholderPatterns(placeholderFormats);
+    this.translationIdentifier = options.translationIdentifier ?? syncOptions.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
+    this.defaultValidateInterpolations = syncOptions.validateInterpolations ?? false;
+    this.defaultEmptyValuePolicy = syncOptions.emptyValuePolicy ?? 'warn';
+    const emptyMarkers = syncOptions.emptyValueMarkers?.length
+      ? syncOptions.emptyValueMarkers
+      : DEFAULT_EMPTY_VALUE_MARKERS;
+    this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
+    this.defaultAssumedKeys = syncOptions.dynamicKeyAssumptions ?? [];
   }
 
   public async run(runOptions: SyncRunOptions = {}): Promise<SyncSummary> {
-    const write = runOptions.write ?? false;
+    const runtime = this.resolveRuntimeOptions(runOptions);
+    const write = runtime.write;
     const files = this.loadFiles();
-    const { references, referencesByKey, keySet } = this.collectReferences(files);
+    const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(files, runtime.assumedKeys);
 
-    const localeKeySets = await this.collectLocaleKeys();
+    const localeData = await this.collectLocaleData();
+    const localeKeySets = this.buildLocaleKeySets(localeData);
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
 
     const localeDiff = new Map<string, { add: Set<string>; remove: Set<string> }>();
@@ -131,6 +202,11 @@ export class Syncer {
       };
     });
 
+    const placeholderIssues = runtime.validateInterpolations
+      ? this.collectPlaceholderIssues(localeData, referencesByKey)
+      : [];
+    const emptyValueViolations = this.collectEmptyValueViolations(localeData);
+
     let localeStats: LocaleFileStats[] = [];
     if (write) {
       await this.applyMissingKeys(missingKeys);
@@ -151,6 +227,14 @@ export class Syncer {
       unusedKeys,
       localeStats,
       localePreview,
+      placeholderIssues,
+      emptyValueViolations,
+      dynamicKeyWarnings,
+      validation: {
+        interpolations: runtime.validateInterpolations,
+        emptyValuePolicy: runtime.emptyValuePolicy,
+      },
+      assumedKeys: Array.from(runtime.assumedKeys).sort(),
       write,
     };
   }
@@ -164,10 +248,11 @@ export class Syncer {
     return files;
   }
 
-  private collectReferences(files: SourceFile[]) {
+  private collectReferences(files: SourceFile[], assumedKeys: Set<string>) {
     const references: TranslationReference[] = [];
     const referencesByKey = new Map<string, TranslationReference[]>();
     const keySet = new Set<string>();
+    const dynamicKeyWarnings: DynamicKeyWarning[] = [];
 
     for (const file of files) {
       file.forEachDescendant((node) => {
@@ -175,25 +260,42 @@ export class Syncer {
           return;
         }
 
-        const key = this.extractKeyFromCall(node);
-        if (!key) {
+        const analysis = this.extractKeyFromCall(node);
+        if (!analysis) {
           return;
         }
 
-        const reference = this.createReference(file, node, key);
-        references.push(reference);
-        keySet.add(key);
-        if (!referencesByKey.has(key)) {
-          referencesByKey.set(key, []);
+        if (analysis.kind === 'dynamic') {
+          dynamicKeyWarnings.push(this.createDynamicWarning(file, node, analysis.reason));
+          return;
         }
-        referencesByKey.get(key)!.push(reference);
+
+        const reference = this.createReference(file, node, analysis.key);
+        references.push(reference);
+        keySet.add(analysis.key);
+        if (!referencesByKey.has(analysis.key)) {
+          referencesByKey.set(analysis.key, []);
+        }
+        referencesByKey.get(analysis.key)!.push(reference);
       });
     }
 
-    return { references, referencesByKey, keySet };
+    for (const key of assumedKeys) {
+      keySet.add(key);
+      if (!referencesByKey.has(key)) {
+        referencesByKey.set(key, []);
+      }
+    }
+
+    return { references, referencesByKey, keySet, dynamicKeyWarnings };
   }
 
-  private extractKeyFromCall(node: CallExpression): string | undefined {
+  private extractKeyFromCall(
+    node: CallExpression
+  ):
+    | { kind: 'literal'; key: string }
+    | { kind: 'dynamic'; reason: DynamicKeyReason }
+    | undefined {
     const callee = node.getExpression();
     if (!Node.isIdentifier(callee) || callee.getText() !== this.translationIdentifier) {
       return undefined;
@@ -205,14 +307,22 @@ export class Syncer {
     }
 
     if (Node.isStringLiteral(arg)) {
-      return arg.getLiteralText();
+      return { kind: 'literal', key: arg.getLiteralText() };
     }
 
     if (Node.isNoSubstitutionTemplateLiteral(arg)) {
-      return arg.getLiteralText();
+      return { kind: 'literal', key: arg.getLiteralText() };
     }
 
-    return undefined;
+    if (Node.isTemplateExpression(arg)) {
+      return { kind: 'dynamic', reason: 'template' };
+    }
+
+    if (Node.isBinaryExpression(arg)) {
+      return { kind: 'dynamic', reason: 'binary' };
+    }
+
+    return { kind: 'dynamic', reason: 'expression' };
   }
 
   private createReference(file: SourceFile, node: CallExpression, key: string): TranslationReference {
@@ -224,16 +334,24 @@ export class Syncer {
     };
   }
 
-  private async collectLocaleKeys(): Promise<Map<string, Set<string>>> {
+  private async collectLocaleData(): Promise<Map<string, Record<string, string>>> {
     const locales = [this.sourceLocale, ...this.targetLocales];
-    const result = new Map<string, Set<string>>();
+    const result = new Map<string, Record<string, string>>();
 
     for (const locale of locales) {
       const data = await this.localeStore.get(locale);
-      result.set(locale, new Set(Object.keys(data)));
+      result.set(locale, data);
     }
 
     return result;
+  }
+
+  private buildLocaleKeySets(localeData: Map<string, Record<string, string>>): Map<string, Set<string>> {
+    const map = new Map<string, Set<string>>();
+    for (const [locale, data] of localeData.entries()) {
+      map.set(locale, new Set(Object.keys(data)));
+    }
+    return map;
   }
 
   private async applyMissingKeys(missingKeys: MissingKeyRecord[]) {
@@ -277,5 +395,139 @@ export class Syncer {
         : path.join(this.workspaceRoot, rawPattern);
       return isNegated ? `!${absolute}` : absolute;
     });
+  }
+
+  private collectPlaceholderIssues(
+    localeData: Map<string, Record<string, string>>,
+    referencesByKey: Map<string, TranslationReference[]>
+  ): PlaceholderIssue[] {
+    const issues: PlaceholderIssue[] = [];
+    const sourceData = localeData.get(this.sourceLocale) ?? {};
+
+    for (const [key, sourceValue] of Object.entries(sourceData)) {
+      const sourcePlaceholders = this.extractPlaceholdersFromValue(sourceValue);
+      const sourceSet = sourcePlaceholders;
+
+      for (const locale of this.targetLocales) {
+        const targetValue = localeData.get(locale)?.[key];
+        if (typeof targetValue === 'undefined') {
+          continue;
+        }
+
+        const targetSet = this.extractPlaceholdersFromValue(targetValue);
+        const missing = Array.from(sourceSet).filter((token) => !targetSet.has(token));
+        const extra = Array.from(targetSet).filter((token) => !sourceSet.has(token));
+
+        if (!missing.length && !extra.length) {
+          continue;
+        }
+
+        issues.push({
+          key,
+          locale,
+          missing,
+          extra,
+          references: referencesByKey.get(key) ?? [],
+          sourceValue,
+          targetValue,
+        });
+      }
+    }
+
+    return issues;
+  }
+
+  private collectEmptyValueViolations(localeData: Map<string, Record<string, string>>): EmptyValueViolation[] {
+    const violations: EmptyValueViolation[] = [];
+
+    for (const locale of this.targetLocales) {
+      const data = localeData.get(locale);
+      if (!data) {
+        continue;
+      }
+
+      for (const [key, value] of Object.entries(data)) {
+        const reason = this.getEmptyValueReason(value);
+        if (!reason) {
+          continue;
+        }
+
+        violations.push({
+          key,
+          locale,
+          value: typeof value === 'string' ? value : null,
+          reason,
+        });
+      }
+    }
+
+    return violations;
+  }
+
+  private getEmptyValueReason(value: unknown): EmptyValueViolationReason | null {
+    if (value === null || typeof value === 'undefined') {
+      return 'null';
+    }
+
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    if (value.length === 0) {
+      return 'empty';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed.length) {
+      return 'whitespace';
+    }
+
+    if (this.emptyValueMarkers.has(trimmed.toLowerCase())) {
+      return 'placeholder';
+    }
+
+    return null;
+  }
+
+  private extractPlaceholdersFromValue(value: unknown): Set<string> {
+    if (typeof value !== 'string') {
+      return new Set();
+    }
+    return new Set(extractPlaceholders(value, this.placeholderPatterns));
+  }
+
+  private resolveRuntimeOptions(runOptions: SyncRunOptions): ResolvedSyncRunOptions {
+    const write = runOptions.write ?? false;
+    const validateInterpolations = runOptions.validateInterpolations ?? this.defaultValidateInterpolations;
+    const emptyValuePolicy = runOptions.emptyValuePolicy ?? this.defaultEmptyValuePolicy;
+
+    const assumedKeys = new Set<string>();
+    const candidates = [...this.defaultAssumedKeys, ...(runOptions.assumedKeys ?? [])];
+    for (const key of candidates) {
+      const normalized = key.trim();
+      if (normalized.length) {
+        assumedKeys.add(normalized);
+      }
+    }
+
+    return {
+      write,
+      validateInterpolations,
+      emptyValuePolicy,
+      assumedKeys,
+    };
+  }
+
+  private createDynamicWarning(file: SourceFile, node: CallExpression, reason: DynamicKeyReason): DynamicKeyWarning {
+    const [arg] = node.getArguments();
+    const position = file.getLineAndColumnAtPos((arg ?? node).getStart());
+    const expression = arg ? arg.getText() : node.getText();
+
+    return {
+      filePath: this.getRelativePath(file.getFilePath()),
+      position,
+      expression,
+      reason,
+    };
   }
 }
