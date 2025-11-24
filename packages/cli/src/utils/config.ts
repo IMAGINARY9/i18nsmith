@@ -69,6 +69,14 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       ? adapter.hookName.trim()
       : 'useTranslation';
 
+  const keyGen = parsed.keyGeneration || {};
+  const keyNamespace = typeof keyGen.namespace === 'string' && keyGen.namespace.trim().length > 0
+    ? keyGen.namespace.trim()
+    : 'common';
+  const shortHashLen = typeof keyGen.shortHashLen === 'number' && keyGen.shortHashLen > 0
+    ? keyGen.shortHashLen
+    : 6;
+
   return {
     sourceLanguage: parsed.sourceLanguage ?? 'en',
     targetLanguages: ensureStringArray(parsed.targetLanguages) ?? [],
@@ -81,5 +89,10 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       module: adapterModule,
       hookName: adapterHook,
     },
+    keyGeneration: {
+      namespace: keyNamespace,
+      shortHashLen,
+    },
+    seedTargetLocales: typeof parsed.seedTargetLocales === 'boolean' ? parsed.seedTargetLocales : false,
   };
 }

@@ -11,6 +11,7 @@ dist/
 
 # Build outputs
 packages/*/dist/
+packages/*/build/
 
 # TypeScript incremental build files
 *.tsbuildinfo
