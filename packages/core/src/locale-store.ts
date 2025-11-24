@@ -8,6 +8,7 @@ export interface LocaleFileStats {
   totalKeys: number;
   added: string[];
   updated: string[];
+  removed: string[];
 }
 
 interface LocaleCacheEntry {
@@ -17,6 +18,7 @@ interface LocaleCacheEntry {
   dirty: boolean;
   added: Set<string>;
   updated: Set<string>;
+  removed: Set<string>;
 }
 
 export class LocaleStore {
@@ -44,6 +46,7 @@ export class LocaleStore {
 
     entry.data[key] = value;
     entry.dirty = true;
+    entry.removed.delete(key);
 
     if (typeof existing === 'undefined') {
       entry.added.add(key);
@@ -52,6 +55,20 @@ export class LocaleStore {
 
     entry.updated.add(key);
     return 'updated';
+  }
+
+  public async remove(locale: string, key: string): Promise<boolean> {
+    const entry = await this.ensureLocale(locale);
+    if (typeof entry.data[key] === 'undefined') {
+      return false;
+    }
+
+    delete entry.data[key];
+    entry.dirty = true;
+    entry.added.delete(key);
+    entry.updated.delete(key);
+    entry.removed.add(key);
+    return true;
   }
 
   public async flush(): Promise<LocaleFileStats[]> {
@@ -90,10 +107,12 @@ export class LocaleStore {
         totalKeys: Object.keys(sortedData).length,
         added: Array.from(entry.added).sort(),
         updated: Array.from(entry.updated).sort(),
+        removed: Array.from(entry.removed).sort(),
       });
 
       entry.added.clear();
       entry.updated.clear();
+      entry.removed.clear();
     }
 
     return summaries;
@@ -127,6 +146,7 @@ export class LocaleStore {
       dirty: false,
       added: new Set(),
       updated: new Set(),
+      removed: new Set(),
     };
 
     this.cache.set(locale, entry);
