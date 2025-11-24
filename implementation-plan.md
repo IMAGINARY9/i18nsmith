@@ -147,6 +147,107 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 - ✅ Introduced `i18nsmith rename-key` powered by a reusable `KeyRenamer` to update code + locale JSON with dry-run previews.
 - ✅ `sync` dry-runs now output per-locale add/remove previews before writing.
 
+### 3.4. Interpolation & Placeholder Validation
+* Objective: Detect and report mismatches in interpolation placeholders between the source locale and target locales.
+* Checks:
+  - Ensure placeholders (e.g., `{{name}}`, `%s`) used in the source string are present in each target translation.
+  - Report missing/extra placeholders per-locale with file/key references.
+* CLI: `i18nsmith sync --validate-interpolations` (dry-run by default; `--write` will not alter translations but can flag for CI failure with `--check`).
+* Acceptance criteria: Tool catches simple interpolation mismatches and produces a machine-friendly JSON output for CI.
+
+### 3.5. Empty / Placeholder Value Detection
+* Objective: Treat empty strings or near-empty translations as missing during checks.
+* Checks:
+  - Flag target locale entries that are `""`, `null`, or contain only whitespace / TODO markers.
+  - Optional severity: warn vs fail. Controlled via `i18n.config.json` (e.g., `sync.emptyValuePolicy: 'warn'|'fail'`).
+* CLI: `i18nsmith sync --no-empty-values` to treat empty values as drift (useful for CI).
+* Acceptance criteria: Empty translations are visible in diffs and can break CI when policy is set to `fail`.
+
+### 3.6. Dynamic Key Handling & Best‑Effort Warnings
+* Objective: Improve handling and feedback for dynamic key usage which cannot be statically resolved.
+* Behavior:
+  - Detect template-literal or concatenated keys (e.g., ``t(`errors.${code}`)``) and emit a concise warning with file/line.
+  - Provide an optional `--assume` flag that accepts a small list of runtime keys (e.g., `--assume errors.404,errors.500`) to treat as present.
+* Acceptance criteria: Developers are informed where keys cannot be tracked and can supply explicit lists for CI.
+
+### 3.7. Batch Rename & Merge Workflows
+* Objective: Support bulk/complex refactors and safe merges across locales.
+* Features:
+  - `i18nsmith rename-keys --map map.json` to run many renames atomically.
+  - Interactive conflict resolution where destination keys already exist: options to merge, skip, or overwrite.
+  - Optional `--strategy merge` that detects identical values and removes duplicates automatically.
+* Acceptance criteria: Bulk renames complete without corrupting locale files and provide a preview of changes.
+
+### 3.8. Interactive Sync Mode
+* Objective: Let maintainers review and accept/reject each pending locale change.
+* Behavior:
+  - `i18nsmith sync --interactive` prompts for each missing/unused key with a short context (file+line+preview) and options: Add / Skip / Postpone / Edit manually.
+  - Useful for small teams that want tight control during cleanup.
+* Acceptance criteria: Interactive flow is non-destructive unless `--confirm` is given and respects git workflows.
+
+### 3.9. Rich Dry‑Run Diffs & Per‑File Locale Patches
+* Objective: Produce compact, git-style diffs for locale files during dry-runs.
+* Features:
+  - `i18nsmith sync --diff` prints a unified diff for each locale file that would change (or emits JSON with `added`, `updated`, `removed` lists).
+  - Optionally write `.patch` files for review or apply via `git apply`.
+* Acceptance criteria: Diff output is easy to review in PRs and can be stored as artifacts in CI.
+
+### 3.10. Performance & Incremental Scanning
+* Objective: Make repeated runs fast for large codebases.
+* Features:
+  - Implement a simple file-based cache keyed by file mtime / checksum to skip re-parsing unchanged files.
+  - Provide `--invalidate-cache` when structural changes occur (e.g., change in `include` globs).
+* Acceptance criteria: Re-run times drop substantially on large repos; cache correctness validated by end-to-end tests.
+
+### 3.11. Provider Injection Robustness
+* Objective: Replace string-probing heuristics with AST-aware injection for framework provider files.
+* Features:
+  - Use `ts-morph` to parse candidate provider/layout files and reliably wrap root children with `I18nProvider` without brittle string replacements.
+  - Provide a `--dry-run` preview of injection changes and explicit fallback instructions when it cannot safely transform the file.
+* Acceptance criteria: Provider injection succeeds in canonical Next.js layouts and refuses to edit ambiguous constructs.
+
+### 3.12. Machine‑Friendly Outputs & CI Integrations
+* Objective: Make `sync` and `rename-key` outputs easy to consume by CI tooling and other automations.
+* Features:
+  - `--json` already exists — extend the schema to include `localePreview`, `diffs` and `actionableItems`.
+  - Provide exit codes for specific classes of problems (e.g., 2 = interpolation mismatch, 3 = empty target values) to simplify automation.
+* Acceptance criteria: CI pipelines can parse command output, break builds on chosen policies, and create issues or PR comments.
+
+These additions map to the real-world cases we reviewed earlier and are prioritized to improve safety first (validation, CI), then developer experience (interactive flows, diffs), then scale/performance.
+
+### 3.13. Existing i18n Detection & Merge Strategy
+* Objective: Detect prior i18n attempts in a repository (existing keys, scaffolded files, custom adapters) and provide safe merge or onboarding flows.
+* Detection heuristics:
+  - Look for `locales` or configured `localesDir` directories and check for JSON bundles (e.g., `en.json`, `fr.json`).
+  - Detect common runtime packages in `package.json` (`react-i18next`, `i18next`, `next-i18next`, `lingui`, etc.).
+  - Scan source files for `useTranslation` imports, custom translation hooks, or manual `t()` usages.
+  - Detect scaffolded runtime files generated by `i18nsmith` (identify by comment marker or export signature) to avoid double-scaffolding.
+* Behaviors & CLI flags:
+  - `i18nsmith diagnose` (new) runs a repository health-check and prints a machine-readable summary of existing i18n artifacts: detected locales, packages, provider files, custom adapters, and potential conflicts.
+  - `i18nsmith init --merge` prompts to merge with existing locales instead of overwriting; shows conflicts and proposed resolution.
+  - `i18nsmith scaffold-adapter --skip-if-detected` avoids scaffolding if a runtime already exists; `--force` overrides.
+* Merge strategies:
+  - `keep-source`: when seeding missing keys, prefer existing source locale values.
+  - `overwrite`: write new placeholders regardless and keep a backup of original files.
+  - `interactive`: prompt per-conflict.
+* Acceptance criteria: Repos with prior i18n work are recognized and not accidentally double-scaffolded; `diagnose` gives clear next steps.
+
+### 3.14. Per‑File Onboarding / New‑Page Integration
+* Objective: Support safely adding a new page/component to an existing project with minimal disruption.
+* Use cases:
+  - Adding a new route or page to a site that already has localized content and providers.
+  - Creating a localized content page where only a subset of locales should be seeded initially.
+* Feature details:
+  - `i18nsmith transform --target <path|glob>` restricts transformation to a specific file or directory (useful when onboarding a single page).
+  - `i18nsmith sync --target <path|glob>` restricts sync analysis to references within the target scope but still checks locale-wide unused keys (so you can preview the impact of the new page).
+  - `i18nsmith scaffold-adapter --for-file <path>` prints minimal integration snippet (import + provider usage example) tailored to the file's relative path and framework (Next.js vs pages dir).
+  - `--seed-locales en,es` allows seeding only a subset of target locales when adding a page.
+* Safety rails:
+  - When operating on a single file, all writes are atomic and the CLI will produce a preflight `.patch` showing AST-level changes to the file and the locale files it will touch.
+  - `--dry-run` is the default for per-file ops.
+* Acceptance criteria: Teams can incrementally add localized pages without risking broad changes or accidentally pruning unrelated keys.
+
+
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
 **Objective:** Integrate optional, pluggable adapters for translation services.
 
