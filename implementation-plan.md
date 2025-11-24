@@ -186,6 +186,9 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
   - Useful for small teams that want tight control during cleanup.
 * Acceptance criteria: Interactive flow is non-destructive unless `--confirm` is given and respects git workflows.
 
+**Progress notes (2025-11-24):**
+- ✅ `sync --interactive` now runs an automatic dry-run, displays the standard drift summary, then launches checkbox prompts so you can pick which missing and unused keys to apply. Selected keys feed back into the Syncer via `selection` filters, so only approved additions/removals are written after a final confirmation step. The flow honors placeholder/empty/dynamic validation flags and refuses to combine with `--json` output to keep prompts clean.
+
 ### 3.9. Rich Dry‑Run Diffs & Per‑File Locale Patches
 * Objective: Produce compact, git-style diffs for locale files during dry-runs.
 * Features:

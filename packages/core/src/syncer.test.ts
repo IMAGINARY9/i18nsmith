@@ -222,4 +222,75 @@ export const Status = () => {
     expect(summary.assumedKeys).toContain('errors.404');
     expect(summary.unusedKeys).toHaveLength(0);
   });
+
+  it('applies selection filters for missing and unused keys', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Selective.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const Selective = () => {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div>{t('existing.key')}</div>
+      <span>{t('new.key')}</span>
+      <span>{t('extra.key')}</span>
+    </>
+  );
+};
+
+export default Selective;
+`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify(
+        {
+          'existing.key': 'Existing Text',
+          'unused.one': 'One',
+          'unused.two': 'Two',
+        },
+        null,
+        2
+      )
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'es.json'),
+      JSON.stringify(
+        {
+          'existing.key': 'Existente',
+          'unused.one': 'Uno',
+          'unused.two': 'Dos',
+        },
+        null,
+        2
+      )
+    );
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    await syncer.run({
+      write: true,
+      selection: {
+        missing: ['new.key'],
+        unused: ['unused.one'],
+      },
+    });
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).toMatchObject({
+      'existing.key': 'Existing Text',
+      'new.key': 'new.key',
+    });
+    expect(enContents).not.toHaveProperty('extra.key');
+    expect(enContents).not.toHaveProperty('unused.one');
+    expect(enContents).toHaveProperty('unused.two');
+
+    const esContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'es.json'), 'utf8'));
+    expect(esContents).toHaveProperty('new.key');
+    expect(esContents).not.toHaveProperty('extra.key');
+    expect(esContents).not.toHaveProperty('unused.one');
+    expect(esContents).toHaveProperty('unused.two');
+  });
 });
