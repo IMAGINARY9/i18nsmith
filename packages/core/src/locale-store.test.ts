@@ -47,6 +47,7 @@ describe('LocaleStore', () => {
 
     expect(stats[0].added).toHaveLength(0);
     expect(stats[0].updated).toEqual(['key']);
+    expect(stats[0].removed).toHaveLength(0);
   });
 
   it('overwrites existing files using temp rename', async () => {
@@ -83,6 +84,7 @@ describe('LocaleStore', () => {
 
     expect(attempts).toBeGreaterThanOrEqual(2);
     expect(stats[0].added).toEqual(['key']);
+    expect(stats[0].removed).toHaveLength(0);
 
     const diskFiles = await fs.readdir(tempDir);
     expect(diskFiles.some((name) => name.endsWith('.tmp'))).toBe(false);
@@ -107,5 +109,23 @@ describe('LocaleStore', () => {
     expect(files.includes('en.json')).toBe(false);
 
     renameSpy.mockRestore();
+  });
+
+  it('removes keys and reports them in stats', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'hello', 'Hello');
+    await store.upsert('en', 'goodbye', 'Goodbye');
+    await store.flush();
+
+    const removed = await store.remove('en', 'hello');
+    expect(removed).toBe(true);
+    const notRemoved = await store.remove('en', 'missing');
+    expect(notRemoved).toBe(false);
+
+    const stats = await store.flush();
+    expect(stats[0].removed).toEqual(['hello']);
+
+    const contents = JSON.parse(await fs.readFile(path.join(tempDir, 'en.json'), 'utf8'));
+    expect(contents).toEqual({ goodbye: 'Goodbye' });
   });
 });

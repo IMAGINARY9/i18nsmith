@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { Scanner, ScanCandidate } from '@i18nsmith/core';
+import { loadConfig, Scanner, ScanCandidate, SyncSummary, Syncer } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter';
-import { loadConfig } from '@i18nsmith/core';
 
 interface ScanOptions {
   config?: string;
@@ -148,7 +147,7 @@ function printTransformSummary(summary: TransformSummary) {
     console.log(chalk.blue('Locale updates:'));
     summary.localeStats.forEach((stat) => {
       console.log(
-        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated (total ${stat.totalKeys})`
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
       );
     });
   }
@@ -156,6 +155,80 @@ function printTransformSummary(summary: TransformSummary) {
   if (summary.skippedFiles.length) {
     console.log(chalk.yellow('Skipped items:'));
     summary.skippedFiles.forEach((item) => console.log(`  • ${item.filePath}: ${item.reason}`));
+  }
+}
+
+program
+  .command('sync')
+  .description('Detect missing locale keys and prune unused entries')
+  .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+  .option('--json', 'Print raw JSON results', false)
+  .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .action(async (options: ScanOptions & { write?: boolean }) => {
+    console.log(chalk.blue(options.write ? 'Syncing locale files...' : 'Checking locale drift...'));
+
+    try {
+      const config = await loadConfig(options.config);
+      const syncer = new Syncer(config);
+      const summary = await syncer.run({ write: options.write });
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+
+      printSyncSummary(summary);
+
+      if (!options.write && (summary.missingKeys.length || summary.unusedKeys.length)) {
+        console.log(chalk.yellow('Run again with --write to apply fixes.'));
+      }
+    } catch (error) {
+      console.error(chalk.red('Sync failed:'), (error as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+function printSyncSummary(summary: SyncSummary) {
+  console.log(
+    chalk.green(
+      `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'}; ` +
+        `${summary.references.length} translation reference${summary.references.length === 1 ? '' : 's'} found.`
+    )
+  );
+
+  if (summary.missingKeys.length) {
+    console.log(chalk.red('Missing keys:'));
+    summary.missingKeys.slice(0, 50).forEach((item) => {
+      const sample = item.references[0];
+      const location = sample ? `${sample.filePath}:${sample.position.line}` : 'n/a';
+      console.log(`  • ${item.key} (${item.references.length} reference${item.references.length === 1 ? '' : 's'} — e.g., ${location})`);
+    });
+    if (summary.missingKeys.length > 50) {
+      console.log(chalk.gray(`  ...and ${summary.missingKeys.length - 50} more.`));
+    }
+  } else {
+    console.log(chalk.green('No missing keys detected.'));
+  }
+
+  if (summary.unusedKeys.length) {
+    console.log(chalk.yellow('Unused locale keys:'));
+    summary.unusedKeys.slice(0, 50).forEach((item) => {
+      console.log(`  • ${item.key} (${item.locales.join(', ')})`);
+    });
+    if (summary.unusedKeys.length > 50) {
+      console.log(chalk.gray(`  ...and ${summary.unusedKeys.length - 50} more.`));
+    }
+  } else {
+    console.log(chalk.green('No unused locale keys detected.'));
+  }
+
+  if (summary.localeStats.length) {
+    console.log(chalk.blue('Locale file changes:'));
+    summary.localeStats.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
+      );
+    });
   }
 }
 

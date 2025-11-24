@@ -120,6 +120,11 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   Create a utility in `@i18nsmith/core` to read/write locale files.
 *   Ensure deterministic key sorting to prevent unnecessary git diffs.
 
+**Progress notes (2025-11-24):**
+- ✅ LocaleStore now tracks removals alongside additions/updates and exposes a `remove` helper for sync workflows.
+- ✅ `Syncer` introduced in `@i18nsmith/core` to analyze translation hook usage versus locale JSON.
+- ✅ `i18nsmith sync` CLI command (dry-run by default, `--write` to fix) reports missing keys, prunes unused entries, and rewrites locale files atomically.
+
 ### 3.2. Drift Detection (The "Syncer")
 *   **Unused Keys:** Implement logic to report keys in `en.json` that are no longer found in the AST.
 *   **Missing Keys:** Report `t('new_key')` calls in code that are missing from `en.json`.
