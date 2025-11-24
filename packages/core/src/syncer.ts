@@ -1,10 +1,5 @@
 import path from 'path';
-import {
-  CallExpression,
-  Node,
-  Project,
-  SourceFile,
-} from 'ts-morph';
+import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 
@@ -33,7 +28,14 @@ export interface SyncSummary {
   missingKeys: MissingKeyRecord[];
   unusedKeys: UnusedKeyRecord[];
   localeStats: LocaleFileStats[];
+  localePreview: LocaleDiffPreview[];
   write: boolean;
+}
+
+export interface LocaleDiffPreview {
+  locale: string;
+  add: string[];
+  remove: string[];
 }
 
 export interface SyncerOptions {
@@ -61,8 +63,8 @@ export class Syncer {
       skipAddingFilesFromTsConfig: true,
     });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-    this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
-    this.translationIdentifier = options.translationIdentifier ?? 't';
+  this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+  this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
   }
@@ -75,12 +77,37 @@ export class Syncer {
     const localeKeySets = await this.collectLocaleKeys();
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
 
+    const localeDiff = new Map<string, { add: Set<string>; remove: Set<string> }>();
+
+    const previewAdd = (locale: string, key: string) => {
+      if (!localeDiff.has(locale)) {
+        localeDiff.set(locale, { add: new Set(), remove: new Set() });
+      }
+      localeDiff.get(locale)!.add.add(key);
+    };
+
+    const previewRemove = (locale: string, key: string) => {
+      if (!localeDiff.has(locale)) {
+        localeDiff.set(locale, { add: new Set(), remove: new Set() });
+      }
+      localeDiff.get(locale)!.remove.add(key);
+    };
+
     const missingKeys = Array.from(keySet)
       .filter((key) => !sourceLocaleKeys.has(key))
       .map((key) => ({
         key,
         references: referencesByKey.get(key) ?? [],
       }));
+
+    for (const record of missingKeys) {
+      previewAdd(this.sourceLocale, record.key);
+      if (this.config.seedTargetLocales) {
+        for (const locale of this.targetLocales) {
+          previewAdd(locale, record.key);
+        }
+      }
+    }
 
     const unusedKeyMap = new Map<string, Set<string>>();
     for (const [locale, keys] of localeKeySets) {
@@ -95,10 +122,14 @@ export class Syncer {
       }
     }
 
-    const unusedKeys: UnusedKeyRecord[] = Array.from(unusedKeyMap.entries()).map(([key, locales]) => ({
-      key,
-      locales: Array.from(locales).sort(),
-    }));
+    const unusedKeys: UnusedKeyRecord[] = Array.from(unusedKeyMap.entries()).map(([key, locales]) => {
+      const localeList = Array.from(locales).sort();
+      localeList.forEach((locale) => previewRemove(locale, key));
+      return {
+        key,
+        locales: localeList,
+      };
+    });
 
     let localeStats: LocaleFileStats[] = [];
     if (write) {
@@ -107,12 +138,19 @@ export class Syncer {
       localeStats = await this.localeStore.flush();
     }
 
+    const localePreview: LocaleDiffPreview[] = Array.from(localeDiff.entries()).map(([locale, diff]) => ({
+      locale,
+      add: Array.from(diff.add).sort(),
+      remove: Array.from(diff.remove).sort(),
+    }));
+
     return {
       filesScanned: files.length,
       references,
       missingKeys,
       unusedKeys,
       localeStats,
+      localePreview,
       write,
     };
   }

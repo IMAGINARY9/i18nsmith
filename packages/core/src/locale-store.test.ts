@@ -128,4 +128,32 @@ describe('LocaleStore', () => {
     const contents = JSON.parse(await fs.readFile(path.join(tempDir, 'en.json'), 'utf8'));
     expect(contents).toEqual({ goodbye: 'Goodbye' });
   });
+
+  it('renames keys when destination does not exist', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'old.key', 'value');
+    await store.flush();
+
+    const result = await store.renameKey('en', 'old.key', 'new.key');
+    expect(result).toBe('renamed');
+    const stats = await store.flush();
+    expect(stats[0].added).toEqual(['new.key']);
+    expect(stats[0].removed).toEqual(['old.key']);
+    const contents = JSON.parse(await fs.readFile(path.join(tempDir, 'en.json'), 'utf8'));
+    expect(contents).toEqual({ 'new.key': 'value' });
+  });
+
+  it('refuses to rename when destination exists', async () => {
+    const store = new LocaleStore(tempDir);
+    await store.upsert('en', 'old.key', 'value');
+    await store.upsert('en', 'new.key', 'other');
+    await store.flush();
+
+  const result = await store.renameKey('en', 'old.key', 'new.key');
+  expect(result).toBe('duplicate');
+  const stats = await store.flush();
+  expect(stats).toHaveLength(0);
+    const contents = JSON.parse(await fs.readFile(path.join(tempDir, 'en.json'), 'utf8'));
+    expect(contents).toEqual({ 'old.key': 'value', 'new.key': 'other' });
+  });
 });

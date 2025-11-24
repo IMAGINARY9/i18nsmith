@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { loadConfig, Scanner, ScanCandidate, SyncSummary, Syncer } from '@i18nsmith/core';
+import {
+  loadConfig,
+  Scanner,
+  ScanCandidate,
+  SyncSummary,
+  Syncer,
+  KeyRenamer,
+  KeyRenameSummary,
+} from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter';
@@ -164,7 +172,8 @@ program
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
-  .action(async (options: ScanOptions & { write?: boolean }) => {
+  .option('--check', 'Exit with error code if drift detected', false)
+  .action(async (options: ScanOptions & { write?: boolean; check?: boolean }) => {
     console.log(chalk.blue(options.write ? 'Syncing locale files...' : 'Checking locale drift...'));
 
     try {
@@ -178,6 +187,12 @@ program
       }
 
       printSyncSummary(summary);
+
+      if (options.check && (summary.missingKeys.length || summary.unusedKeys.length)) {
+        console.error(chalk.red('\nDrift detected. Run with --write to fix.'));
+        process.exitCode = 1;
+        return;
+      }
 
       if (!options.write && (summary.missingKeys.length || summary.unusedKeys.length)) {
         console.log(chalk.yellow('Run again with --write to apply fixes.'));
@@ -229,6 +244,87 @@ function printSyncSummary(summary: SyncSummary) {
         `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
       );
     });
+  }
+
+  if (!summary.write && summary.localePreview.length) {
+    console.log(chalk.blue('Locale diff preview:'));
+    summary.localePreview.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.add.length} to add, ${stat.remove.length} to remove`
+      );
+    });
+  }
+}
+
+program
+  .command('rename-key')
+  .description('Rename translation keys across source files and locale JSON')
+  .argument('<oldKey>', 'Existing translation key')
+  .argument('<newKey>', 'Replacement translation key')
+  .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+  .option('--json', 'Print raw JSON results', false)
+  .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .action(async (oldKey: string, newKey: string, options: ScanOptions & { write?: boolean }) => {
+    console.log(chalk.blue(options.write ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
+
+    try {
+      const config = await loadConfig(options.config);
+      const renamer = new KeyRenamer(config);
+      const summary = await renamer.rename(oldKey, newKey, { write: options.write });
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+
+      printRenameSummary(summary);
+
+      if (!options.write) {
+        console.log(chalk.yellow('Run again with --write to apply changes.'));
+      }
+    } catch (error) {
+      console.error(chalk.red('Rename failed:'), (error as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+function printRenameSummary(summary: KeyRenameSummary) {
+  console.log(
+    chalk.green(
+      `Updated ${summary.occurrences} occurrence${summary.occurrences === 1 ? '' : 's'} across ${summary.filesUpdated.length} file${summary.filesUpdated.length === 1 ? '' : 's'}.`
+    )
+  );
+
+  if (summary.filesUpdated.length) {
+    console.log(chalk.blue('Files updated:'));
+    summary.filesUpdated.forEach((file) => console.log(`  • ${file}`));
+  }
+
+  if (summary.localeStats.length) {
+    console.log(chalk.blue('Locale updates:'));
+    summary.localeStats.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
+      );
+    });
+  } else if (summary.localePreview.length) {
+    console.log(chalk.blue('Locale impact preview:'));
+    summary.localePreview.forEach((preview) => {
+      const status = preview.missing
+        ? chalk.yellow('missing source key')
+        : preview.duplicate
+        ? chalk.red('destination already exists')
+        : chalk.green('ready');
+      console.log(`  • ${preview.locale}: ${status}`);
+    });
+  }
+
+  if (summary.missingLocales.length) {
+    console.log(
+      chalk.yellow(
+        `Locales missing the original key: ${summary.missingLocales.join(', ')}. Update them manually if needed.`
+      )
+    );
   }
 }
 

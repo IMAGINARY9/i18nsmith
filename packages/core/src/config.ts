@@ -70,6 +70,12 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       : 'useTranslation';
 
   const keyGen = parsed.keyGeneration || {};
+  const syncConfig = parsed.sync || {};
+  const translationIdentifier =
+    typeof syncConfig.translationIdentifier === 'string' && syncConfig.translationIdentifier.trim().length > 0
+      ? syncConfig.translationIdentifier.trim()
+      : 't';
+
   const keyNamespace = typeof keyGen.namespace === 'string' && keyGen.namespace.trim().length > 0
     ? keyGen.namespace.trim()
     : 'common';
@@ -97,6 +103,9 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       shortHashLen,
     },
     seedTargetLocales: typeof parsed.seedTargetLocales === 'boolean' ? parsed.seedTargetLocales : false,
+    sync: {
+      translationIdentifier,
+    },
   };
 
   return normalized;
@@ -178,4 +187,10 @@ export interface I18nConfig {
    * Whether to seed target locale files with empty values (default: false)
    */
   seedTargetLocales?: boolean;
+
+  sync?: SyncConfig;
+}
+
+export interface SyncConfig {
+  translationIdentifier?: string;
 }
