@@ -146,6 +146,7 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 - ✅ Added `--install-deps` flag (with package-manager auto-detection) to provision `react-i18next` / `i18next` while scaffolding.
 - ✅ Introduced `i18nsmith rename-key` powered by a reusable `KeyRenamer` to update code + locale JSON with dry-run previews.
 - ✅ `sync` dry-runs now output per-locale add/remove previews before writing.
+- ✅ Added `i18nsmith rename-keys --map` for atomic batch renames. Supports JSON map files, consolidated previews, duplicate detection, and shared diff summaries across all locales/files.
 
 ### 3.4. Interpolation & Placeholder Validation
 * Objective: Detect and report mismatches in interpolation placeholders between the source locale and target locales.

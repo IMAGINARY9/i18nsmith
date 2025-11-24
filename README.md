@@ -153,3 +153,25 @@ i18nsmith rename-key auth.login.title auth.signin.heading --write
 ```
 
 The command reuses the same AST traversal as `sync`, respects custom translation identifiers, and updates source + seeded locale files in one pass. Dry-runs highlight locales that are missing the original key or already contain the destination so you can reconcile edge cases manually before writing.
+
+### Batch rename multiple keys
+
+For larger refactors, supply a JSON map (either an object or an array of `{ "from": string, "to": string }`) to `i18nsmith rename-keys`:
+
+```jsonc
+// rename-map.json
+[
+	{ "from": "auth.login.title", "to": "auth.signin.title" },
+	{ "from": "profile.greeting", "to": "profile.salutation" }
+]
+```
+
+```bash
+# Dry-run: view per-mapping occurrences, missing locales, and duplicates
+i18nsmith rename-keys --map rename-map.json
+
+# Apply all renames atomically across source files + every locale JSON
+i18nsmith rename-keys --map rename-map.json --write
+```
+
+The batch command reuses the same safety rails as `rename-key`: duplicate destinations are surfaced per-locale, missing source locales are highlighted, and `--write` performs all mutations in a single pass so updates stay in sync across code and locales.
