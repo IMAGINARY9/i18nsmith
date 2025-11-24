@@ -130,11 +130,22 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   **Missing Keys:** Report `t('new_key')` calls in code that are missing from `en.json`.
 *   **Sync Command:** Create an `i18nsmith sync` command to auto-fix these issues (prune unused, add missing placeholders).
 
+**Progress notes (2025-11-24):**
+- ✅ `sync` command now includes `--check` for CI enforcement plus JSON/dry-run previews of pending locale mutations.
+- ✅ `Syncer` respects configurable translation identifiers (`sync.translationIdentifier`) and surfaces locale diff previews even when running without `--write`.
+- ✅ Auto-fixes add placeholders for missing keys (including seeded targets) and prune unused entries across all locales in one pass.
+
 ### 3.3. Backlog / Follow-ups (merged from v2/v3)
 * Auto-detect provider/layout files (e.g. Next.js `app/providers.tsx`) and optionally inject generated `I18nProvider`.
 * Offer `--install-deps` flag to auto-install `react-i18next` & `i18next` when scaffolding runtime.
 * Expose key rename workflow (map old keys to new; update code + locale JSON).
 * Dry-run diff summary for locale JSON (added / updated / unchanged counts before write).
+
+**Progress notes (2025-11-24):**
+- ✅ `scaffold-adapter --type react-i18next` now detects standard Next.js provider files and injects `<I18nProvider>` automatically when safe; otherwise, it logs actionable guidance.
+- ✅ Added `--install-deps` flag (with package-manager auto-detection) to provision `react-i18next` / `i18next` while scaffolding.
+- ✅ Introduced `i18nsmith rename-key` powered by a reusable `KeyRenamer` to update code + locale JSON with dry-run previews.
+- ✅ `sync` dry-runs now output per-locale add/remove previews before writing.
 
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
 **Objective:** Integrate optional, pluggable adapters for translation services.

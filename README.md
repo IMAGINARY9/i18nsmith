@@ -8,6 +8,7 @@ Universal Automated i18n Library.
 2. Add `@i18nsmith/cli` to your project (once it’s published) or run the CLI from this monorepo.
 3. Run `i18nsmith init` in your app to generate an `i18n.config.json`.
 4. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
+5. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
 
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
 
@@ -54,6 +55,7 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `keyGeneration.namespace`: Prefix for generated keys (default: `"common"`).
 - `keyGeneration.shortHashLen`: Length of hash suffix (default: `6`).
 - `seedTargetLocales`: Whether to create empty entries in target locale files (default: `false`).
+- `sync.translationIdentifier`: Name of the translation helper function used in your code (default: `"t"`). Update this if you alias the hook (e.g., `const { translate } = useTranslation()`).
 
 > The transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. You must either use the zero-deps adapter or set up a `react-i18next` runtime.
 
@@ -86,10 +88,10 @@ Generates `src/lib/i18n.ts` (initializer) and `src/components/i18n-provider.tsx`
 Run:
 
 ```bash
-i18nsmith scaffold-adapter --type react-i18next --source-language en --i18n-path src/lib/i18n.ts --provider-path src/components/i18n-provider.tsx
+i18nsmith scaffold-adapter --type react-i18next --source-language en --i18n-path src/lib/i18n.ts --provider-path src/components/i18n-provider.tsx --install-deps
 ```
 
-Both flows respect `--locales-dir`, refuse to overwrite existing files unless you confirm `--force`, and warn if `react-i18next` / `i18next` are missing from `package.json`.
+Both flows respect `--locales-dir`, refuse to overwrite existing files unless you confirm `--force`, and warn if `react-i18next` / `i18next` are missing from `package.json`. Pass `--install-deps` to let the CLI install any missing runtime dependencies using your detected package manager. If a Next.js `app/providers.(ts|tsx)` file exists, the scaffold command will also attempt to inject the generated `I18nProvider` automatically (falling back to human-readable instructions when it can’t safely edit the file).
 
 Regardless of the path you choose, if you stick with `react-i18next` you still need to install the dependencies and initialize them early in your app shell (the scaffolded files already do this for you, but you can roll your own):
 
@@ -100,3 +102,40 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 	 ```
 
 2. Initialize `i18next` once in your application's entry point (e.g., `app/providers.tsx`). The `scaffold-adapter` command can generate a production-ready initializer and provider for you.
+
+## Locale sync & drift detection
+
+`i18nsmith sync` compares every translation helper call with your locale JSON:
+
+- **Missing keys**: Calls like `t('dialog.ok')` that are absent from `en.json`.
+- **Unused keys**: Locale entries that are never referenced in your codebase.
+- **Dry-run previews**: Before writing, you’ll see per-locale counts of additions/removals so you can review changes in CI.
+- **Auto-fixes**: Run with `--write` to add placeholders for missing keys (and seed targets when `seedTargetLocales` is true) and prune unused entries.
+- **CI enforcement**: Add `--check` to fail the build whenever drift is detected.
+
+Examples:
+
+```bash
+# Inspect drift without writing (default)
+i18nsmith sync
+
+# Fail CI when locales/code diverge
+i18nsmith sync --check
+
+# Apply fixes and rewrite locale files atomically
+i18nsmith sync --write
+```
+
+## Key rename workflow
+
+Need to refactor a key across the codebase and locale files? Use `i18nsmith rename-key <oldKey> <newKey>`:
+
+```bash
+# Preview the impact
+i18nsmith rename-key auth.login.title auth.signin.heading
+
+# Apply edits to source + locale JSON
+i18nsmith rename-key auth.login.title auth.signin.heading --write
+```
+
+The command reuses the same AST traversal as `sync`, respects custom translation identifiers, and updates source + seeded locale files in one pass. Dry-runs highlight locales that are missing the original key or already contain the destination so you can reconcile edge cases manually before writing.

@@ -71,6 +71,36 @@ export class LocaleStore {
     return true;
   }
 
+  public async renameKey(
+    locale: string,
+    oldKey: string,
+    newKey: string
+  ): Promise<'missing' | 'unchanged' | 'renamed' | 'duplicate'> {
+    if (oldKey === newKey) {
+      return 'unchanged';
+    }
+
+    const entry = await this.ensureLocale(locale);
+    if (typeof entry.data[oldKey] === 'undefined') {
+      return 'missing';
+    }
+
+    if (typeof entry.data[newKey] !== 'undefined') {
+      return 'duplicate';
+    }
+
+    const value = entry.data[oldKey];
+    delete entry.data[oldKey];
+    entry.data[newKey] = value;
+    entry.dirty = true;
+    entry.removed.add(oldKey);
+    entry.added.add(newKey);
+    entry.updated.delete(oldKey);
+    entry.updated.delete(newKey);
+
+    return 'renamed';
+  }
+
   public async flush(): Promise<LocaleFileStats[]> {
     const summaries: LocaleFileStats[] = [];
 
