@@ -194,6 +194,8 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 * Features:
   - `i18nsmith sync --diff` prints a unified diff for each locale file that would change (or emits JSON with `added`, `updated`, `removed` lists).
   - Optionally write `.patch` files for review or apply via `git apply`.
+  - CLI flags: `--diff` prints unified diffs to the console; `--patch-dir <dir>` writes per-locale `.patch` files suitable for `git apply` or CI artifact collection.
+  - Add automated tests that validate both behaviors: JSON/diff-injection in `--json` output and creation of `.patch` files when `--patch-dir` is used.
 * Acceptance criteria: Diff output is easy to review in PRs and can be stored as artifacts in CI.
 
 ### 3.10. Performance & Incremental Scanning

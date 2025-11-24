@@ -47,6 +47,9 @@ importers:
 
   packages/core:
     dependencies:
+      diff:
+        specifier: ^8.0.2
+        version: 8.0.2
       ts-morph:
         specifier: ^21.0.0
         version: 21.0.1
@@ -593,6 +596,10 @@ packages:
   diff-sequences@29.6.3:
     resolution: {integrity: sha512-EjePK1srD3P08o2j4f0ExnylqRs5B9tJjcp9t1krH2qRi8CCdsYfwe9JgSLurFBWwq4uOlipzfk5fHNvwFKr8Q==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  diff@8.0.2:
+    resolution: {integrity: sha512-sSuxWU5j5SR9QQji/o2qMvqRNYRDOcBTgsJ/DeCf4iSN4gW+gNMXM7wFIP+fdXZxoNiAnHUTGjCr+TSWXdRDKg==}
+    engines: {node: '>=0.3.1'}
 
   doctrine@3.0.0:
     resolution: {integrity: sha512-yS+Q5i3hBf7GBkd4KG8a7eBNNWNGLTaEwwYWUijIYM7zrlYDM0BFXHjjPWlWZ1Rg7UaddZeIDmi9jF3HmqiQ2w==}
@@ -1685,6 +1692,8 @@ snapshots:
   delayed-stream@1.0.0: {}
 
   diff-sequences@29.6.3: {}
+
+  diff@8.0.2: {}
 
   doctrine@3.0.0:
     dependencies:
