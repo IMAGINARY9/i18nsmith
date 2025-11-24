@@ -4,21 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
-
-async function readPackageJson() {
-  const pkgPath = path.join(process.cwd(), 'package.json');
-  try {
-    const content = await fs.readFile(pkgPath, 'utf8');
-    return JSON.parse(content) as Record<string, any>;
-  } catch {
-    return undefined;
-  }
-}
-
-function hasDependency(pkg: Record<string, any> | undefined, dep: string) {
-  if (!pkg) return false;
-  return Boolean(pkg.dependencies?.[dep] || pkg.devDependencies?.[dep]);
-}
+import { hasDependency, readPackageJson } from '../utils/pkg.js';
 
 interface InitAnswers {
   sourceLanguage: string;
@@ -41,7 +27,7 @@ interface InitAnswers {
   seedTargetLocales: boolean;
 }
 
-export function registerInitCommand(program: Command) {
+export function registerInit(program: Command) {
   program
     .command('init')
     .description('Initialize i18nsmith configuration')
@@ -195,6 +181,7 @@ export function registerInitCommand(program: Command) {
           : 'useTranslation';
 
       const config = {
+        version: 1 as const,
         sourceLanguage: answers.sourceLanguage,
         targetLanguages: parseList(answers.targetLanguages),
         localesDir: answers.localesDir,

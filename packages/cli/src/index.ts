@@ -3,9 +3,9 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { Scanner, ScanCandidate } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
-import { registerInitCommand } from './commands/init.js';
+import { registerInit } from './commands/init.js';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
-import { loadConfig } from './utils/config.js';
+import { loadConfig } from '@i18nsmith/core';
 
 interface ScanOptions {
   config?: string;
@@ -19,7 +19,7 @@ program
   .description('Universal Automated i18n Library')
   .version('0.1.0');
 
-registerInitCommand(program);
+registerInit(program);
 registerScaffoldAdapter(program);
 
 program
