@@ -4,34 +4,26 @@ import chalk from 'chalk';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
+import { readPackageJson, hasDependency } from '../utils/pkg.js';
+
+interface ScaffoldCommandOptions {
+  type?: 'custom' | 'react-i18next';
+  sourceLanguage?: string;
+  path?: string;
+  i18nPath?: string;
+  providerPath?: string;
+  localesDir?: string;
+  force?: boolean;
+}
 
 interface ScaffoldAnswers {
   type: 'custom' | 'react-i18next';
   sourceLanguage: string;
-  filePath?: string;
-  i18nPath?: string;
-  providerPath?: string;
   localesDir: string;
-  force?: boolean;
-}
-
-async function readPackageJson() {
-  const pkgPath = path.join(process.cwd(), 'package.json');
-  try {
-    const content = await fs.readFile(pkgPath, 'utf8');
-    return JSON.parse(content) as Record<string, any>;
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return undefined;
-    }
-    console.warn('Unable to read package.json for dependency checks.');
-    return undefined;
-  }
-}
-
-function hasDependency(pkg: Record<string, any> | undefined, dep: string) {
-  if (!pkg) return false;
-  return Boolean(pkg.dependencies?.[dep] || pkg.devDependencies?.[dep]);
+  force: boolean;
+  filePath: string;
+  i18nPath: string;
+  providerPath: string;
 }
 
 export function registerScaffoldAdapter(program: Command) {
@@ -45,15 +37,7 @@ export function registerScaffoldAdapter(program: Command) {
     .option('--provider-path <path>', 'Path for I18nProvider component', 'src/components/i18n-provider.tsx')
     .option('--locales-dir <dir>', 'Locales directory relative to project root', 'locales')
     .option('-f, --force', 'Overwrite files if they already exist', false)
-    .action(async (options: {
-      type?: string;
-      sourceLanguage?: string;
-      path?: string;
-      i18nPath?: string;
-      providerPath?: string;
-      localesDir?: string;
-      force?: boolean;
-    }) => {
+    .action(async (options: ScaffoldCommandOptions) => {
       console.log(chalk.blue('Scaffolding translation resources...'));
 
       const answers = await inquirer.prompt<ScaffoldAnswers>([
@@ -109,7 +93,7 @@ export function registerScaffoldAdapter(program: Command) {
       ]);
 
       try {
-        if (answers.type === 'custom' && answers.filePath) {
+        if (answers.type === 'custom') {
           const target = await scaffoldTranslationContext(answers.filePath, answers.sourceLanguage, {
             localesDir: answers.localesDir,
             force: answers.force,
@@ -122,7 +106,7 @@ export function registerScaffoldAdapter(program: Command) {
     "hookName": "useTranslation"
   }
 }`);
-        } else if (answers.type === 'react-i18next' && answers.i18nPath && answers.providerPath) {
+        } else if (answers.type === 'react-i18next') {
           const { i18nPath, providerPath } = await scaffoldI18next(
             answers.i18nPath,
             answers.providerPath,

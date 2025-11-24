@@ -5,7 +5,7 @@ This document outlines the high-level architecture of `i18nsmith`, a universal a
 ## Guiding Principles
 
 1.  **CLI First**: The primary interface is a command-line tool (`i18nsmith`). It's designed to be intuitive and easy to integrate into any build process.
-2.  **Simple Configuration**: A single `i18n.config.json` file at the project root drives all behavior.
+2.  **Simple Configuration**: A single, versioned `i18n.config.json` file at the project root drives all behavior.
 3.  **Modular & Extensible**: Core logic is decoupled from external services. Translation services are treated as optional plugins, preventing dependency bloat.
 4.  **AST-Powered**: Code is analyzed statically using Abstract Syntax Trees (AST), ensuring accuracy without executing the code. `ts-morph` is the chosen library for this task.
 
@@ -26,8 +26,8 @@ The `i18nsmith` process follows these steps:
 
 1.  **Initialization (`i18nsmith init`)**:
     - A user runs the `init` command.
-    - The `@i18nsmith/cli` package prompts the user for basic settings (source language, file paths, etc.).
-    - An `i18n.config.json` file is generated in the user's project root.
+    - The `@i18nsmith/cli` package prompts the user for basic settings (source language, file paths, adapter, etc.).
+    - A versioned `i18n.config.json` file (currently `version: 1`) is generated in the user's project root.
 
 2.  **Extraction & Transformation (`i18nsmith run`)**:
     - The user runs the main command.

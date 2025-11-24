@@ -1,0 +1,37 @@
+import { describe, it, expect, vi } from 'vitest';
+import { Command } from 'commander';
+import { registerScaffoldAdapter } from './scaffold-adapter';
+
+vi.mock('inquirer', () => ({
+  default: {
+    prompt: vi.fn().mockResolvedValue({
+      type: 'custom',
+      sourceLanguage: 'en',
+      localesDir: 'locales',
+      filePath: 'src/contexts/translation-context.tsx',
+      force: false,
+    }),
+  },
+}));
+
+vi.mock('../utils/scaffold.js', () => ({
+  scaffoldTranslationContext: vi.fn().mockResolvedValue('src/contexts/translation-context.tsx'),
+  scaffoldI18next: vi.fn().mockResolvedValue({
+    i18nPath: 'src/lib/i18n.ts',
+    providerPath: 'src/components/i18n-provider.tsx',
+  }),
+}));
+
+vi.mock('../utils/pkg.js', () => ({
+  readPackageJson: vi.fn().mockResolvedValue({}),
+  hasDependency: vi.fn().mockReturnValue(false),
+}));
+
+describe('scaffold-adapter command', () => {
+  it('should register the scaffold-adapter command', () => {
+    const program = new Command();
+    registerScaffoldAdapter(program);
+    const command = program.commands.find((cmd) => cmd.name() === 'scaffold-adapter');
+    expect(command).toBeDefined();
+  });
+});
