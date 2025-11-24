@@ -115,4 +115,74 @@ describe('Transformer', () => {
     expect(updatedFile.match(/useTranslation/g)?.length).toBeGreaterThanOrEqual(2);
     expect(updatedFile).toMatch(/t\(("|')/);
   });
+
+  it('keeps "use client" directives before imports', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-client-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Page.tsx');
+    const initial = "'use client';\n\nexport default function Page() {\n  return <div>Hello worlds</div>;\n}";
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    const lines = updatedFile.split('\n');
+    const directiveIndex = lines.findIndex((line) => line.includes('use client'));
+    const importIndex = lines.findIndex((line) => line.includes('useTranslation'));
+
+    expect(directiveIndex).toBeGreaterThanOrEqual(0);
+    expect(importIndex).toBeGreaterThan(directiveIndex);
+  });
+
+  it('supports custom translation adapters from config', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-adapter-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Widget.tsx');
+    const initial = `export const Widget = () => <span>Translate me</span>;`;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+      translationAdapter: {
+        module: '@/contexts/translation-context',
+        hookName: 'useTranslation',
+      },
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toContain("@/contexts/translation-context");
+    expect(updatedFile).not.toContain('react-i18next');
+  });
 });

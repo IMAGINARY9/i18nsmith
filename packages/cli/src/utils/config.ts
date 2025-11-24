@@ -55,6 +55,20 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     );
   }
 
+  const adapter =
+    typeof parsed.translationAdapter === 'object' && parsed.translationAdapter
+      ? parsed.translationAdapter
+      : undefined;
+
+  const adapterModule =
+    typeof adapter?.module === 'string' && adapter.module.trim().length > 0
+      ? adapter.module.trim()
+      : 'react-i18next';
+  const adapterHook =
+    typeof adapter?.hookName === 'string' && adapter.hookName.trim().length > 0
+      ? adapter.hookName.trim()
+      : 'useTranslation';
+
   return {
     sourceLanguage: parsed.sourceLanguage ?? 'en',
     targetLanguages: ensureStringArray(parsed.targetLanguages) ?? [],
@@ -63,5 +77,9 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     exclude: ensureArray(parsed.exclude, DEFAULT_EXCLUDE),
     minTextLength: typeof parsed.minTextLength === 'number' && parsed.minTextLength >= 0 ? parsed.minTextLength : 1,
     translation: parsed.translation,
+    translationAdapter: {
+      module: adapterModule,
+      hookName: adapterHook,
+    },
   };
 }

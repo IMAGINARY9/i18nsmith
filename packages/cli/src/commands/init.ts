@@ -12,6 +12,9 @@ interface InitAnswers {
   exclude: string;
   minTextLength: string;
   service: 'google' | 'deepl' | 'manual';
+  adapterPreset: 'react-i18next' | 'custom';
+  customAdapterModule?: string;
+  customAdapterHook?: string;
 }
 
 export function registerInitCommand(program: Command) {
@@ -69,6 +72,30 @@ export function registerInitCommand(program: Command) {
           choices: ['google', 'deepl', 'manual'],
           default: 'google',
         },
+        {
+          type: 'list',
+          name: 'adapterPreset',
+          message: 'How should transformed components access translations?',
+          choices: [
+            { name: 'react-i18next (default)', value: 'react-i18next' },
+            { name: 'Custom hook/module', value: 'custom' },
+          ],
+          default: 'react-i18next',
+        },
+        {
+          type: 'input',
+          name: 'customAdapterModule',
+          message: 'Provide the module specifier for your translation hook (e.g. "@/contexts/translation-context")',
+          when: (answers) => answers.adapterPreset === 'custom',
+          validate: (input) => (input && input.trim().length > 0 ? true : 'Module specifier cannot be empty'),
+        },
+        {
+          type: 'input',
+          name: 'customAdapterHook',
+          message: 'Name of the hook/function to import (default: useTranslation)',
+          when: (answers) => answers.adapterPreset === 'custom',
+          default: 'useTranslation',
+        },
       ]);
 
       const parseList = (value: string) =>
@@ -76,6 +103,15 @@ export function registerInitCommand(program: Command) {
           .split(',')
           .map((item) => item.trim())
           .filter(Boolean);
+
+      const adapterModule =
+        answers.adapterPreset === 'custom'
+          ? answers.customAdapterModule?.trim()
+          : 'react-i18next';
+      const adapterHook =
+        answers.adapterPreset === 'custom'
+          ? (answers.customAdapterHook?.trim() || 'useTranslation')
+          : 'useTranslation';
 
       const config = {
         sourceLanguage: answers.sourceLanguage,
@@ -86,6 +122,10 @@ export function registerInitCommand(program: Command) {
         minTextLength: parseInt(answers.minTextLength, 10),
         translation: {
           service: answers.service,
+        },
+        translationAdapter: {
+          module: adapterModule ?? 'react-i18next',
+          hookName: adapterHook,
         },
       };
 

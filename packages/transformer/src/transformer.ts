@@ -45,6 +45,7 @@ export class Transformer {
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
   private readonly seenHashes = new Map<string, string>();
+  private readonly translationAdapter: { module: string; hookName: string };
 
   constructor(private readonly config: I18nConfig, options: TransformerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -56,6 +57,7 @@ export class Transformer {
   this.defaultWrite = options.write ?? false;
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
+    this.translationAdapter = this.normalizeTranslationAdapter(config.translationAdapter);
   }
 
   public async run(runOptions: TransformRunOptions = {}): Promise<TransformSummary> {
@@ -84,7 +86,10 @@ export class Transformer {
 
         try {
           const sourceFile = candidate.raw.sourceFile;
-          ensureUseTranslationImport(sourceFile);
+          ensureUseTranslationImport(sourceFile, {
+            moduleSpecifier: this.translationAdapter.module,
+            namedImport: this.translationAdapter.hookName,
+          });
           const scope = findNearestFunctionScope(candidate.raw.node);
           if (!scope) {
             candidate.status = 'skipped';
@@ -93,7 +98,7 @@ export class Transformer {
             continue;
           }
 
-          ensureUseTranslationBinding(scope);
+          ensureUseTranslationBinding(scope, this.translationAdapter.hookName);
           this.applyCandidate(candidate);
           await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
           
@@ -130,6 +135,10 @@ export class Transformer {
   }
 
   private checkDependencies() {
+    if (this.translationAdapter.module !== 'react-i18next') {
+      return;
+    }
+
     const pkgPath = path.resolve(this.workspaceRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
       return;
@@ -138,10 +147,18 @@ export class Transformer {
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      const missing: string[] = [];
       if (!deps['react-i18next']) {
+        missing.push('react-i18next');
+      }
+      if (!deps['i18next']) {
+        missing.push('i18next');
+      }
+
+      if (missing.length) {
         console.warn(
-          '\n⚠️  Warning: "react-i18next" is missing from package.json.\n' +
-          '   The transformed code relies on it. Please install it:\n' +
+          `\n⚠️  Warning: ${missing.join(' & ')} missing from package.json.\n` +
+          '   The default adapter relies on them. Install both dependencies:\n' +
           '   npm install react-i18next i18next --save\n'
         );
       }
@@ -229,5 +246,13 @@ export class Transformer {
   private configTranslationNamespace(): string {
     const translation = this.config.translation as { namespace?: string } | undefined;
     return translation?.namespace ?? 'common';
+  }
+
+  private normalizeTranslationAdapter(
+    adapter: I18nConfig['translationAdapter']
+  ): { module: string; hookName: string } {
+    const module = adapter?.module?.trim() || 'react-i18next';
+    const hookName = adapter?.hookName?.trim() || 'useTranslation';
+    return { module, hookName };
   }
 }
