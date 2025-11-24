@@ -4,6 +4,17 @@ import path from 'path';
 
 const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
 const DEFAULT_EXCLUDE = ['node_modules/**'];
+const DEFAULT_PLACEHOLDER_FORMATS: PlaceholderFormat[] = ['doubleCurly', 'percentCurly', 'percentSymbol'];
+const DEFAULT_EMPTY_VALUE_MARKERS = ['todo', 'tbd', 'fixme', 'pending', '???'];
+
+const isPlaceholderFormat = (value: string): value is PlaceholderFormat =>
+  (DEFAULT_PLACEHOLDER_FORMATS as string[]).includes(value);
+
+const normalizePlaceholderFormats = (value: unknown): PlaceholderFormat[] => {
+  const raw = ensureStringArray(value);
+  const filtered = raw.filter(isPlaceholderFormat);
+  return filtered.length ? filtered : DEFAULT_PLACEHOLDER_FORMATS;
+};
 
 const ensureArray = (value: unknown, fallback: string[]): string[] => {
   if (Array.isArray(value) && value.length) {
@@ -75,6 +86,18 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     typeof syncConfig.translationIdentifier === 'string' && syncConfig.translationIdentifier.trim().length > 0
       ? syncConfig.translationIdentifier.trim()
       : 't';
+  const validateInterpolations = typeof syncConfig.validateInterpolations === 'boolean'
+    ? syncConfig.validateInterpolations
+    : false;
+  const placeholderFormats = normalizePlaceholderFormats(syncConfig.placeholderFormats);
+  const emptyValuePolicy: EmptyValuePolicy = syncConfig.emptyValuePolicy === 'fail'
+    ? 'fail'
+    : syncConfig.emptyValuePolicy === 'ignore'
+    ? 'ignore'
+    : 'warn';
+  const emptyValueMarkersRaw = ensureStringArray(syncConfig.emptyValueMarkers);
+  const emptyValueMarkers = emptyValueMarkersRaw.length ? emptyValueMarkersRaw : DEFAULT_EMPTY_VALUE_MARKERS;
+  const dynamicKeyAssumptions = ensureStringArray(syncConfig.dynamicKeyAssumptions);
 
   const keyNamespace = typeof keyGen.namespace === 'string' && keyGen.namespace.trim().length > 0
     ? keyGen.namespace.trim()
@@ -105,6 +128,11 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     seedTargetLocales: typeof parsed.seedTargetLocales === 'boolean' ? parsed.seedTargetLocales : false,
     sync: {
       translationIdentifier,
+      validateInterpolations,
+      placeholderFormats,
+      emptyValuePolicy,
+      emptyValueMarkers,
+      dynamicKeyAssumptions,
     },
   };
 
@@ -193,4 +221,15 @@ export interface I18nConfig {
 
 export interface SyncConfig {
   translationIdentifier?: string;
+  validateInterpolations?: boolean;
+  placeholderFormats?: PlaceholderFormat[];
+  emptyValuePolicy?: EmptyValuePolicy;
+  emptyValueMarkers?: string[];
+  dynamicKeyAssumptions?: string[];
 }
+
+export type PlaceholderFormat = 'doubleCurly' | 'percentCurly' | 'percentSymbol';
+
+export type EmptyValuePolicy = 'ignore' | 'warn' | 'fail';
+
+export { DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS };

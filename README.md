@@ -56,6 +56,11 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `keyGeneration.shortHashLen`: Length of hash suffix (default: `6`).
 - `seedTargetLocales`: Whether to create empty entries in target locale files (default: `false`).
 - `sync.translationIdentifier`: Name of the translation helper function used in your code (default: `"t"`). Update this if you alias the hook (e.g., `const { translate } = useTranslation()`).
+- `sync.validateInterpolations`: When `true`, `i18nsmith sync` compares interpolation placeholders (e.g., `{{name}}`, `%{count}`) between the source locale and every target locale and reports mismatches (default: `false`).
+- `sync.placeholderFormats`: Optional list describing which placeholder syntaxes to look for. Supported values: `"doubleCurly"` (`{{name}}`), `"percentCurly"` (`%{name}`), and `"percentSymbol"` (`%s`). Defaults to all three.
+- `sync.emptyValuePolicy`: Controls how empty/placeholder translations are treated. Use `"warn"` (default), `"fail"`, or `"ignore"`.
+- `sync.emptyValueMarkers`: Extra sentinel values that should be treated as “empty” (defaults to `todo`, `tbd`, `fixme`, `pending`, `???`).
+- `sync.dynamicKeyAssumptions`: List of translation keys that are only referenced dynamically (e.g., via template literals) so the syncer can treat them as in-use.
 
 > The transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. You must either use the zero-deps adapter or set up a `react-i18next` runtime.
 
@@ -109,6 +114,9 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 
 - **Missing keys**: Calls like `t('dialog.ok')` that are absent from `en.json`.
 - **Unused keys**: Locale entries that are never referenced in your codebase.
+- **Placeholder validation**: Add `--validate-interpolations` (or set `sync.validateInterpolations`) to ensure placeholders such as `{{name}}`, `%{count}`, or `%s` appear in every translation for the key.
+- **Empty translation policies**: Use `--no-empty-values` (or set `sync.emptyValuePolicy: "fail"`) to treat empty strings, whitespace-only values, and TODO markers as drift.
+- **Dynamic key warnings**: Template literals (e.g., ``t(`errors.${code}`)``) are surfaced with file/line references so you can review them. Pass `--assume key1 key2` (or configure `sync.dynamicKeyAssumptions`) to whitelist known runtime-only keys.
 - **Dry-run previews**: Before writing, you’ll see per-locale counts of additions/removals so you can review changes in CI.
 - **Auto-fixes**: Run with `--write` to add placeholders for missing keys (and seed targets when `seedTargetLocales` is true) and prune unused entries.
 - **CI enforcement**: Add `--check` to fail the build whenever drift is detected.
@@ -124,6 +132,12 @@ i18nsmith sync --check
 
 # Apply fixes and rewrite locale files atomically
 i18nsmith sync --write
+
+# Validate placeholders + fail on empty translations
+i18nsmith sync --validate-interpolations --no-empty-values --check
+
+# Suppress warnings for known runtime-only keys
+i18nsmith sync --assume errors.404 errors.500
 ```
 
 ## Key rename workflow

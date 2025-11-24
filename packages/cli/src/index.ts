@@ -19,6 +19,14 @@ interface ScanOptions {
   json?: boolean;
 }
 
+interface SyncCommandOptions extends ScanOptions {
+  write?: boolean;
+  check?: boolean;
+  validateInterpolations?: boolean;
+  emptyValues?: boolean;
+  assume?: string[];
+}
+
 const program = new Command();
 
 program
@@ -166,6 +174,14 @@ function printTransformSummary(summary: TransformSummary) {
   }
 }
 
+const collectAssumedKeys = (value: string, previous: string[]) => {
+  const tokens = value
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return [...previous, ...tokens];
+};
+
 program
   .command('sync')
   .description('Detect missing locale keys and prune unused entries')
@@ -173,13 +189,21 @@ program
   .option('--json', 'Print raw JSON results', false)
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .option('--check', 'Exit with error code if drift detected', false)
-  .action(async (options: ScanOptions & { write?: boolean; check?: boolean }) => {
+  .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
+  .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
+  .option('--assume <keys...>', 'List of runtime keys to assume present (comma-separated)', collectAssumedKeys, [])
+  .action(async (options: SyncCommandOptions) => {
     console.log(chalk.blue(options.write ? 'Syncing locale files...' : 'Checking locale drift...'));
 
     try {
       const config = await loadConfig(options.config);
       const syncer = new Syncer(config);
-      const summary = await syncer.run({ write: options.write });
+      const summary = await syncer.run({
+        write: options.write,
+        validateInterpolations: options.validateInterpolations,
+        emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
+        assumedKeys: options.assume,
+      });
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -188,7 +212,14 @@ program
 
       printSyncSummary(summary);
 
-      if (options.check && (summary.missingKeys.length || summary.unusedKeys.length)) {
+      const shouldFailPlaceholders = summary.validation.interpolations && summary.placeholderIssues.length > 0;
+      const shouldFailEmptyValues =
+        summary.validation.emptyValuePolicy === 'fail' && summary.emptyValueViolations.length > 0;
+
+      if (
+        options.check &&
+        (summary.missingKeys.length || summary.unusedKeys.length || shouldFailPlaceholders || shouldFailEmptyValues)
+      ) {
         console.error(chalk.red('\nDrift detected. Run with --write to fix.'));
         process.exitCode = 1;
         return;
@@ -235,6 +266,62 @@ function printSyncSummary(summary: SyncSummary) {
     }
   } else {
     console.log(chalk.green('No unused locale keys detected.'));
+  }
+
+  if (summary.validation.interpolations) {
+    if (summary.placeholderIssues.length) {
+      console.log(chalk.yellow('Placeholder mismatches:'));
+      summary.placeholderIssues.slice(0, 50).forEach((issue) => {
+        const missing = issue.missing.length ? `missing [${issue.missing.join(', ')}]` : '';
+        const extra = issue.extra.length ? `extra [${issue.extra.join(', ')}]` : '';
+        const detail = [missing, extra].filter(Boolean).join('; ');
+        console.log(`  • ${issue.key} (${issue.locale}) ${detail}`);
+      });
+      if (summary.placeholderIssues.length > 50) {
+        console.log(chalk.gray(`  ...and ${summary.placeholderIssues.length - 50} more.`));
+      }
+    } else {
+      console.log(chalk.green('No placeholder mismatches detected.'));
+    }
+  }
+
+  if (summary.validation.emptyValuePolicy !== 'ignore') {
+    if (summary.emptyValueViolations.length) {
+      const label =
+        summary.validation.emptyValuePolicy === 'fail'
+          ? chalk.red('Empty locale values:')
+          : chalk.yellow('Empty locale values:');
+      console.log(label);
+      summary.emptyValueViolations.slice(0, 50).forEach((violation) => {
+        console.log(`  • ${violation.key} (${violation.locale}) — ${violation.reason}`);
+      });
+      if (summary.emptyValueViolations.length > 50) {
+        console.log(chalk.gray(`  ...and ${summary.emptyValueViolations.length - 50} more.`));
+      }
+    } else {
+      console.log(chalk.green('No empty locale values detected.'));
+    }
+  }
+
+  if (summary.dynamicKeyWarnings.length) {
+    console.log(chalk.yellow('Dynamic translation keys detected:'));
+    summary.dynamicKeyWarnings.slice(0, 50).forEach((warning) => {
+      console.log(
+        `  • ${warning.filePath}:${warning.position.line} (${warning.reason}) ${chalk.gray(warning.expression)}`
+      );
+    });
+    if (summary.dynamicKeyWarnings.length > 50) {
+      console.log(chalk.gray(`  ...and ${summary.dynamicKeyWarnings.length - 50} more.`));
+    }
+    if (summary.assumedKeys.length) {
+      console.log(chalk.blue(`Assumed runtime keys: ${summary.assumedKeys.join(', ')}`));
+    } else {
+      console.log(
+        chalk.gray(
+          'Use --assume key1,key2 to prevent false positives for known runtime-only translation keys.'
+        )
+      );
+    }
   }
 
   if (summary.localeStats.length) {
