@@ -39,12 +39,23 @@ export function App() {
     );
 
     await fs.writeFile(
+      path.join(tempDir, 'src', 'Profile.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+export function Profile() {
+  const { t } = useTranslation();
+  return <div>{t('profile.greeting')}</div>;
+}
+`
+    );
+
+    await fs.writeFile(
       path.join(tempDir, 'locales', 'en.json'),
-      JSON.stringify({ 'old.key': 'Hello' }, null, 2)
+      JSON.stringify({ 'old.key': 'Hello', 'profile.greeting': 'Hi profile' }, null, 2)
     );
     await fs.writeFile(
       path.join(tempDir, 'locales', 'es.json'),
-      JSON.stringify({ 'old.key': 'Hola' }, null, 2)
+      JSON.stringify({ 'old.key': 'Hola', 'profile.greeting': 'Hola perfil' }, null, 2)
     );
   });
 
@@ -79,5 +90,38 @@ export function App() {
 
     const esContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'es.json'), 'utf8'));
     expect(esContents).toMatchObject({ 'new.key': 'Hola' });
+  });
+
+  it('renames multiple keys using a mapping batch', async () => {
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.renameBatch(
+      [
+        { from: 'old.key', to: 'new.key' },
+        { from: 'profile.greeting', to: 'profile.salutation' },
+      ],
+      { write: true }
+    );
+
+    expect(summary.mappingSummaries).toHaveLength(2);
+    const mapping = summary.mappingSummaries.find((entry) => entry.from === 'profile.greeting');
+    expect(mapping?.occurrences).toBe(1);
+    expect(summary.filesUpdated).toEqual(expect.arrayContaining(['src/App.tsx', 'src/Profile.tsx']));
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).toMatchObject({ 'new.key': 'Hello', 'profile.salutation': 'Hi profile' });
+    expect(enContents).not.toHaveProperty('profile.greeting');
+  });
+
+  it('throws when duplicate mapping entries are provided', async () => {
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    await expect(
+      renamer.renameBatch(
+        [
+          { from: 'old.key', to: 'new.key' },
+          { from: 'old.key', to: 'another.key' },
+        ],
+        { write: false }
+      )
+    ).rejects.toThrow(/Duplicate mapping detected/);
   });
 });

@@ -3,8 +3,28 @@ import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 
+export interface KeyRenamerOptions {
+  workspaceRoot?: string;
+  project?: Project;
+  localeStore?: LocaleStore;
+  translationIdentifier?: string;
+}
+
 export interface KeyRenameOptions {
   write?: boolean;
+}
+
+export interface KeyRenameMapping {
+  from: string;
+  to: string;
+}
+
+export interface KeyRenameLocalePreview {
+  locale: string;
+  renamedFrom: string;
+  renamedTo: string;
+  missing: boolean;
+  duplicate: boolean;
 }
 
 export interface KeyRenameSummary {
@@ -17,19 +37,21 @@ export interface KeyRenameSummary {
   write: boolean;
 }
 
-export interface KeyRenamerOptions {
-  workspaceRoot?: string;
-  project?: Project;
-  localeStore?: LocaleStore;
-  translationIdentifier?: string;
+export interface KeyRenameMappingSummary {
+  from: string;
+  to: string;
+  occurrences: number;
+  localePreview: KeyRenameLocalePreview[];
+  missingLocales: string[];
 }
 
-export interface KeyRenameLocalePreview {
-  locale: string;
-  renamedFrom: string;
-  renamedTo: string;
-  missing: boolean;
-  duplicate: boolean;
+export interface KeyRenameBatchSummary {
+  filesScanned: number;
+  filesUpdated: string[];
+  occurrences: number;
+  localeStats: LocaleFileStats[];
+  mappingSummaries: KeyRenameMappingSummary[];
+  write: boolean;
 }
 
 export class KeyRenamer {
@@ -43,9 +65,9 @@ export class KeyRenamer {
   constructor(private readonly config: I18nConfig, options: KeyRenamerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
-  const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-  this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
-  this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
+    const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
+    this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+    this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
   }
@@ -55,10 +77,42 @@ export class KeyRenamer {
       throw new Error('Both oldKey and newKey must be provided.');
     }
 
+    const batchResult = await this.renameBatch([{ from: oldKey, to: newKey }], options);
+    const mappingSummary = batchResult.mappingSummaries[0];
+
+    return {
+      filesScanned: batchResult.filesScanned,
+      filesUpdated: batchResult.filesUpdated,
+      occurrences: mappingSummary?.occurrences ?? 0,
+      localeStats: batchResult.localeStats,
+      localePreview: mappingSummary?.localePreview ?? [],
+      missingLocales: mappingSummary?.missingLocales ?? [],
+      write: batchResult.write,
+    };
+  }
+
+  public async renameBatch(
+    mappingsInput: KeyRenameMapping[],
+    options: KeyRenameOptions = {}
+  ): Promise<KeyRenameBatchSummary> {
+    const mappings = this.normalizeMappings(mappingsInput);
+    if (!mappings.length) {
+      throw new Error('At least one mapping must be provided.');
+    }
+
     const write = options.write ?? false;
     const files = this.loadFiles();
-  const filesToSave = new Map<string, SourceFile>();
-    let occurrences = 0;
+    const filesToSave = new Map<string, SourceFile>();
+    const mappingBySource = new Map<string, KeyRenameMapping>();
+
+    for (const mapping of mappings) {
+      if (mappingBySource.has(mapping.from)) {
+        throw new Error(`Duplicate mapping detected for key "${mapping.from}".`);
+      }
+      mappingBySource.set(mapping.from, mapping);
+    }
+
+    const occurrencesByKey = new Map<string, number>();
 
     for (const file of files) {
       let fileTouched = false;
@@ -74,59 +128,59 @@ export class KeyRenamer {
         if (!arg || !Node.isStringLiteral(arg)) {
           return;
         }
-        if (arg.getLiteralText() !== oldKey) {
+        const literal = arg.getLiteralText();
+        const mapping = mappingBySource.get(literal);
+        if (!mapping) {
           return;
         }
-        occurrences += 1;
+
+        occurrencesByKey.set(literal, (occurrencesByKey.get(literal) ?? 0) + 1);
         if (write) {
-          arg.setLiteralValue(newKey);
+          arg.setLiteralValue(mapping.to);
           fileTouched = true;
         }
       });
+
       if (fileTouched) {
         filesToSave.set(file.getFilePath(), file);
       }
     }
 
-  const localePreview: KeyRenameLocalePreview[] = [];
-    const missingLocales: string[] = [];
+    const mappingSummaries: KeyRenameMappingSummary[] = mappings.map((mapping) => ({
+      from: mapping.from,
+      to: mapping.to,
+      occurrences: occurrencesByKey.get(mapping.from) ?? 0,
+      localePreview: [],
+      missingLocales: [],
+    }));
 
     const locales = [this.sourceLocale, ...this.targetLocales];
-    for (const locale of locales) {
-      const data = await this.localeStore.get(locale);
-      if (typeof data[oldKey] === 'undefined') {
-        missingLocales.push(locale);
-        localePreview.push({
+    for (const summary of mappingSummaries) {
+      for (const locale of locales) {
+        const data = await this.localeStore.get(locale);
+        const missing = typeof data[summary.from] === 'undefined';
+        const duplicate = !missing && typeof data[summary.to] !== 'undefined';
+
+        summary.localePreview.push({
           locale,
-          renamedFrom: oldKey,
-          renamedTo: newKey,
-          missing: true,
-          duplicate: false,
+          renamedFrom: summary.from,
+          renamedTo: summary.to,
+          missing,
+          duplicate,
         });
-        continue;
-      }
 
-      if (typeof data[newKey] !== 'undefined') {
-        localePreview.push({
-          locale,
-          renamedFrom: oldKey,
-          renamedTo: newKey,
-          missing: false,
-          duplicate: true,
-        });
-        continue;
-      }
+        if (missing) {
+          summary.missingLocales.push(locale);
+          continue;
+        }
 
-      localePreview.push({
-        locale,
-        renamedFrom: oldKey,
-        renamedTo: newKey,
-        missing: false,
-        duplicate: false,
-      });
+        if (duplicate) {
+          continue;
+        }
 
-      if (write) {
-        await this.localeStore.renameKey(locale, oldKey, newKey);
+        if (write) {
+          await this.localeStore.renameKey(locale, summary.from, summary.to);
+        }
       }
     }
 
@@ -135,14 +189,14 @@ export class KeyRenamer {
     }
 
     const localeStats = write ? await this.localeStore.flush() : [];
+    const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
 
     return {
       filesScanned: files.length,
-  filesUpdated: Array.from(filesToSave.keys()).map((filePath) => this.getRelativePath(filePath)),
-      occurrences,
+      filesUpdated: Array.from(filesToSave.keys()).map((filePath) => this.getRelativePath(filePath)),
+      occurrences: totalOccurrences,
       localeStats,
-      localePreview,
-      missingLocales,
+      mappingSummaries,
       write,
     };
   }
@@ -154,6 +208,13 @@ export class KeyRenamer {
       files = this.project.addSourceFilesAtPaths(patterns);
     }
     return files;
+  }
+
+  private normalizeMappings(mappings: KeyRenameMapping[]): KeyRenameMapping[] {
+    return mappings
+      .map(({ from, to }) => ({ from: from?.trim(), to: to?.trim() }))
+      .filter((mapping): mapping is KeyRenameMapping => Boolean(mapping.from) && Boolean(mapping.to))
+      .filter((mapping) => mapping.from !== mapping.to);
   }
 
   private getGlobPatterns(): string[] {

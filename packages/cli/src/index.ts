@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import fs from 'fs/promises';
+import path from 'path';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import {
@@ -9,6 +11,8 @@ import {
   Syncer,
   KeyRenamer,
   KeyRenameSummary,
+  KeyRenameBatchSummary,
+  KeyRenameMapping,
 } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init';
@@ -17,6 +21,11 @@ import { registerScaffoldAdapter } from './commands/scaffold-adapter';
 interface ScanOptions {
   config?: string;
   json?: boolean;
+}
+
+interface RenameMapOptions extends ScanOptions {
+  map: string;
+  write?: boolean;
 }
 
 interface SyncCommandOptions extends ScanOptions {
@@ -375,6 +384,40 @@ program
     }
   });
 
+program
+  .command('rename-keys')
+  .description('Rename multiple translation keys using a mapping file')
+  .requiredOption('-m, --map <path>', 'Path to JSON map file (object or array of {"from","to"})')
+  .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+  .option('--json', 'Print raw JSON results', false)
+  .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .action(async (options: RenameMapOptions) => {
+    console.log(
+      chalk.blue(options.write ? 'Renaming translation keys from map...' : 'Planning batch rename (dry-run)...')
+    );
+
+    try {
+      const config = await loadConfig(options.config);
+      const mappings = await loadRenameMappings(options.map);
+      const renamer = new KeyRenamer(config);
+      const summary = await renamer.renameBatch(mappings, { write: options.write });
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+
+      printRenameBatchSummary(summary);
+
+      if (!options.write) {
+        console.log(chalk.yellow('Run again with --write to apply changes.'));
+      }
+    } catch (error) {
+      console.error(chalk.red('Batch rename failed:'), (error as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
 function printRenameSummary(summary: KeyRenameSummary) {
   console.log(
     chalk.green(
@@ -413,6 +456,114 @@ function printRenameSummary(summary: KeyRenameSummary) {
       )
     );
   }
+}
+
+function printRenameBatchSummary(summary: KeyRenameBatchSummary) {
+  console.log(
+    chalk.green(
+      `Updated ${summary.occurrences} occurrence${summary.occurrences === 1 ? '' : 's'} across ${summary.filesUpdated.length} file${summary.filesUpdated.length === 1 ? '' : 's'}.`
+    )
+  );
+
+  if (summary.mappingSummaries.length === 0) {
+    console.log(chalk.yellow('No mappings were applied.'));
+  } else {
+    console.log(chalk.blue('Mappings:'));
+    summary.mappingSummaries.slice(0, 50).forEach((mapping) => {
+      const refLabel = `${mapping.occurrences} reference${mapping.occurrences === 1 ? '' : 's'}`;
+      console.log(`  • ${mapping.from} → ${mapping.to} (${refLabel})`);
+
+      const duplicates = mapping.localePreview
+        .filter((preview) => preview.duplicate)
+        .map((preview) => preview.locale);
+      const missing = mapping.missingLocales;
+
+      const annotations = [
+        missing.length ? `missing locales: ${missing.join(', ')}` : null,
+        duplicates.length ? `target already exists in: ${duplicates.join(', ')}` : null,
+      ].filter(Boolean);
+
+      if (annotations.length) {
+        console.log(chalk.gray(`      ${annotations.join(' · ')}`));
+      }
+    });
+
+    if (summary.mappingSummaries.length > 50) {
+      console.log(chalk.gray(`  ...and ${summary.mappingSummaries.length - 50} more.`));
+    }
+  }
+
+  if (summary.filesUpdated.length) {
+    console.log(chalk.blue('Files updated:'));
+    summary.filesUpdated.forEach((file) => console.log(`  • ${file}`));
+  }
+
+  if (summary.localeStats.length) {
+    console.log(chalk.blue('Locale updates:'));
+    summary.localeStats.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
+      );
+    });
+  }
+}
+
+async function loadRenameMappings(mapPath: string): Promise<KeyRenameMapping[]> {
+  if (!mapPath) {
+    throw new Error('A path to the rename map is required.');
+  }
+
+  const resolvedPath = path.isAbsolute(mapPath) ? mapPath : path.resolve(process.cwd(), mapPath);
+  let fileContents: string;
+
+  try {
+    fileContents = await fs.readFile(resolvedPath, 'utf8');
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') {
+      throw new Error(`Rename map not found at ${resolvedPath}.`);
+    }
+    throw new Error(`Unable to read rename map at ${resolvedPath}: ${err.message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fileContents);
+  } catch (error) {
+    throw new Error(`Rename map contains invalid JSON: ${(error as Error).message}`);
+  }
+
+  const mappings = normalizeRenameMap(parsed);
+  if (!mappings.length) {
+    throw new Error('Rename map is empty. Provide at least one {"from": "foo", "to": "bar"} entry.');
+  }
+
+  return mappings;
+}
+
+function normalizeRenameMap(input: unknown): KeyRenameMapping[] {
+  if (Array.isArray(input)) {
+    return input
+      .map((item) => {
+        if (typeof item !== 'object' || item === null) {
+          return undefined;
+        }
+        const from = 'from' in item ? String((item as Record<string, unknown>).from ?? '') : '';
+        const to = 'to' in item ? String((item as Record<string, unknown>).to ?? '') : '';
+        return { from: from.trim(), to: to.trim() };
+      })
+      .filter((entry): entry is KeyRenameMapping =>
+        Boolean(entry && entry.from && entry.to && entry.from !== entry.to)
+      );
+  }
+
+  if (input && typeof input === 'object') {
+    return Object.entries(input as Record<string, unknown>)
+      .map(([from, to]) => ({ from: from.trim(), to: typeof to === 'string' ? to.trim() : '' }))
+      .filter((entry) => Boolean(entry.from) && Boolean(entry.to) && entry.from !== entry.to);
+  }
+
+  throw new Error('Rename map must be either an object ("old":"new") or an array of {"from","to"}.');
 }
 
 program.parse();
