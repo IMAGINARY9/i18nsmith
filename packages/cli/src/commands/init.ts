@@ -3,7 +3,22 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
-import { scaffoldTranslationContext } from '../utils/scaffold.js';
+import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
+
+async function readPackageJson() {
+  const pkgPath = path.join(process.cwd(), 'package.json');
+  try {
+    const content = await fs.readFile(pkgPath, 'utf8');
+    return JSON.parse(content) as Record<string, any>;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasDependency(pkg: Record<string, any> | undefined, dep: string) {
+  if (!pkg) return false;
+  return Boolean(pkg.dependencies?.[dep] || pkg.devDependencies?.[dep]);
+}
 
 interface InitAnswers {
   sourceLanguage: string;
@@ -18,6 +33,9 @@ interface InitAnswers {
   customAdapterHook?: string;
   scaffoldAdapter: boolean;
   scaffoldAdapterPath?: string;
+  scaffoldReactRuntime?: boolean;
+  reactI18nPath?: string;
+  reactProviderPath?: string;
   keyNamespace: string;
   shortHashLen: string;
   seedTargetLocales: boolean;
@@ -117,6 +135,27 @@ export function registerInitCommand(program: Command) {
           default: 'src/contexts/translation-context.tsx',
         },
         {
+          type: 'confirm',
+          name: 'scaffoldReactRuntime',
+          message: 'Scaffold i18next initializer and provider?',
+          when: (answers) => answers.adapterPreset === 'react-i18next',
+          default: true,
+        },
+        {
+          type: 'input',
+          name: 'reactI18nPath',
+          message: 'Path for i18next initializer (e.g. src/lib/i18n.ts)',
+          when: (answers) => answers.scaffoldReactRuntime,
+          default: 'src/lib/i18n.ts',
+        },
+        {
+          type: 'input',
+          name: 'reactProviderPath',
+          message: 'Path for I18nProvider component (e.g. src/components/i18n-provider.tsx)',
+          when: (answers) => answers.scaffoldReactRuntime,
+          default: 'src/components/i18n-provider.tsx',
+        },
+        {
           type: 'input',
           name: 'keyNamespace',
           message: 'Namespace prefix for generated keys',
@@ -183,8 +222,52 @@ export function registerInitCommand(program: Command) {
         console.log(chalk.green(`\nConfiguration created at ${configPath}`));
 
         if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
-          await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage);
-          console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
+          try {
+            await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
+              localesDir: answers.localesDir,
+            });
+            console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
+          } catch (error) {
+            console.warn(chalk.yellow(`Skipping adapter scaffold: ${(error as Error).message}`));
+          }
+        }
+
+        if (
+          answers.adapterPreset === 'react-i18next' &&
+          answers.scaffoldReactRuntime &&
+          answers.reactI18nPath &&
+          answers.reactProviderPath
+        ) {
+          try {
+            await scaffoldI18next(
+              answers.reactI18nPath,
+              answers.reactProviderPath,
+              answers.sourceLanguage,
+              answers.localesDir
+            );
+            console.log(chalk.green('react-i18next runtime scaffolded:'));
+            console.log(chalk.green(`  • ${answers.reactI18nPath}`));
+            console.log(chalk.green(`  • ${answers.reactProviderPath}`));
+            console.log(chalk.blue('\nWrap your app with the provider (e.g. Next.js providers.tsx):'));
+            console.log(
+              chalk.cyan(
+                `import { I18nProvider } from '${answers.reactProviderPath.replace(/\\/g, '/').replace(/\.tsx?$/, '')}';\n<I18nProvider>{children}</I18nProvider>`
+              )
+            );
+          } catch (error) {
+            console.warn(chalk.yellow(`Skipping i18next scaffold: ${(error as Error).message}`));
+          }
+        }
+
+        if (answers.adapterPreset === 'react-i18next') {
+          const pkg = await readPackageJson();
+          const missingDeps = ['react-i18next', 'i18next'].filter((dep) => !hasDependency(pkg, dep));
+          if (missingDeps.length) {
+            console.log(chalk.yellow('\nDependencies missing for react-i18next adapter:'));
+            missingDeps.forEach((dep) => console.log(chalk.yellow(`  • ${dep}`)));
+            console.log(chalk.blue('Install them with:'));
+            console.log(chalk.cyan('  pnpm add react-i18next i18next'));
+          }
         }
       } catch (error) {
         console.error(chalk.red('Failed to write configuration file:'), error);
