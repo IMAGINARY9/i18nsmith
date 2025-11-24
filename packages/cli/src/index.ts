@@ -19,6 +19,7 @@ import {
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter';
+import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils';
 
 interface ScanOptions {
   config?: string;
@@ -37,6 +38,8 @@ interface SyncCommandOptions extends ScanOptions {
   emptyValues?: boolean;
   assume?: string[];
   interactive?: boolean;
+  diff?: boolean;
+  patchDir?: string;
 }
 
 const program = new Command();
@@ -205,8 +208,11 @@ program
   .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
   .option('--assume <keys...>', 'List of runtime keys to assume present (comma-separated)', collectAssumedKeys, [])
   .option('--interactive', 'Interactively approve locale mutations before writing', false)
+  .option('--diff', 'Display unified diffs for locale files that would change', false)
+  .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
   .action(async (options: SyncCommandOptions) => {
     const interactive = Boolean(options.interactive);
+    const diffEnabled = Boolean(options.diff || options.patchDir);
     if (interactive && options.json) {
       console.error(chalk.red('--interactive cannot be combined with --json output.'));
       process.exitCode = 1;
@@ -227,7 +233,7 @@ program
       const config = await loadConfig(options.config);
       const syncer = new Syncer(config);
       if (interactive) {
-        await runInteractiveSync(syncer, options);
+        await runInteractiveSync(syncer, { ...options, diff: diffEnabled });
         return;
       }
 
@@ -236,6 +242,7 @@ program
         validateInterpolations: options.validateInterpolations,
         emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
         assumedKeys: options.assume,
+        diff: diffEnabled,
       });
 
       if (options.json) {
@@ -244,6 +251,12 @@ program
       }
 
       printSyncSummary(summary);
+      if (diffEnabled) {
+        printLocaleDiffs(summary.diffs);
+      }
+      if (options.patchDir) {
+        await writeLocaleDiffPatches(summary.diffs, options.patchDir);
+      }
 
       const shouldFailPlaceholders = summary.validation.interpolations && summary.placeholderIssues.length > 0;
       const shouldFailEmptyValues =
@@ -377,14 +390,22 @@ function printSyncSummary(summary: SyncSummary) {
 }
 
 async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
+  const diffEnabled = Boolean(options.diff || options.patchDir);
   const baseline = await syncer.run({
     write: false,
     validateInterpolations: options.validateInterpolations,
     emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
     assumedKeys: options.assume,
+    diff: diffEnabled,
   });
 
   printSyncSummary(baseline);
+  if (diffEnabled) {
+    printLocaleDiffs(baseline.diffs);
+  }
+  if (options.patchDir) {
+    await writeLocaleDiffPatches(baseline.diffs, options.patchDir);
+  }
 
   if (!baseline.missingKeys.length && !baseline.unusedKeys.length) {
     console.log(chalk.green('No drift detected. Nothing to apply.'));
@@ -452,9 +473,16 @@ async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
       missing: selectedMissing,
       unused: selectedUnused,
     },
+    diff: diffEnabled,
   });
 
   printSyncSummary(writeSummary);
+  if (diffEnabled) {
+    printLocaleDiffs(writeSummary.diffs);
+  }
+  if (options.patchDir) {
+    await writeLocaleDiffPatches(writeSummary.diffs, options.patchDir);
+  }
 }
 
 program

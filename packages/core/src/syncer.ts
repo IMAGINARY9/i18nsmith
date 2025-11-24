@@ -1,5 +1,6 @@
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
+import { createPatch } from 'diff';
 import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
@@ -30,6 +31,7 @@ export interface SyncSummary {
   unusedKeys: UnusedKeyRecord[];
   localeStats: LocaleFileStats[];
   localePreview: LocaleDiffPreview[];
+  diffs: LocaleDiffEntry[];
   placeholderIssues: PlaceholderIssue[];
   emptyValueViolations: EmptyValueViolation[];
   dynamicKeyWarnings: DynamicKeyWarning[];
@@ -85,6 +87,15 @@ export interface LocaleDiffPreview {
   remove: string[];
 }
 
+export interface LocaleDiffEntry {
+  locale: string;
+  path: string;
+  diff: string;
+  added: string[];
+  updated: string[];
+  removed: string[];
+}
+
 export interface SyncerOptions {
   workspaceRoot?: string;
   project?: Project;
@@ -98,6 +109,7 @@ export interface SyncRunOptions {
   emptyValuePolicy?: EmptyValuePolicy;
   assumedKeys?: string[];
   selection?: SyncSelection;
+  diff?: boolean;
 }
 
 interface ResolvedSyncRunOptions {
@@ -107,6 +119,7 @@ interface ResolvedSyncRunOptions {
   assumedKeys: Set<string>;
   selectedMissingKeys?: Set<string>;
   selectedUnusedKeys?: Set<string>;
+  generateDiffs: boolean;
 }
 
 export class Syncer {
@@ -150,10 +163,14 @@ export class Syncer {
     const runtime = this.resolveRuntimeOptions(runOptions);
     const write = runtime.write;
     const files = this.loadFiles();
-  const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(files, runtime.assumedKeys);
+    const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(
+      files,
+      runtime.assumedKeys
+    );
 
-  const localeData = await this.collectLocaleData();
-  const localeKeySets = this.buildLocaleKeySets(localeData);
+    const localeData = await this.collectLocaleData();
+    const projectedLocaleData = this.cloneLocaleData(localeData);
+    const localeKeySets = this.buildLocaleKeySets(localeData);
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
 
     const localeDiff = new Map<string, { add: Set<string>; remove: Set<string> }>();
@@ -182,9 +199,11 @@ export class Syncer {
     const missingKeysToApply = this.filterSelection(missingKeys, runtime.selectedMissingKeys);
     for (const record of missingKeysToApply) {
       previewAdd(this.sourceLocale, record.key);
+      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, record.key);
       if (this.config.seedTargetLocales) {
         for (const locale of this.targetLocales) {
           previewAdd(locale, record.key);
+          this.applyProjectedValue(projectedLocaleData, locale, record.key, '');
         }
       }
     }
@@ -209,7 +228,10 @@ export class Syncer {
 
     const unusedKeysToApply = this.filterSelection(unusedKeys, runtime.selectedUnusedKeys);
     for (const record of unusedKeysToApply) {
-      record.locales.forEach((locale) => previewRemove(locale, record.key));
+      record.locales.forEach((locale) => {
+        previewRemove(locale, record.key);
+        this.applyProjectedRemoval(projectedLocaleData, locale, record.key);
+      });
     }
 
     const placeholderIssues = runtime.validateInterpolations
@@ -230,6 +252,8 @@ export class Syncer {
       remove: Array.from(diff.remove).sort(),
     }));
 
+    const diffs = runtime.generateDiffs ? this.buildLocaleDiffs(localeData, projectedLocaleData) : [];
+
     return {
       filesScanned: files.length,
       references,
@@ -237,6 +261,7 @@ export class Syncer {
       unusedKeys,
       localeStats,
       localePreview,
+      diffs,
       placeholderIssues,
       emptyValueViolations,
       dynamicKeyWarnings,
@@ -510,6 +535,7 @@ export class Syncer {
     const write = runOptions.write ?? false;
     const validateInterpolations = runOptions.validateInterpolations ?? this.defaultValidateInterpolations;
     const emptyValuePolicy = runOptions.emptyValuePolicy ?? this.defaultEmptyValuePolicy;
+    const generateDiffs = runOptions.diff ?? false;
 
     const assumedKeys = new Set<string>();
     const candidates = [...this.defaultAssumedKeys, ...(runOptions.assumedKeys ?? [])];
@@ -530,6 +556,7 @@ export class Syncer {
       assumedKeys,
       selectedMissingKeys,
       selectedUnusedKeys,
+      generateDiffs,
     };
   }
 
@@ -565,5 +592,128 @@ export class Syncer {
       }
     }
     return next;
+  }
+
+  private cloneLocaleData(localeData: Map<string, Record<string, string>>): Map<string, Record<string, string>> {
+    const projected = new Map<string, Record<string, string>>();
+    for (const [locale, data] of localeData.entries()) {
+      projected.set(locale, { ...data });
+    }
+    return projected;
+  }
+
+  private ensureProjectedLocale(
+    projected: Map<string, Record<string, string>>,
+    locale: string
+  ): Record<string, string> {
+    if (!projected.has(locale)) {
+      projected.set(locale, {});
+    }
+    return projected.get(locale)!;
+  }
+
+  private applyProjectedValue(
+    projected: Map<string, Record<string, string>>,
+    locale: string,
+    key: string,
+    value: string
+  ) {
+    const data = this.ensureProjectedLocale(projected, locale);
+    data[key] = value;
+  }
+
+  private applyProjectedRemoval(projected: Map<string, Record<string, string>>, locale: string, key: string) {
+    const data = this.ensureProjectedLocale(projected, locale);
+    delete data[key];
+  }
+
+  private buildLocaleDiffs(
+    originalData: Map<string, Record<string, string>>,
+    projectedData: Map<string, Record<string, string>>
+  ): LocaleDiffEntry[] {
+    const locales = new Set([...originalData.keys(), ...projectedData.keys()]);
+    const diffs: LocaleDiffEntry[] = [];
+
+    for (const locale of locales) {
+      const before = this.sortLocaleData(originalData.get(locale) ?? {});
+      const after = this.sortLocaleData(projectedData.get(locale) ?? {});
+
+      if (this.areLocaleDataEqual(before, after)) {
+        continue;
+      }
+
+      const beforeSerialized = `${JSON.stringify(before, null, 2)}\n`;
+      const afterSerialized = `${JSON.stringify(after, null, 2)}\n`;
+      const filePath = this.localeStore.getFilePath(locale);
+      const patch = createPatch(this.getRelativePath(filePath), beforeSerialized, afterSerialized);
+
+      const { added, updated, removed } = this.computeDiffStats(before, after);
+
+      diffs.push({
+        locale,
+        path: filePath,
+        diff: patch,
+        added,
+        updated,
+        removed,
+      });
+    }
+
+    return diffs;
+  }
+
+  private sortLocaleData(data: Record<string, string>): Record<string, string> {
+    return Object.keys(data)
+      .sort((a, b) => a.localeCompare(b))
+      .reduce<Record<string, string>>((acc, key) => {
+        acc[key] = data[key];
+        return acc;
+      }, {});
+  }
+
+  private areLocaleDataEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) {
+      return false;
+    }
+    for (const key of aKeys) {
+      if (a[key] !== b[key]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private computeDiffStats(
+    before: Record<string, string>,
+    after: Record<string, string>
+  ): { added: string[]; updated: string[]; removed: string[] } {
+    const added: string[] = [];
+    const updated: string[] = [];
+    const removed: string[] = [];
+    const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+
+    for (const key of allKeys) {
+      const prev = before[key];
+      const next = after[key];
+      if (typeof prev === 'undefined' && typeof next !== 'undefined') {
+        added.push(key);
+        continue;
+      }
+      if (typeof next === 'undefined') {
+        removed.push(key);
+        continue;
+      }
+      if (prev !== next) {
+        updated.push(key);
+      }
+    }
+
+    return {
+      added: added.sort(),
+      updated: updated.sort(),
+      removed: removed.sort(),
+    };
   }
 }

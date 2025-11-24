@@ -26,6 +26,10 @@ export class LocaleStore {
 
   constructor(private readonly localesDir: string) {}
 
+  public getFilePath(locale: string): string {
+    return path.join(this.localesDir, `${locale}.json`);
+  }
+
   public async get(locale: string): Promise<Record<string, string>> {
     const entry = await this.ensureLocale(locale);
     return { ...entry.data };
@@ -157,7 +161,7 @@ export class LocaleStore {
       return this.cache.get(locale)!;
     }
 
-    const filePath = path.join(this.localesDir, `${locale}.json`);
+  const filePath = this.getFilePath(locale);
     let data: Record<string, string> = {};
 
     try {

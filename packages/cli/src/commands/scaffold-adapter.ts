@@ -5,7 +5,7 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
-import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
+import { detectPackageManager, installDependencies } from '../utils/package-manager';
 
 interface ScaffoldCommandOptions {
   type?: 'custom' | 'react-i18next';
