@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { Scanner, ScanCandidate } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInitCommand } from './commands/init.js';
+import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
 import { loadConfig } from './utils/config.js';
 
 interface ScanOptions {
@@ -19,6 +20,7 @@ program
   .version('0.1.0');
 
 registerInitCommand(program);
+registerScaffoldAdapter(program);
 
 program
   .command('scan')

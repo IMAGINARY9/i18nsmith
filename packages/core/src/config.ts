@@ -1,3 +1,15 @@
+export interface TranslationAdapterConfig {
+  /**
+   * Module specifier to import the translation hook from (e.g. 'react-i18next' or '@/contexts/translation-context').
+   */
+  module: string;
+  /**
+   * Name of the hook/function to import.
+   * Defaults to `useTranslation` when omitted.
+   */
+  hookName?: string;
+}
+
 export interface I18nConfig {
   /**
    * Source language of the application (default: 'en')
@@ -30,4 +42,9 @@ export interface I18nConfig {
     service: 'google' | 'deepl' | 'manual';
     apiKey?: string;
   };
+  /**
+   * Configure how transformed components access the `t` helper.
+   * Defaults to importing `useTranslation` from `react-i18next`.
+   */
+  translationAdapter?: TranslationAdapterConfig;
 }

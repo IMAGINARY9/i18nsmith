@@ -2,9 +2,11 @@ import {
   ArrowFunction,
   FunctionDeclaration,
   FunctionExpression,
+  ImportDeclarationStructure,
   MethodDeclaration,
   Node,
   SourceFile,
+  Statement,
   SyntaxKind,
 } from 'ts-morph';
 
@@ -14,26 +16,41 @@ export type FunctionLike =
   | ArrowFunction
   | MethodDeclaration;
 
-export function ensureUseTranslationImport(sourceFile: SourceFile) {
-  const existing = sourceFile.getImportDeclaration((decl) => decl.getModuleSpecifierValue() === 'react-i18next');
+export interface TranslationImportConfig {
+  moduleSpecifier: string;
+  namedImport: string;
+}
+
+export function ensureUseTranslationImport(sourceFile: SourceFile, adapter: TranslationImportConfig) {
+  const existing = sourceFile.getImportDeclaration(
+    (decl) => decl.getModuleSpecifierValue() === adapter.moduleSpecifier
+  );
+  const insertIndex = countDirectiveStatements(sourceFile.getStatements());
+
   if (!existing) {
-    sourceFile.insertImportDeclaration(0, {
-      moduleSpecifier: 'react-i18next',
-      namedImports: [{ name: 'useTranslation' }],
+    sourceFile.insertImportDeclaration(insertIndex, {
+      moduleSpecifier: adapter.moduleSpecifier,
+      namedImports: [{ name: adapter.namedImport }],
     });
     return;
   }
 
   const hasNamed = existing
     .getNamedImports()
-    .some((namedImport) => namedImport.getName() === 'useTranslation');
+    .some((namedImport) => namedImport.getName() === adapter.namedImport);
 
   if (!hasNamed) {
-    existing.addNamedImport({ name: 'useTranslation' });
+    existing.addNamedImport({ name: adapter.namedImport });
+  }
+
+  if (existing.getChildIndex() < insertIndex) {
+    const structure: ImportDeclarationStructure = existing.getStructure();
+    existing.remove();
+    sourceFile.insertImportDeclaration(insertIndex, structure);
   }
 }
 
-export function ensureUseTranslationBinding(fn: FunctionLike) {
+export function ensureUseTranslationBinding(fn: FunctionLike, hookName: string) {
   const body = fn.getBody();
   if (!body) {
     return;
@@ -45,7 +62,7 @@ export function ensureUseTranslationBinding(fn: FunctionLike) {
 
   const existing = body.getStatements().some((statement) => {
     return statement.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
-      return call.getExpression().getText() === 'useTranslation';
+      return call.getExpression().getText() === hookName;
     });
   });
 
@@ -53,7 +70,7 @@ export function ensureUseTranslationBinding(fn: FunctionLike) {
     return;
   }
 
-  body.insertStatements(0, "const { t } = useTranslation();");
+  body.insertStatements(0, `const { t } = ${hookName}();`);
 }
 
 export function findNearestFunctionScope(node: Node): FunctionLike | undefined {
@@ -63,4 +80,28 @@ export function findNearestFunctionScope(node: Node): FunctionLike | undefined {
     Node.isFunctionExpression(ancestor) ||
     Node.isArrowFunction(ancestor)
   ) as FunctionLike | undefined;
+}
+
+function isDirectiveStatement(statement: Statement): boolean {
+  if (!Node.isExpressionStatement(statement)) {
+    return false;
+  }
+
+  const expression = statement.getExpression();
+  return (
+    Node.isStringLiteral(expression) ||
+    Node.isNoSubstitutionTemplateLiteral(expression)
+  );
+}
+
+function countDirectiveStatements(statements: Statement[]): number {
+  let count = 0;
+  for (const statement of statements) {
+    if (isDirectiveStatement(statement)) {
+      count += 1;
+      continue;
+    }
+    break;
+  }
+  return count;
 }
