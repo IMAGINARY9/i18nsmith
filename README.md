@@ -119,6 +119,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 - **Dynamic key warnings**: Template literals (e.g., ``t(`errors.${code}`)``) are surfaced with file/line references so you can review them. Pass `--assume key1 key2` (or configure `sync.dynamicKeyAssumptions`) to whitelist known runtime-only keys.
 - **Dry-run previews**: Before writing, you’ll see per-locale counts of additions/removals so you can review changes in CI.
 - **Auto-fixes**: Run with `--write` to add placeholders for missing keys (and seed targets when `seedTargetLocales` is true) and prune unused entries.
+- **Interactive approvals**: Add `--interactive` to run a dry-run, then select which missing keys to add and which unused keys to prune before a final confirmation. This mode can’t be combined with `--json`.
 - **CI enforcement**: Add `--check` to fail the build whenever drift is detected.
 
 Examples:
@@ -132,6 +133,9 @@ i18nsmith sync --check
 
 # Apply fixes and rewrite locale files atomically
 i18nsmith sync --write
+
+# Step through each change interactively (writes after confirmation)
+i18nsmith sync --interactive
 
 # Validate placeholders + fail on empty translations
 i18nsmith sync --validate-interpolations --no-empty-values --check

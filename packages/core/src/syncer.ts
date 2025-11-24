@@ -38,6 +38,11 @@ export interface SyncSummary {
   write: boolean;
 }
 
+export interface SyncSelection {
+  missing?: string[];
+  unused?: string[];
+}
+
 export interface PlaceholderIssue {
   key: string;
   locale: string;
@@ -92,6 +97,7 @@ export interface SyncRunOptions {
   validateInterpolations?: boolean;
   emptyValuePolicy?: EmptyValuePolicy;
   assumedKeys?: string[];
+  selection?: SyncSelection;
 }
 
 interface ResolvedSyncRunOptions {
@@ -99,6 +105,8 @@ interface ResolvedSyncRunOptions {
   validateInterpolations: boolean;
   emptyValuePolicy: EmptyValuePolicy;
   assumedKeys: Set<string>;
+  selectedMissingKeys?: Set<string>;
+  selectedUnusedKeys?: Set<string>;
 }
 
 export class Syncer {
@@ -142,10 +150,10 @@ export class Syncer {
     const runtime = this.resolveRuntimeOptions(runOptions);
     const write = runtime.write;
     const files = this.loadFiles();
-    const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(files, runtime.assumedKeys);
+  const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(files, runtime.assumedKeys);
 
-    const localeData = await this.collectLocaleData();
-    const localeKeySets = this.buildLocaleKeySets(localeData);
+  const localeData = await this.collectLocaleData();
+  const localeKeySets = this.buildLocaleKeySets(localeData);
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
 
     const localeDiff = new Map<string, { add: Set<string>; remove: Set<string> }>();
@@ -171,7 +179,8 @@ export class Syncer {
         references: referencesByKey.get(key) ?? [],
       }));
 
-    for (const record of missingKeys) {
+    const missingKeysToApply = this.filterSelection(missingKeys, runtime.selectedMissingKeys);
+    for (const record of missingKeysToApply) {
       previewAdd(this.sourceLocale, record.key);
       if (this.config.seedTargetLocales) {
         for (const locale of this.targetLocales) {
@@ -193,14 +202,15 @@ export class Syncer {
       }
     }
 
-    const unusedKeys: UnusedKeyRecord[] = Array.from(unusedKeyMap.entries()).map(([key, locales]) => {
-      const localeList = Array.from(locales).sort();
-      localeList.forEach((locale) => previewRemove(locale, key));
-      return {
-        key,
-        locales: localeList,
-      };
-    });
+    const unusedKeys: UnusedKeyRecord[] = Array.from(unusedKeyMap.entries()).map(([key, locales]) => ({
+      key,
+      locales: Array.from(locales).sort(),
+    }));
+
+    const unusedKeysToApply = this.filterSelection(unusedKeys, runtime.selectedUnusedKeys);
+    for (const record of unusedKeysToApply) {
+      record.locales.forEach((locale) => previewRemove(locale, record.key));
+    }
 
     const placeholderIssues = runtime.validateInterpolations
       ? this.collectPlaceholderIssues(localeData, referencesByKey)
@@ -209,8 +219,8 @@ export class Syncer {
 
     let localeStats: LocaleFileStats[] = [];
     if (write) {
-      await this.applyMissingKeys(missingKeys);
-      await this.applyUnusedKeys(unusedKeys);
+      await this.applyMissingKeys(missingKeysToApply);
+      await this.applyUnusedKeys(unusedKeysToApply);
       localeStats = await this.localeStore.flush();
     }
 
@@ -510,11 +520,16 @@ export class Syncer {
       }
     }
 
+    const selectedMissingKeys = this.buildSelectionSet(runOptions.selection?.missing);
+    const selectedUnusedKeys = this.buildSelectionSet(runOptions.selection?.unused);
+
     return {
       write,
       validateInterpolations,
       emptyValuePolicy,
       assumedKeys,
+      selectedMissingKeys,
+      selectedUnusedKeys,
     };
   }
 
@@ -529,5 +544,26 @@ export class Syncer {
       expression,
       reason,
     };
+  }
+
+  private filterSelection<T extends { key: string }>(items: T[], selection?: Set<string>): T[] {
+    if (!selection) {
+      return items;
+    }
+    return items.filter((item) => selection.has(item.key));
+  }
+
+  private buildSelectionSet(keys?: string[]): Set<string> | undefined {
+    if (!keys) {
+      return undefined;
+    }
+    const next = new Set<string>();
+    for (const key of keys) {
+      const normalized = key?.trim();
+      if (normalized) {
+        next.add(normalized);
+      }
+    }
+    return next;
   }
 }

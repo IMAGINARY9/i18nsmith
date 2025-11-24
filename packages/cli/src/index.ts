@@ -3,6 +3,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import { Command } from 'commander';
+import inquirer from 'inquirer';
+import type { CheckboxQuestion } from 'inquirer';
 import {
   loadConfig,
   Scanner,
@@ -34,6 +36,7 @@ interface SyncCommandOptions extends ScanOptions {
   validateInterpolations?: boolean;
   emptyValues?: boolean;
   assume?: string[];
+  interactive?: boolean;
 }
 
 const program = new Command();
@@ -201,12 +204,33 @@ program
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
   .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
   .option('--assume <keys...>', 'List of runtime keys to assume present (comma-separated)', collectAssumedKeys, [])
+  .option('--interactive', 'Interactively approve locale mutations before writing', false)
   .action(async (options: SyncCommandOptions) => {
-    console.log(chalk.blue(options.write ? 'Syncing locale files...' : 'Checking locale drift...'));
+    const interactive = Boolean(options.interactive);
+    if (interactive && options.json) {
+      console.error(chalk.red('--interactive cannot be combined with --json output.'));
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(
+      chalk.blue(
+        interactive
+          ? 'Interactive sync (dry-run first)...'
+          : options.write
+          ? 'Syncing locale files...'
+          : 'Checking locale drift...'
+      )
+    );
 
     try {
       const config = await loadConfig(options.config);
       const syncer = new Syncer(config);
+      if (interactive) {
+        await runInteractiveSync(syncer, options);
+        return;
+      }
+
       const summary = await syncer.run({
         write: options.write,
         validateInterpolations: options.validateInterpolations,
@@ -350,6 +374,87 @@ function printSyncSummary(summary: SyncSummary) {
       );
     });
   }
+}
+
+async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
+  const baseline = await syncer.run({
+    write: false,
+    validateInterpolations: options.validateInterpolations,
+    emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
+    assumedKeys: options.assume,
+  });
+
+  printSyncSummary(baseline);
+
+  if (!baseline.missingKeys.length && !baseline.unusedKeys.length) {
+    console.log(chalk.green('No drift detected. Nothing to apply.'));
+    return;
+  }
+
+  const prompts: CheckboxQuestion[] = [];
+  if (baseline.missingKeys.length) {
+    prompts.push({
+      type: 'checkbox',
+      name: 'missing',
+      message: 'Select missing keys to add',
+      pageSize: 15,
+      choices: baseline.missingKeys.map((item) => ({
+        name: `${item.key} (${item.references.length} reference${item.references.length === 1 ? '' : 's'})`,
+        value: item.key,
+        checked: true,
+      })),
+    });
+  }
+
+  if (baseline.unusedKeys.length) {
+    prompts.push({
+      type: 'checkbox',
+      name: 'unused',
+      message: 'Select unused keys to prune',
+      pageSize: 15,
+      choices: baseline.unusedKeys.map((item) => ({
+        name: `${item.key} (${item.locales.join(', ')})`,
+        value: item.key,
+        checked: true,
+      })),
+    });
+  }
+
+  const answers = prompts.length ? await inquirer.prompt(prompts) : {};
+  const selectedMissing: string[] = (answers as { missing?: string[] }).missing ?? [];
+  const selectedUnused: string[] = (answers as { unused?: string[] }).unused ?? [];
+
+  if (!selectedMissing.length && !selectedUnused.length) {
+    console.log(chalk.yellow('No changes selected. Run again later if needed.'));
+    return;
+  }
+
+  const confirmation = await inquirer.prompt<{ proceed: boolean }>([
+    {
+      type: 'confirm',
+      name: 'proceed',
+      default: true,
+      message: `Apply ${selectedMissing.length} addition${selectedMissing.length === 1 ? '' : 's'} and ${selectedUnused.length} removal${selectedUnused.length === 1 ? '' : 's'}?`,
+    },
+  ]);
+
+  if (!confirmation.proceed) {
+    console.log(chalk.yellow('Aborted. No changes written.'));
+    return;
+  }
+
+  const writeSummary = await syncer.run({
+    write: true,
+    validateInterpolations: options.validateInterpolations,
+    emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
+    assumedKeys: options.assume,
+    selection: {
+      missing: selectedMissing,
+      unused: selectedUnused,
+    },
+  });
+
+  printSyncSummary(writeSummary);
 }
 
 program
