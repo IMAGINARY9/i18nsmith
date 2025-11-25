@@ -31,6 +31,7 @@ export interface TransformSummary {
 
 export interface TransformRunOptions {
   write?: boolean;
+  targets?: string[];
 }
 
 export interface TransformerOptions {

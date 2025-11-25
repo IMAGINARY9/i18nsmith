@@ -122,6 +122,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 - **Unified diffs & patch exports**: Use `i18nsmith sync --diff` to print git-style unified diffs for each locale JSON file that would change. To persist per-locale patches for review or CI artifacts, use `i18nsmith sync --patch-dir ./artifacts` which writes `.patch` files (one per locale) suitable for `git apply` or upload.
 - **Machine-friendly JSON**: `i18nsmith sync --json` now includes `localePreview`, `diffs`, and `actionableItems` so CI steps or bots can render previews, annotate PRs, or open issues with full context.
 - **Incremental caching**: Repeated runs reuse a per-file reference cache so unchanged files are skipped. Pass `i18nsmith sync --invalidate-cache` after changing include globs or branching to force a clean re-scan.
+- **Per-file onboarding**: `i18nsmith sync --target src/pages/About.tsx --target "src/features/profile/**/*.tsx"` limits analysis to the specified files/globs. Missing keys, placeholder checks, and actionable items are scoped to that feature, and unused-key pruning is disabled to avoid touching unrelated locales while you onboard incrementally.
 - **Interactive approvals**: Add `--interactive` to run a dry-run, then select which missing keys to add and which unused keys to prune before a final confirmation. This mode can’t be combined with `--json`.
 - **CI enforcement**: Add `--check` to fail the build whenever drift is detected.
 	- Exit code `1` covers general drift (missing/unused keys), `2` flags interpolation/placeholder mismatches, and `3` marks empty locale values when the `--no-empty-values` policy is enforced—perfect for wiring custom gates in CI.
@@ -146,6 +147,32 @@ i18nsmith sync --validate-interpolations --no-empty-values --check
 
 # Suppress warnings for known runtime-only keys
 i18nsmith sync --assume errors.404 errors.500
+```
+
+## Features
+
+*   **Framework-agnostic**: Works with any library that uses JSON for locales.
+*   **TypeScript-aware**: Deeply understands your codebase for accurate key detection.
+*   **Fast**: Caches unchanged files for rapid re-scans.
+*   **Flexible**: Supports JSX text, attributes, and string literals in code.
+*   **Configurable**: Fine-tune key generation, placeholder formats, and more.
+*   **Scoped Onboarding**: Use the `--target` flag to transform and sync one file or feature at a time.
+
+### Scoped onboarding with `--target`
+
+Both `i18nsmith transform` and `i18nsmith sync` accept `--target <pattern...>` so you can migrate one route or feature at a time. Repeat the flag or pass multiple paths/globs (space- or comma-separated) to build a focused set. When targeting a subset:
+
+- The transformer only rewrites/prints candidates from the specified files, letting you adopt i18n incrementally without touching the rest of the repo.
+- Sync runs constrain missing-key/placeholder diagnostics to those files and skip unused-key pruning, preventing unrelated locales from being deleted while onboarding.
+
+Examples:
+
+```bash
+# Transform just the marketing page (dry-run by default)
+pnpm i18nsmith transform --target "src/app/marketing/page.tsx"
+
+# Apply locale fixes for the same feature without touching the rest of the app
+pnpm i18nsmith sync --write --target "src/app/settings/**"
 ```
 
 ## Key rename workflow

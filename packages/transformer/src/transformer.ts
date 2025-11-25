@@ -71,7 +71,7 @@ export class Transformer {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
     });
-  const summary = scanner.scan({ collectNodes: true });
+    const summary = scanner.scan({ collectNodes: true, targets: runOptions.targets });
 
     const enriched = await this.enrichCandidates(summary.detailedCandidates);
 

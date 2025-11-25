@@ -297,6 +297,35 @@ export default Selective;
     expect(esContents).toHaveProperty('unused.two');
   });
 
+  it('limits analysis scope when target files are provided', async () => {
+    const alphaPath = path.join(tempDir, 'src', 'Alpha.tsx');
+    const betaPath = path.join(tempDir, 'src', 'Beta.tsx');
+    const componentTemplate = (key: string) => `import { useTranslation } from 'react-i18next';
+
+const Component = () => {
+  const { t } = useTranslation();
+  return <span>{t('${key}')}</span>;
+};
+
+export default Component;
+`;
+
+    await fs.writeFile(alphaPath, componentTemplate('alpha.only'));
+    await fs.writeFile(betaPath, componentTemplate('beta.only'));
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), JSON.stringify({}, null, 2));
+    await fs.writeFile(path.join(tempDir, 'locales', 'es.json'), JSON.stringify({}, null, 2));
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+
+    const scoped = await syncer.run({ targets: ['src/Beta.tsx'] });
+
+    expect(scoped.filesScanned).toBe(1);
+    expect(scoped.missingKeys.map((item) => item.key)).toEqual(['beta.only']);
+    expect(scoped.references.every((ref) => ref.filePath.endsWith('src/Beta.tsx'))).toBe(true);
+    expect(scoped.unusedKeys).toEqual([]);
+  });
+
   it('caches translation references and honors explicit invalidation', async () => {
     await writeFixtures();
     const cachePath = path.join(tempDir, '.i18nsmith', 'cache', 'sync-references.json');

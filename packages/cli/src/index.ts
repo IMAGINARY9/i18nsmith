@@ -24,6 +24,7 @@ import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils';
 interface ScanOptions {
   config?: string;
   json?: boolean;
+  target?: string[];
 }
 
 interface RenameMapOptions extends ScanOptions {
@@ -50,6 +51,25 @@ const SYNC_EXIT_CODES = {
   PLACEHOLDER_MISMATCH: 2,
   EMPTY_VALUES: 3,
 } as const;
+
+const collectAssumedKeys = (value: string, previous: string[]) => {
+  const tokens = value
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return [...previous, ...tokens];
+};
+
+const collectTargetPatterns = (value: string | string[], previous: string[]) => {
+  const list = Array.isArray(value) ? value : [value];
+  const tokens = list
+    .flatMap((entry) => entry.split(','))
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return [...previous, ...tokens];
+};
+
+
 
 program
   .name('i18nsmith')
@@ -122,6 +142,7 @@ program
   .option('--json', 'Print raw JSON results', false)
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .option('--check', 'Exit with error code if changes are needed', false)
+  .option('--target <pattern...>', 'Limit scanning to specific files or glob patterns', collectTargetPatterns, [])
   .action(async (options: ScanOptions & { write?: boolean; check?: boolean }) => {
     console.log(
       chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
@@ -130,7 +151,7 @@ program
     try {
       const config = await loadConfig(options.config);
       const transformer = new Transformer(config);
-      const summary = await transformer.run({ write: options.write });
+  const summary = await transformer.run({ write: options.write, targets: options.target });
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -195,15 +216,6 @@ function printTransformSummary(summary: TransformSummary) {
     summary.skippedFiles.forEach((item) => console.log(`  • ${item.filePath}: ${item.reason}`));
   }
 }
-
-const collectAssumedKeys = (value: string, previous: string[]) => {
-  const tokens = value
-    .split(',')
-    .map((token) => token.trim())
-    .filter(Boolean);
-  return [...previous, ...tokens];
-};
-
 program
   .command('sync')
   .description('Detect missing locale keys and prune unused entries')
@@ -218,6 +230,7 @@ program
   .option('--diff', 'Display unified diffs for locale files that would change', false)
   .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
   .option('--invalidate-cache', 'Ignore cached sync analysis and rescan all source files', false)
+  .option('--target <pattern...>', 'Limit translation reference scanning to specific files or glob patterns', collectTargetPatterns, [])
   .action(async (options: SyncCommandOptions) => {
     const interactive = Boolean(options.interactive);
     const diffEnabled = Boolean(options.diff || options.patchDir);
@@ -254,6 +267,7 @@ program
         assumedKeys: options.assume,
         diff: diffRequested,
         invalidateCache,
+        targets: options.target,
       });
 
       if (options.json) {
@@ -420,6 +434,7 @@ async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
     assumedKeys: options.assume,
     diff: diffEnabled,
     invalidateCache,
+    targets: options.target,
   });
 
   printSyncSummary(baseline);
@@ -497,6 +512,7 @@ async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
       unused: selectedUnused,
     },
     diff: diffEnabled,
+    targets: options.target,
   });
 
   printSyncSummary(writeSummary);

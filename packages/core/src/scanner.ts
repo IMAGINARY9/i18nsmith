@@ -8,6 +8,7 @@ import {
   SourceFile,
   SyntaxKind,
 } from 'ts-morph';
+import fg from 'fast-glob';
 import { I18nConfig } from './config';
 
 export type CandidateKind = 'jsx-text' | 'jsx-attribute' | 'jsx-expression';
@@ -51,6 +52,7 @@ export interface ScannerOptions {
 
 export interface ScanExecutionOptions {
   collectNodes?: boolean;
+  targets?: string[];
 }
 
 type CandidateRecorder = (candidate: ScanCandidate, node: Node, file: SourceFile) => void;
@@ -85,10 +87,19 @@ export class Scanner {
   public scan(options?: ScanExecutionOptions): ScanSummary | DetailedScanSummary {
     const collectNodes = options?.collectNodes ?? false;
     const patterns = this.getGlobPatterns();
-    let files = this.project.getSourceFiles();
+    const targetFiles = options?.targets?.length ? this.resolveTargetFiles(options.targets) : undefined;
+    let files: SourceFile[];
 
-    if (files.length === 0) {
-      files = this.project.addSourceFilesAtPaths(patterns);
+    if (targetFiles?.length) {
+      files = targetFiles.map((absolutePath) => {
+        const existing = this.project.getSourceFile(absolutePath);
+        return existing ?? this.project.addSourceFileAtPath(absolutePath);
+      });
+    } else {
+      files = this.project.getSourceFiles();
+      if (files.length === 0) {
+        files = this.project.addSourceFilesAtPaths(patterns);
+      }
     }
 
     const candidates: ScanCandidate[] = [];
@@ -263,6 +274,21 @@ export class Scanner {
       : ['src/**/*.{ts,tsx,js,jsx}'];
     const excludes = this.config.exclude?.map((pattern) => `!${pattern}`) ?? [];
     return [...includes, ...excludes];
+  }
+
+  private resolveTargetFiles(targets: string[]): string[] {
+    const normalizedPatterns = targets
+      .flatMap((entry) => entry.split(',').map((token) => token.trim()))
+      .filter(Boolean)
+      .map((pattern) => (path.isAbsolute(pattern) ? pattern : path.join(this.workspaceRoot, pattern)));
+
+    const matches = fg.sync(normalizedPatterns, {
+      onlyFiles: true,
+      unique: true,
+      followSymbolicLinks: true,
+    }) as string[];
+
+    return matches.sort((a, b) => a.localeCompare(b));
   }
 
   private getRelativePath(filePath: string): string {
