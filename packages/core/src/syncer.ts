@@ -1,5 +1,7 @@
+import fs from 'fs/promises';
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
+import fg from 'fast-glob';
 import { createPatch } from 'diff';
 import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
@@ -96,6 +98,25 @@ export interface LocaleDiffEntry {
   removed: string[];
 }
 
+interface FileFingerprint {
+  mtimeMs: number;
+  size: number;
+}
+
+interface ReferenceCacheEntry {
+  fingerprint: FileFingerprint;
+  references: TranslationReference[];
+  dynamicKeyWarnings: DynamicKeyWarning[];
+}
+
+interface ReferenceCacheFile {
+  version: number;
+  translationIdentifier: string;
+  files: Record<string, ReferenceCacheEntry>;
+}
+
+const REFERENCE_CACHE_VERSION = 1;
+
 export interface SyncerOptions {
   workspaceRoot?: string;
   project?: Project;
@@ -110,6 +131,7 @@ export interface SyncRunOptions {
   assumedKeys?: string[];
   selection?: SyncSelection;
   diff?: boolean;
+  invalidateCache?: boolean;
 }
 
 interface ResolvedSyncRunOptions {
@@ -134,6 +156,8 @@ export class Syncer {
   private readonly defaultEmptyValuePolicy: EmptyValuePolicy;
   private readonly emptyValueMarkers: Set<string>;
   private readonly defaultAssumedKeys: string[];
+  private readonly cacheDir: string;
+  private readonly referenceCachePath: string;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -157,15 +181,21 @@ export class Syncer {
       : DEFAULT_EMPTY_VALUE_MARKERS;
     this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
     this.defaultAssumedKeys = syncOptions.dynamicKeyAssumptions ?? [];
+    this.cacheDir = path.join(this.workspaceRoot, '.i18nsmith', 'cache');
+    this.referenceCachePath = path.join(this.cacheDir, 'sync-references.json');
   }
 
   public async run(runOptions: SyncRunOptions = {}): Promise<SyncSummary> {
     const runtime = this.resolveRuntimeOptions(runOptions);
     const write = runtime.write;
-    const files = this.loadFiles();
-    const { references, referencesByKey, keySet, dynamicKeyWarnings } = this.collectReferences(
-      files,
-      runtime.assumedKeys
+    const filePaths = await this.resolveSourceFilePaths();
+    const cacheState = await this.loadReferenceCache(runOptions.invalidateCache);
+    const nextCacheEntries: Record<string, ReferenceCacheEntry> = {};
+    const { references, referencesByKey, keySet, dynamicKeyWarnings } = await this.collectReferences(
+      filePaths,
+      runtime.assumedKeys,
+      cacheState,
+      nextCacheEntries
     );
 
     const localeData = await this.collectLocaleData();
@@ -253,9 +283,10 @@ export class Syncer {
     }));
 
     const diffs = runtime.generateDiffs ? this.buildLocaleDiffs(localeData, projectedLocaleData) : [];
+    await this.saveReferenceCache(nextCacheEntries);
 
     return {
-      filesScanned: files.length,
+      filesScanned: filePaths.length,
       references,
       missingKeys,
       unusedKeys,
@@ -274,45 +305,65 @@ export class Syncer {
     };
   }
 
-  private loadFiles(): SourceFile[] {
+  private async resolveSourceFilePaths(): Promise<string[]> {
     const patterns = this.resolveGlobPatterns(this.getGlobPatterns());
-    let files = this.project.getSourceFiles();
-    if (files.length === 0) {
-      files = this.project.addSourceFilesAtPaths(patterns);
-    }
-    return files;
+    const files = (await fg(patterns, {
+      onlyFiles: true,
+      unique: true,
+      followSymbolicLinks: true,
+    })) as string[];
+    return files.sort((a, b) => a.localeCompare(b));
   }
 
-  private collectReferences(files: SourceFile[], assumedKeys: Set<string>) {
+  private async collectReferences(
+    filePaths: string[],
+    assumedKeys: Set<string>,
+    cache: ReferenceCacheFile | undefined,
+    nextCacheEntries: Record<string, ReferenceCacheEntry>
+  ) {
     const references: TranslationReference[] = [];
     const referencesByKey = new Map<string, TranslationReference[]>();
     const keySet = new Set<string>();
     const dynamicKeyWarnings: DynamicKeyWarning[] = [];
+    const canUseCache = Boolean(cache);
 
-    for (const file of files) {
-      file.forEachDescendant((node) => {
-        if (!Node.isCallExpression(node)) {
-          return;
-        }
+    for (const absolutePath of filePaths) {
+      const relativePath = this.getRelativePath(absolutePath);
+      const fingerprint = await this.getFileFingerprint(absolutePath);
 
-        const analysis = this.extractKeyFromCall(node);
-        if (!analysis) {
-          return;
-        }
+      let fileReferences: TranslationReference[];
+      let fileWarnings: DynamicKeyWarning[];
 
-        if (analysis.kind === 'dynamic') {
-          dynamicKeyWarnings.push(this.createDynamicWarning(file, node, analysis.reason));
-          return;
-        }
+      const cachedEntry = canUseCache
+        ? this.getCachedEntry(cache!, relativePath, fingerprint)
+        : undefined;
 
-        const reference = this.createReference(file, node, analysis.key);
+      if (cachedEntry) {
+        fileReferences = cachedEntry.references;
+        fileWarnings = cachedEntry.dynamicKeyWarnings;
+        nextCacheEntries[relativePath] = cachedEntry;
+      } else {
+        const sourceFile = this.project.addSourceFileAtPath(absolutePath);
+        const extracted = this.extractReferencesFromFile(sourceFile);
+        fileReferences = extracted.references;
+        fileWarnings = extracted.dynamicKeyWarnings;
+        nextCacheEntries[relativePath] = {
+          fingerprint,
+          references: fileReferences,
+          dynamicKeyWarnings: fileWarnings,
+        };
+      }
+
+      for (const reference of fileReferences) {
         references.push(reference);
-        keySet.add(analysis.key);
-        if (!referencesByKey.has(analysis.key)) {
-          referencesByKey.set(analysis.key, []);
+        keySet.add(reference.key);
+        if (!referencesByKey.has(reference.key)) {
+          referencesByKey.set(reference.key, []);
         }
-        referencesByKey.get(analysis.key)!.push(reference);
-      });
+        referencesByKey.get(reference.key)!.push(reference);
+      }
+
+      dynamicKeyWarnings.push(...fileWarnings);
     }
 
     for (const key of assumedKeys) {
@@ -323,6 +374,58 @@ export class Syncer {
     }
 
     return { references, referencesByKey, keySet, dynamicKeyWarnings };
+  }
+
+  private extractReferencesFromFile(file: SourceFile) {
+    const references: TranslationReference[] = [];
+    const dynamicKeyWarnings: DynamicKeyWarning[] = [];
+
+    file.forEachDescendant((node) => {
+      if (!Node.isCallExpression(node)) {
+        return;
+      }
+
+      const analysis = this.extractKeyFromCall(node);
+      if (!analysis) {
+        return;
+      }
+
+      if (analysis.kind === 'dynamic') {
+        dynamicKeyWarnings.push(this.createDynamicWarning(file, node, analysis.reason));
+        return;
+      }
+
+      const reference = this.createReference(file, node, analysis.key);
+      references.push(reference);
+    });
+
+    return { references, dynamicKeyWarnings };
+  }
+
+  private async getFileFingerprint(filePath: string): Promise<FileFingerprint> {
+    const stats = await fs.stat(filePath);
+    return {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    };
+  }
+
+  private getCachedEntry(
+    cache: ReferenceCacheFile,
+    relativePath: string,
+    fingerprint: FileFingerprint
+  ): ReferenceCacheEntry | undefined {
+    const entry = cache.files[relativePath];
+    if (!entry) {
+      return undefined;
+    }
+    if (
+      entry.fingerprint.mtimeMs !== fingerprint.mtimeMs ||
+      entry.fingerprint.size !== fingerprint.size
+    ) {
+      return undefined;
+    }
+    return entry;
   }
 
   private extractKeyFromCall(
@@ -379,6 +482,45 @@ export class Syncer {
     }
 
     return result;
+  }
+
+  private async loadReferenceCache(invalidate?: boolean): Promise<ReferenceCacheFile | undefined> {
+    if (invalidate) {
+      await this.clearReferenceCache();
+      return undefined;
+    }
+
+    try {
+      const raw = await fs.readFile(this.referenceCachePath, 'utf8');
+      const parsed = JSON.parse(raw) as ReferenceCacheFile;
+      if (parsed.version !== REFERENCE_CACHE_VERSION) {
+        return undefined;
+      }
+      if (parsed.translationIdentifier !== this.translationIdentifier) {
+        return undefined;
+      }
+      if (!parsed.files || typeof parsed.files !== 'object') {
+        return undefined;
+      }
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async saveReferenceCache(entries: Record<string, ReferenceCacheEntry>): Promise<void> {
+    const payload: ReferenceCacheFile = {
+      version: REFERENCE_CACHE_VERSION,
+      translationIdentifier: this.translationIdentifier,
+      files: entries,
+    };
+
+    await fs.mkdir(this.cacheDir, { recursive: true });
+    await fs.writeFile(this.referenceCachePath, JSON.stringify(payload), 'utf8');
+  }
+
+  private async clearReferenceCache(): Promise<void> {
+    await fs.rm(this.referenceCachePath, { force: true }).catch(() => {});
   }
 
   private buildLocaleKeySets(localeData: Map<string, Record<string, string>>): Map<string, Set<string>> {

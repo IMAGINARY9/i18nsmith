@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nConfig } from './config.js';
 import { Syncer } from './syncer.js';
 
@@ -292,5 +292,29 @@ export default Selective;
     expect(esContents).not.toHaveProperty('extra.key');
     expect(esContents).not.toHaveProperty('unused.one');
     expect(esContents).toHaveProperty('unused.two');
+  });
+
+  it('caches translation references and honors explicit invalidation', async () => {
+    await writeFixtures();
+    const cachePath = path.join(tempDir, '.i18nsmith', 'cache', 'sync-references.json');
+
+    const initial = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    await initial.run();
+    const stats = await fs.stat(cachePath);
+    expect(stats.isFile()).toBe(true);
+
+    const cachedSyncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const cachedProject = (cachedSyncer as any).project;
+    const cachedSpy = vi.spyOn(cachedProject, 'addSourceFileAtPath');
+    await cachedSyncer.run();
+    expect(cachedSpy).not.toHaveBeenCalled();
+    cachedSpy.mockRestore();
+
+    const invalidatedSyncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const invalidatedProject = (invalidatedSyncer as any).project;
+    const invalidateSpy = vi.spyOn(invalidatedProject, 'addSourceFileAtPath');
+    await invalidatedSyncer.run({ invalidateCache: true });
+    expect(invalidateSpy.mock.calls.length).toBeGreaterThan(0);
+    invalidateSpy.mockRestore();
   });
 });

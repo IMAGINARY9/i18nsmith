@@ -120,6 +120,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 - **Dry-run previews**: Before writing, you’ll see per-locale counts of additions/removals so you can review changes in CI.
 - **Auto-fixes**: Run with `--write` to add placeholders for missing keys (and seed targets when `seedTargetLocales` is true) and prune unused entries.
 - **Unified diffs & patch exports**: Use `i18nsmith sync --diff` to print git-style unified diffs for each locale JSON file that would change. To persist per-locale patches for review or CI artifacts, use `i18nsmith sync --patch-dir ./artifacts` which writes `.patch` files (one per locale) suitable for `git apply` or upload.
+- **Incremental caching**: Repeated runs reuse a per-file reference cache so unchanged files are skipped. Pass `i18nsmith sync --invalidate-cache` after changing include globs or branching to force a clean re-scan.
 - **Interactive approvals**: Add `--interactive` to run a dry-run, then select which missing keys to add and which unused keys to prune before a final confirmation. This mode can’t be combined with `--json`.
 - **CI enforcement**: Add `--check` to fail the build whenever drift is detected.
 

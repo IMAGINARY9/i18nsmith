@@ -40,6 +40,7 @@ interface SyncCommandOptions extends ScanOptions {
   interactive?: boolean;
   diff?: boolean;
   patchDir?: string;
+  invalidateCache?: boolean;
 }
 
 const program = new Command();
@@ -210,9 +211,11 @@ program
   .option('--interactive', 'Interactively approve locale mutations before writing', false)
   .option('--diff', 'Display unified diffs for locale files that would change', false)
   .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
+  .option('--invalidate-cache', 'Ignore cached sync analysis and rescan all source files', false)
   .action(async (options: SyncCommandOptions) => {
     const interactive = Boolean(options.interactive);
     const diffEnabled = Boolean(options.diff || options.patchDir);
+    const invalidateCache = Boolean(options.invalidateCache);
     if (interactive && options.json) {
       console.error(chalk.red('--interactive cannot be combined with --json output.'));
       process.exitCode = 1;
@@ -233,7 +236,7 @@ program
       const config = await loadConfig(options.config);
       const syncer = new Syncer(config);
       if (interactive) {
-        await runInteractiveSync(syncer, { ...options, diff: diffEnabled });
+        await runInteractiveSync(syncer, { ...options, diff: diffEnabled, invalidateCache });
         return;
       }
 
@@ -243,6 +246,7 @@ program
         emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
         assumedKeys: options.assume,
         diff: diffEnabled,
+        invalidateCache,
       });
 
       if (options.json) {
@@ -391,12 +395,14 @@ function printSyncSummary(summary: SyncSummary) {
 
 async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
   const diffEnabled = Boolean(options.diff || options.patchDir);
+  const invalidateCache = Boolean(options.invalidateCache);
   const baseline = await syncer.run({
     write: false,
     validateInterpolations: options.validateInterpolations,
     emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
     assumedKeys: options.assume,
     diff: diffEnabled,
+    invalidateCache,
   });
 
   printSyncSummary(baseline);
