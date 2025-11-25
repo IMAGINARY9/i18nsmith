@@ -229,6 +229,11 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
   - Provide exit codes for specific classes of problems (e.g., 2 = interpolation mismatch, 3 = empty target values) to simplify automation.
 * Acceptance criteria: CI pipelines can parse command output, break builds on chosen policies, and create issues or PR comments.
 
+**Progress notes (2025-11-26):**
+- ✅ `SyncSummary`/`KeyRenameSummary` now expose `actionableItems` alongside `localePreview` and diff data so `--json` callers can surface precise issues (missing keys, duplicates, placeholder mismatches, etc.).
+- ✅ `i18nsmith sync --json` automatically includes locale previews and unified diffs even without `--diff`, making CI artifacts self-contained.
+- ✅ New structured exit codes: `1` for general drift, `2` for interpolation mismatches, `3` for empty locale values when `--no-empty-values` is enforced, enabling targeted CI policies.
+
 These additions map to the real-world cases we reviewed earlier and are prioritized to improve safety first (validation, CI), then developer experience (interactive flows, diffs), then scale/performance.
 
 ### 3.13. Existing i18n Detection & Merge Strategy
