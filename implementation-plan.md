@@ -217,6 +217,11 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
   - Provide a `--dry-run` preview of injection changes and explicit fallback instructions when it cannot safely transform the file.
 * Acceptance criteria: Provider injection succeeds in canonical Next.js layouts and refuses to edit ambiguous constructs.
 
+**Progress notes (2025-11-26):**
+- ✅ Added a dedicated `provider-injector` utility that loads candidate Next.js provider files with `ts-morph`, confirms exactly one `{children}` slot exists, injects an `I18nProvider` import, and wraps the JSX expression without string replacements.
+- ✅ `i18nsmith scaffold-adapter --type react-i18next` now exposes `--dry-run` to print the unified diff of the provider changes and bail without editing when you only want a preview.
+- ✅ When the injector encounters multiple `{children}` expressions or files that already use `<I18nProvider>`, the CLI surfaces explicit fallback instructions instead of attempting a risky rewrite.
+
 ### 3.12. Machine‑Friendly Outputs & CI Integrations
 * Objective: Make `sync` and `rename-key` outputs easy to consume by CI tooling and other automations.
 * Features:

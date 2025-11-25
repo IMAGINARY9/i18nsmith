@@ -1,11 +1,10 @@
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import path from 'path';
-import { promises as fs } from 'fs';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
 import { detectPackageManager, installDependencies } from '../utils/package-manager';
+import { maybeInjectProvider } from '../utils/provider-injector.js';
 
 interface ScaffoldCommandOptions {
   type?: 'custom' | 'react-i18next';
@@ -16,6 +15,7 @@ interface ScaffoldCommandOptions {
   localesDir?: string;
   force?: boolean;
   installDeps?: boolean;
+  dryRun?: boolean;
 }
 
 interface ScaffoldAnswers {
@@ -40,6 +40,7 @@ export function registerScaffoldAdapter(program: Command) {
     .option('--locales-dir <dir>', 'Locales directory relative to project root', 'locales')
     .option('-f, --force', 'Overwrite files if they already exist', false)
     .option('--install-deps', 'Automatically install adapter dependencies when missing', false)
+  .option('--dry-run', 'Preview provider injection changes without modifying files', false)
     .action(async (options: ScaffoldCommandOptions) => {
       console.log(chalk.blue('Scaffolding translation resources...'));
 
@@ -149,76 +150,35 @@ export function registerScaffoldAdapter(program: Command) {
           console.log(chalk.cyan(`import { I18nProvider } from '${answers.providerPath.replace(/\\\\/g, '/').replace(/\.tsx?$/, '')}';`));
           console.log(chalk.cyan('<I18nProvider>{children}</I18nProvider>'));
 
-          const injectionResult = await maybeInjectProvider(providerPath);
+          const injectionResult = await maybeInjectProvider({
+            providerComponentPath: providerPath,
+            dryRun: Boolean(options.dryRun),
+          });
+
           if (injectionResult.status === 'injected') {
             console.log(chalk.green(`\nUpdated ${injectionResult.file} to wrap <I18nProvider>.`));
+          } else if (injectionResult.status === 'preview') {
+            console.log(
+              chalk.blue(`\nProvider dry-run for ${injectionResult.file}: changes previewed below (no files modified).`)
+            );
+            console.log(injectionResult.diff.trimEnd());
           } else if (injectionResult.status === 'skipped') {
-            console.log(chalk.yellow(`\nProvider file ${injectionResult.file} already uses I18nProvider. Skipping injection.`));
+            console.log(
+              chalk.yellow(`\nProvider file ${injectionResult.file} already uses I18nProvider. Skipping injection.`)
+            );
           } else if (injectionResult.status === 'failed') {
-            console.log(chalk.red(`\nCould not automatically inject provider into ${injectionResult.file}. Edit manually to wrap your layout.`));
+            console.log(
+              chalk.red(
+                `\nCould not safely inject I18nProvider into ${injectionResult.file}: ${injectionResult.reason}\n` +
+                  'Please manually wrap your layout or providers file with <I18nProvider> and rerun.'
+              )
+            );
           } else {
-            console.log(chalk.gray('\nNo Next.js provider file detected for automatic injection.')); 
+            console.log(chalk.gray('\nNo Next.js provider file detected for automatic injection.'));
           }
         }
       } catch (error) {
         console.error(chalk.red('Failed to scaffold adapter:'), (error as Error).message);
       }
     });
-}
-
-async function fileExists(target: string) {
-  try {
-    await fs.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function toRelativeImport(from: string, to: string) {
-  let relative = path.relative(from, to).replace(/\\/g, '/');
-  if (!relative.startsWith('.')) {
-    relative = `./${relative}`;
-  }
-  return relative.replace(/\.(ts|tsx|js|jsx)$/i, '');
-}
-
-function insertImport(source: string, statement: string) {
-  const importRegex = /^(import[^;]+;\s*)+/m;
-  const match = source.match(importRegex);
-  if (match) {
-    const idx = match.index! + match[0].length;
-    return `${source.slice(0, idx)}${statement}\n${source.slice(idx)}`;
-  }
-  return `${statement}\n${source}`;
-}
-
-async function maybeInjectProvider(providerComponentPath: string) {
-  const workspaceRoot = process.cwd();
-  const candidates = ['app/providers.tsx', 'app/providers.ts', 'app/providers.jsx', 'app/providers.js', 'src/app/providers.tsx', 'src/app/providers.ts', 'src/app/providers.jsx', 'src/app/providers.js'];
-  const providerAbsolute = path.resolve(providerComponentPath);
-
-  for (const candidate of candidates) {
-    const absolute = path.resolve(workspaceRoot, candidate);
-    if (!(await fileExists(absolute))) {
-      continue;
-    }
-
-    const contents = await fs.readFile(absolute, 'utf8');
-    if (contents.includes('I18nProvider')) {
-      return { status: 'skipped' as const, file: candidate };
-    }
-
-    const importPath = toRelativeImport(path.dirname(absolute), providerAbsolute);
-    const newImport = `import { I18nProvider } from '${importPath}';\n`;
-    const withImport = insertImport(contents, newImport);
-    if (!withImport.includes('{children}')) {
-      return { status: 'failed' as const, file: candidate };
-    }
-    const wrapped = withImport.replace('{children}', '<I18nProvider>{children}</I18nProvider>');
-    await fs.writeFile(absolute, wrapped, 'utf8');
-    return { status: 'injected' as const, file: candidate };
-  }
-
-  return { status: 'not-found' as const };
 }

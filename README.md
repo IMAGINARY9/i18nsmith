@@ -96,7 +96,7 @@ Run:
 i18nsmith scaffold-adapter --type react-i18next --source-language en --i18n-path src/lib/i18n.ts --provider-path src/components/i18n-provider.tsx --install-deps
 ```
 
-Both flows respect `--locales-dir`, refuse to overwrite existing files unless you confirm `--force`, and warn if `react-i18next` / `i18next` are missing from `package.json`. Pass `--install-deps` to let the CLI install any missing runtime dependencies using your detected package manager. If a Next.js `app/providers.(ts|tsx)` file exists, the scaffold command will also attempt to inject the generated `I18nProvider` automatically (falling back to human-readable instructions when it can’t safely edit the file).
+Both flows respect `--locales-dir`, refuse to overwrite existing files unless you confirm `--force`, and warn if `react-i18next` / `i18next` are missing from `package.json`. Pass `--install-deps` to let the CLI install any missing runtime dependencies using your detected package manager. If a Next.js `app/providers.(ts|tsx)` file exists, the scaffold command will also attempt to inject the generated `I18nProvider` automatically using `ts-morph` so only the `{children}` expression is wrapped. Ambiguous layouts (multiple `{children}` slots) are skipped with explicit guidance, and `--dry-run` shows the exact patch without editing files so you can review the changes in CI before applying them locally.
 
 Regardless of the path you choose, if you stick with `react-i18next` you still need to install the dependencies and initialize them early in your app shell (the scaffolded files already do this for you, but you can roll your own):
 
