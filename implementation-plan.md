@@ -205,6 +205,11 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
   - Provide `--invalidate-cache` when structural changes occur (e.g., change in `include` globs).
 * Acceptance criteria: Re-run times drop substantially on large repos; cache correctness validated by end-to-end tests.
 
+**Progress notes (2025-11-25):**
+- ✅ `Syncer` now maintains a per-file reference cache under `.i18nsmith/cache/sync-references.json`, keyed by file size/mtime so unchanged files skip AST parsing on subsequent runs.
+- ✅ `i18nsmith sync --invalidate-cache` forces a cold scan when include globs or branch changes invalidate the cache; interactive runs honor the flag for their dry-run stage.
+- ✅ New core tests verify cache creation, reuse (no `addSourceFileAtPath` calls on warm runs), and invalidation behavior.
+
 ### 3.11. Provider Injection Robustness
 * Objective: Replace string-probing heuristics with AST-aware injection for framework provider files.
 * Features:
