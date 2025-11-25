@@ -45,6 +45,12 @@ interface SyncCommandOptions extends ScanOptions {
 
 const program = new Command();
 
+const SYNC_EXIT_CODES = {
+  DRIFT: 1,
+  PLACEHOLDER_MISMATCH: 2,
+  EMPTY_VALUES: 3,
+} as const;
+
 program
   .name('i18nsmith')
   .description('Universal Automated i18n Library')
@@ -216,6 +222,7 @@ program
     const interactive = Boolean(options.interactive);
     const diffEnabled = Boolean(options.diff || options.patchDir);
     const invalidateCache = Boolean(options.invalidateCache);
+    const diffRequested = diffEnabled || Boolean(options.json);
     if (interactive && options.json) {
       console.error(chalk.red('--interactive cannot be combined with --json output.'));
       process.exitCode = 1;
@@ -245,7 +252,7 @@ program
         validateInterpolations: options.validateInterpolations,
         emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
         assumedKeys: options.assume,
-        diff: diffEnabled,
+        diff: diffRequested,
         invalidateCache,
       });
 
@@ -266,13 +273,23 @@ program
       const shouldFailEmptyValues =
         summary.validation.emptyValuePolicy === 'fail' && summary.emptyValueViolations.length > 0;
 
-      if (
-        options.check &&
-        (summary.missingKeys.length || summary.unusedKeys.length || shouldFailPlaceholders || shouldFailEmptyValues)
-      ) {
-        console.error(chalk.red('\nDrift detected. Run with --write to fix.'));
-        process.exitCode = 1;
-        return;
+      if (options.check) {
+        const hasDrift = summary.missingKeys.length || summary.unusedKeys.length;
+        if (shouldFailPlaceholders) {
+          console.error(chalk.red('\nPlaceholder mismatches detected. Run with --write to fix.'));
+          process.exitCode = SYNC_EXIT_CODES.PLACEHOLDER_MISMATCH;
+          return;
+        }
+        if (shouldFailEmptyValues) {
+          console.error(chalk.red('\nEmpty locale values detected. Run with --write to fix.'));
+          process.exitCode = SYNC_EXIT_CODES.EMPTY_VALUES;
+          return;
+        }
+        if (hasDrift) {
+          console.error(chalk.red('\nDrift detected. Run with --write to fix.'));
+          process.exitCode = SYNC_EXIT_CODES.DRIFT;
+          return;
+        }
       }
 
       if (!options.write && (summary.missingKeys.length || summary.unusedKeys.length)) {

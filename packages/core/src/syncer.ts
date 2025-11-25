@@ -6,6 +6,7 @@ import { createPatch } from 'diff';
 import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
+import { ActionableItem } from './actionable.js';
 
 export interface TranslationReference {
   key: string;
@@ -40,6 +41,7 @@ export interface SyncSummary {
   validation: SyncValidationState;
   assumedKeys: string[];
   write: boolean;
+  actionableItems: ActionableItem[];
 }
 
 export interface SyncSelection {
@@ -285,6 +287,19 @@ export class Syncer {
     const diffs = runtime.generateDiffs ? this.buildLocaleDiffs(localeData, projectedLocaleData) : [];
     await this.saveReferenceCache(nextCacheEntries);
 
+    const actionableItems = this.buildActionableItems({
+      missingKeys,
+      unusedKeys,
+      placeholderIssues,
+      emptyValueViolations,
+      dynamicKeyWarnings,
+      validation: {
+        interpolations: runtime.validateInterpolations,
+        emptyValuePolicy: runtime.emptyValuePolicy,
+      },
+      assumedKeys: Array.from(runtime.assumedKeys).sort(),
+    });
+
     return {
       filesScanned: filePaths.length,
       references,
@@ -302,7 +317,98 @@ export class Syncer {
       },
       assumedKeys: Array.from(runtime.assumedKeys).sort(),
       write,
+      actionableItems,
     };
+  }
+
+  private buildActionableItems(input: {
+    missingKeys: MissingKeyRecord[];
+    unusedKeys: UnusedKeyRecord[];
+    placeholderIssues: PlaceholderIssue[];
+    emptyValueViolations: EmptyValueViolation[];
+    dynamicKeyWarnings: DynamicKeyWarning[];
+    validation: SyncValidationState;
+    assumedKeys: string[];
+  }): ActionableItem[] {
+    const items: ActionableItem[] = [];
+
+    input.missingKeys.forEach((record) => {
+      const reference = record.references[0];
+      items.push({
+        kind: 'missing-key',
+        severity: 'error',
+        key: record.key,
+        filePath: reference?.filePath,
+        message: `Key "${record.key}" referenced ${record.references.length} time${record.references.length === 1 ? '' : 's'} but missing from source locale`,
+        details: {
+          referenceCount: record.references.length,
+        },
+      });
+    });
+
+    input.unusedKeys.forEach((record) => {
+      items.push({
+        kind: 'unused-key',
+        severity: 'warn',
+        key: record.key,
+        message: `Key "${record.key}" is present in locales (${record.locales.join(', ')}) but not referenced in code`,
+        details: {
+          locales: record.locales,
+        },
+      });
+    });
+
+    input.placeholderIssues.forEach((issue) => {
+      items.push({
+        kind: 'placeholder-mismatch',
+        severity: 'error',
+        key: issue.key,
+        locale: issue.locale,
+        message: `Placeholder mismatch for "${issue.key}" in ${issue.locale}`,
+        details: {
+          missing: issue.missing,
+          extra: issue.extra,
+        },
+      });
+    });
+
+    if (input.validation.emptyValuePolicy !== 'ignore') {
+      input.emptyValueViolations.forEach((violation) => {
+        items.push({
+          kind: 'empty-value',
+          severity: input.validation.emptyValuePolicy === 'fail' ? 'error' : 'warn',
+          key: violation.key,
+          locale: violation.locale,
+          message: `Empty locale value detected for "${violation.key}" in ${violation.locale} (${violation.reason})`,
+        });
+      });
+    }
+
+    input.dynamicKeyWarnings.forEach((warning) => {
+      items.push({
+        kind: 'dynamic-key-warning',
+        severity: 'warn',
+        key: warning.expression,
+        filePath: warning.filePath,
+        message: `Dynamic translation key detected in ${warning.filePath}:${warning.position.line}`,
+        details: {
+          reason: warning.reason,
+        },
+      });
+    });
+
+    if (input.assumedKeys.length) {
+      items.push({
+        kind: 'assumed-keys',
+        severity: 'info',
+        message: `Assuming runtime-only keys: ${input.assumedKeys.join(', ')}`,
+        details: {
+          keys: input.assumedKeys,
+        },
+      });
+    }
+
+    return items;
   }
 
   private async resolveSourceFilePaths(): Promise<string[]> {

@@ -85,6 +85,9 @@ export default Component;
       },
     ]);
     expect(summary.localeStats).toEqual([]);
+    const kinds = summary.actionableItems.map((item) => item.kind);
+    expect(kinds).toContain('missing-key');
+    expect(kinds).toContain('unused-key');
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toHaveProperty('unused.key');

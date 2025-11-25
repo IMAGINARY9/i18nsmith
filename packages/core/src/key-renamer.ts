@@ -2,6 +2,7 @@ import path from 'path';
 import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
+import { ActionableItem } from './actionable.js';
 
 export interface KeyRenamerOptions {
   workspaceRoot?: string;
@@ -35,6 +36,7 @@ export interface KeyRenameSummary {
   localePreview: KeyRenameLocalePreview[];
   missingLocales: string[];
   write: boolean;
+  actionableItems: ActionableItem[];
 }
 
 export interface KeyRenameMappingSummary {
@@ -52,6 +54,7 @@ export interface KeyRenameBatchSummary {
   localeStats: LocaleFileStats[];
   mappingSummaries: KeyRenameMappingSummary[];
   write: boolean;
+  actionableItems: ActionableItem[];
 }
 
 export class KeyRenamer {
@@ -88,6 +91,7 @@ export class KeyRenamer {
       localePreview: mappingSummary?.localePreview ?? [],
       missingLocales: mappingSummary?.missingLocales ?? [],
       write: batchResult.write,
+      actionableItems: batchResult.actionableItems,
     };
   }
 
@@ -190,6 +194,7 @@ export class KeyRenamer {
 
     const localeStats = write ? await this.localeStore.flush() : [];
     const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
+    const actionableItems = this.buildActionableItems(mappingSummaries);
 
     return {
       filesScanned: files.length,
@@ -198,7 +203,46 @@ export class KeyRenamer {
       localeStats,
       mappingSummaries,
       write,
+      actionableItems,
     };
+  }
+
+  private buildActionableItems(mappingSummaries: KeyRenameMappingSummary[]): ActionableItem[] {
+    const items: ActionableItem[] = [];
+    mappingSummaries.forEach((mapping) => {
+      if (mapping.occurrences === 0) {
+        items.push({
+          kind: 'rename-no-occurrences',
+          severity: 'warn',
+          key: mapping.from,
+          message: `No usages of "${mapping.from}" were found in source files.`,
+          details: { to: mapping.to },
+        });
+      }
+
+      mapping.localePreview.forEach((preview) => {
+        if (preview.missing) {
+          items.push({
+            kind: 'rename-missing-locale',
+            severity: 'warn',
+            key: mapping.from,
+            locale: preview.locale,
+            message: `Locale ${preview.locale} is missing key "${mapping.from}".`,
+          });
+        }
+        if (preview.duplicate) {
+          items.push({
+            kind: 'rename-duplicate-target',
+            severity: 'error',
+            key: mapping.to,
+            locale: preview.locale,
+            message: `Locale ${preview.locale} already has key "${mapping.to}".`,
+          });
+        }
+      });
+    });
+
+    return items;
   }
 
   private loadFiles() {
