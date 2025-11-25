@@ -117,6 +117,11 @@ interface ReferenceCacheFile {
   files: Record<string, ReferenceCacheEntry>;
 }
 
+interface TargetReferenceFilter {
+  absolute: Set<string>;
+  relative: Set<string>;
+}
+
 const REFERENCE_CACHE_VERSION = 1;
 
 export interface SyncerOptions {
@@ -134,6 +139,7 @@ export interface SyncRunOptions {
   selection?: SyncSelection;
   diff?: boolean;
   invalidateCache?: boolean;
+  targets?: string[];
 }
 
 interface ResolvedSyncRunOptions {
@@ -190,9 +196,15 @@ export class Syncer {
   public async run(runOptions: SyncRunOptions = {}): Promise<SyncSummary> {
     const runtime = this.resolveRuntimeOptions(runOptions);
     const write = runtime.write;
-    const filePaths = await this.resolveSourceFilePaths();
+    const targetFilter = await this.resolveTargetReferenceFilter(runOptions.targets);
+    let filePaths = await this.resolveSourceFilePaths();
+    if (targetFilter) {
+      filePaths = filePaths.filter((filePath) => targetFilter.absolute.has(filePath));
+    }
     const cacheState = await this.loadReferenceCache(runOptions.invalidateCache);
-    const nextCacheEntries: Record<string, ReferenceCacheEntry> = {};
+    const nextCacheEntries: Record<string, ReferenceCacheEntry> = targetFilter
+      ? { ...(cacheState?.files ?? {}) }
+      : {};
     const { references, referencesByKey, keySet, dynamicKeyWarnings } = await this.collectReferences(
       filePaths,
       runtime.assumedKeys,
@@ -200,74 +212,42 @@ export class Syncer {
       nextCacheEntries
     );
 
+    const {
+      scopedReferences,
+      scopedReferencesByKey,
+      scopedKeySet,
+      scopedDynamicKeyWarnings,
+    } = this.scopeAnalysisToTargets({
+      targetFilter,
+      references,
+      referencesByKey,
+      keySet,
+      dynamicKeyWarnings,
+      assumedKeys: runtime.assumedKeys,
+    });
+
     const localeData = await this.collectLocaleData();
     const projectedLocaleData = this.cloneLocaleData(localeData);
     const localeKeySets = this.buildLocaleKeySets(localeData);
-    const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
 
-    const localeDiff = new Map<string, { add: Set<string>; remove: Set<string> }>();
+    const { missingKeys, missingKeysToApply } = this.processMissingKeys(
+      scopedKeySet,
+      scopedReferencesByKey,
+      localeKeySets,
+      projectedLocaleData,
+      runtime.selectedMissingKeys
+    );
 
-    const previewAdd = (locale: string, key: string) => {
-      if (!localeDiff.has(locale)) {
-        localeDiff.set(locale, { add: new Set(), remove: new Set() });
-      }
-      localeDiff.get(locale)!.add.add(key);
-    };
-
-    const previewRemove = (locale: string, key: string) => {
-      if (!localeDiff.has(locale)) {
-        localeDiff.set(locale, { add: new Set(), remove: new Set() });
-      }
-      localeDiff.get(locale)!.remove.add(key);
-    };
-
-    const missingKeys = Array.from(keySet)
-      .filter((key) => !sourceLocaleKeys.has(key))
-      .map((key) => ({
-        key,
-        references: referencesByKey.get(key) ?? [],
-      }));
-
-    const missingKeysToApply = this.filterSelection(missingKeys, runtime.selectedMissingKeys);
-    for (const record of missingKeysToApply) {
-      previewAdd(this.sourceLocale, record.key);
-      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, record.key);
-      if (this.config.seedTargetLocales) {
-        for (const locale of this.targetLocales) {
-          previewAdd(locale, record.key);
-          this.applyProjectedValue(projectedLocaleData, locale, record.key, '');
-        }
-      }
-    }
-
-    const unusedKeyMap = new Map<string, Set<string>>();
-    for (const [locale, keys] of localeKeySets) {
-      for (const key of keys) {
-        if (keySet.has(key)) {
-          continue;
-        }
-        if (!unusedKeyMap.has(key)) {
-          unusedKeyMap.set(key, new Set());
-        }
-        unusedKeyMap.get(key)!.add(locale);
-      }
-    }
-
-    const unusedKeys: UnusedKeyRecord[] = Array.from(unusedKeyMap.entries()).map(([key, locales]) => ({
-      key,
-      locales: Array.from(locales).sort(),
-    }));
-
-    const unusedKeysToApply = this.filterSelection(unusedKeys, runtime.selectedUnusedKeys);
-    for (const record of unusedKeysToApply) {
-      record.locales.forEach((locale) => {
-        previewRemove(locale, record.key);
-        this.applyProjectedRemoval(projectedLocaleData, locale, record.key);
-      });
-    }
+    const { unusedKeys, unusedKeysToApply } = this.processUnusedKeys(
+      keySet,
+      localeKeySets,
+      projectedLocaleData,
+      runtime.selectedUnusedKeys,
+      !targetFilter
+    );
 
     const placeholderIssues = runtime.validateInterpolations
-      ? this.collectPlaceholderIssues(localeData, referencesByKey)
+      ? this.collectPlaceholderIssues(localeData, scopedReferencesByKey)
       : [];
     const emptyValueViolations = this.collectEmptyValueViolations(localeData);
 
@@ -278,12 +258,7 @@ export class Syncer {
       localeStats = await this.localeStore.flush();
     }
 
-    const localePreview: LocaleDiffPreview[] = Array.from(localeDiff.entries()).map(([locale, diff]) => ({
-      locale,
-      add: Array.from(diff.add).sort(),
-      remove: Array.from(diff.remove).sort(),
-    }));
-
+    const localePreview = this.buildLocalePreview(projectedLocaleData, localeData);
     const diffs = runtime.generateDiffs ? this.buildLocaleDiffs(localeData, projectedLocaleData) : [];
     await this.saveReferenceCache(nextCacheEntries);
 
@@ -292,7 +267,7 @@ export class Syncer {
       unusedKeys,
       placeholderIssues,
       emptyValueViolations,
-      dynamicKeyWarnings,
+      dynamicKeyWarnings: scopedDynamicKeyWarnings,
       validation: {
         interpolations: runtime.validateInterpolations,
         emptyValuePolicy: runtime.emptyValuePolicy,
@@ -302,7 +277,7 @@ export class Syncer {
 
     return {
       filesScanned: filePaths.length,
-      references,
+      references: scopedReferences,
       missingKeys,
       unusedKeys,
       localeStats,
@@ -310,7 +285,7 @@ export class Syncer {
       diffs,
       placeholderIssues,
       emptyValueViolations,
-      dynamicKeyWarnings,
+      dynamicKeyWarnings: scopedDynamicKeyWarnings,
       validation: {
         interpolations: runtime.validateInterpolations,
         emptyValuePolicy: runtime.emptyValuePolicy,
@@ -319,6 +294,139 @@ export class Syncer {
       write,
       actionableItems,
     };
+  }
+
+  private scopeAnalysisToTargets(input: {
+    targetFilter: TargetReferenceFilter | undefined;
+    references: TranslationReference[];
+    referencesByKey: Map<string, TranslationReference[]>;
+    keySet: Set<string>;
+    dynamicKeyWarnings: DynamicKeyWarning[];
+    assumedKeys: Set<string>;
+  }) {
+    const { targetFilter, references, referencesByKey, keySet, dynamicKeyWarnings, assumedKeys } = input;
+    const targetReferenceSet = targetFilter?.relative;
+
+    if (!targetReferenceSet) {
+      return {
+        scopedReferences: references,
+        scopedReferencesByKey: referencesByKey,
+        scopedKeySet: keySet,
+        scopedDynamicKeyWarnings: dynamicKeyWarnings,
+      };
+    }
+
+    const scopedReferences = references.filter((reference) =>
+      targetReferenceSet.has(reference.filePath)
+    );
+
+    const scopedReferencesByKey = this.filterReferencesByKey(referencesByKey, targetReferenceSet);
+
+    const scopedDynamicKeyWarnings = dynamicKeyWarnings.filter((warning) =>
+      targetReferenceSet.has(warning.filePath)
+    );
+
+    const scopedKeySet = this.buildFilteredKeySet(scopedReferences, assumedKeys);
+
+    return {
+      scopedReferences,
+      scopedReferencesByKey,
+      scopedKeySet,
+      scopedDynamicKeyWarnings,
+    };
+  }
+
+  private processMissingKeys(
+    keySet: Set<string>,
+    referencesByKey: Map<string, TranslationReference[]>,
+    localeKeySets: Map<string, Set<string>>,
+    projectedLocaleData: Map<string, Record<string, string>>,
+    selectedMissingKeys?: Set<string>
+  ) {
+    const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
+    const missingKeys = Array.from(keySet)
+      .filter((key) => !sourceLocaleKeys.has(key))
+      .map((key) => ({
+        key,
+        references: referencesByKey.get(key) ?? [],
+      }));
+
+    const missingKeysToApply = this.filterSelection(missingKeys, selectedMissingKeys);
+    for (const record of missingKeysToApply) {
+      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, record.key);
+      if (this.config.seedTargetLocales) {
+        for (const locale of this.targetLocales) {
+          this.applyProjectedValue(projectedLocaleData, locale, record.key, '');
+        }
+      }
+    }
+    return { missingKeys, missingKeysToApply };
+  }
+
+  private processUnusedKeys(
+    keySet: Set<string>,
+    localeKeySets: Map<string, Set<string>>,
+    projectedLocaleData: Map<string, Record<string, string>>,
+    selectedUnusedKeys?: Set<string>,
+    enabled: boolean = true
+  ) {
+    let unusedKeys: UnusedKeyRecord[] = [];
+    if (enabled) {
+      const unusedKeyMap = new Map<string, Set<string>>();
+      for (const [locale, keys] of localeKeySets) {
+        for (const key of keys) {
+          if (keySet.has(key)) {
+            continue;
+          }
+          if (!unusedKeyMap.has(key)) {
+            unusedKeyMap.set(key, new Set());
+          }
+          unusedKeyMap.get(key)!.add(locale);
+        }
+      }
+
+      unusedKeys = Array.from(unusedKeyMap.entries()).map(([key, locales]) => ({
+        key,
+        locales: Array.from(locales).sort(),
+      }));
+    }
+
+    const unusedKeysToApply = this.filterSelection(unusedKeys, selectedUnusedKeys);
+    for (const record of unusedKeysToApply) {
+      record.locales.forEach((locale) => {
+        this.applyProjectedRemoval(projectedLocaleData, locale, record.key);
+      });
+    }
+
+    return { unusedKeys, unusedKeysToApply };
+  }
+
+  private buildLocalePreview(
+    projectedData: Map<string, Record<string, string>>,
+    originalData: Map<string, Record<string, string>>
+  ): LocaleDiffPreview[] {
+    const allLocales = new Set([...projectedData.keys(), ...originalData.keys()]);
+    const preview: LocaleDiffPreview[] = [];
+
+    for (const locale of allLocales) {
+      const projected = projectedData.get(locale) ?? {};
+      const original = originalData.get(locale) ?? {};
+      const projectedKeys = new Set(Object.keys(projected));
+      const originalKeys = new Set(Object.keys(original));
+
+      const added = [...projectedKeys].filter((key) => !originalKeys.has(key));
+      const removed = [...originalKeys].filter((key) => !projectedKeys.has(key));
+
+      if (added.length || removed.length) {
+        preview.push({
+          locale,
+          add: added.sort(),
+          remove: removed.sort(),
+        });
+      }
+    }
+
+    return preview;
   }
 
   private buildActionableItems(input: {
@@ -409,6 +517,45 @@ export class Syncer {
     }
 
     return items;
+  }
+
+  private async resolveTargetReferenceFilter(targets?: string[]): Promise<TargetReferenceFilter | undefined> {
+    if (!targets?.length) {
+      return undefined;
+    }
+
+    const normalizedTargets = targets
+      .map((entry) => entry?.trim())
+      .filter((entry): entry is string => Boolean(entry));
+
+    if (!normalizedTargets.length) {
+      return undefined;
+    }
+
+    const resolvedPatterns = normalizedTargets.map((pattern) =>
+      path.isAbsolute(pattern) ? pattern : path.join(this.workspaceRoot, pattern)
+    );
+
+    const files = (await fg(resolvedPatterns, {
+      onlyFiles: true,
+      unique: true,
+      followSymbolicLinks: true,
+    })) as string[];
+
+    if (!files.length) {
+      return undefined;
+    }
+
+    const absolute = new Set<string>();
+    const relative = new Set<string>();
+
+    for (const filePath of files) {
+      const absolutePath = path.resolve(filePath);
+      absolute.add(absolutePath);
+      relative.add(this.getRelativePath(absolutePath));
+    }
+
+    return { absolute, relative };
   }
 
   private async resolveSourceFilePaths(): Promise<string[]> {
@@ -826,6 +973,30 @@ export class Syncer {
       return items;
     }
     return items.filter((item) => selection.has(item.key));
+  }
+
+  private filterReferencesByKey(
+    referencesByKey: Map<string, TranslationReference[]>,
+    targetFiles: Set<string>
+  ): Map<string, TranslationReference[]> {
+    const filtered = new Map<string, TranslationReference[]>();
+    for (const [key, references] of referencesByKey.entries()) {
+      const scoped = references.filter((reference) => targetFiles.has(reference.filePath));
+      if (scoped.length) {
+        filtered.set(key, scoped);
+      }
+    }
+    return filtered;
+  }
+
+  private buildFilteredKeySet(
+    references: TranslationReference[],
+    assumedKeys: Set<string>
+  ): Set<string> {
+    const scoped = new Set<string>();
+    references.forEach((reference) => scoped.add(reference.key));
+    assumedKeys.forEach((key) => scoped.add(key));
+    return scoped;
   }
 
   private buildSelectionSet(keys?: string[]): Set<string> | undefined {

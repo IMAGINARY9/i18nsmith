@@ -151,6 +151,35 @@ describe('Transformer', () => {
     expect(importIndex).toBeGreaterThan(directiveIndex);
   });
 
+  it('scans only the requested target files', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-target-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+
+    const alphaPath = path.join(srcDir, 'Alpha.tsx');
+    const betaPath = path.join(srcDir, 'Beta.tsx');
+    await fs.writeFile(alphaPath, "export const Alpha = () => <div>Alpha text</div>;");
+    await fs.writeFile(betaPath, "export const Beta = () => <div>Beta text</div>;");
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      write: false,
+    });
+
+    const summary = await transformer.run({ targets: ['src/Beta.tsx'] });
+
+    expect(summary.filesScanned).toBe(1);
+    const candidateFiles = Array.from(new Set(summary.candidates.map((candidate) => candidate.filePath))).sort();
+    expect(candidateFiles).toEqual(['src/Beta.tsx']);
+  });
+
   it('supports custom translation adapters from config', async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-adapter-'));
     const srcDir = path.join(tempDir, 'src');

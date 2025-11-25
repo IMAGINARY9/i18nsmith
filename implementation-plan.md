@@ -260,13 +260,18 @@ These additions map to the real-world cases we reviewed earlier and are prioriti
   - Creating a localized content page where only a subset of locales should be seeded initially.
 * Feature details:
   - `i18nsmith transform --target <path|glob>` restricts transformation to a specific file or directory (useful when onboarding a single page).
-  - `i18nsmith sync --target <path|glob>` restricts sync analysis to references within the target scope but still checks locale-wide unused keys (so you can preview the impact of the new page).
+  - `i18nsmith sync --target <path|glob>` restricts sync analysis—and resulting fixes/actionable items—to references within the target scope while intentionally skipping unused-key pruning to avoid deleting unrelated locales during incremental onboarding.
   - `i18nsmith scaffold-adapter --for-file <path>` prints minimal integration snippet (import + provider usage example) tailored to the file's relative path and framework (Next.js vs pages dir).
   - `--seed-locales en,es` allows seeding only a subset of target locales when adding a page.
 * Safety rails:
   - When operating on a single file, all writes are atomic and the CLI will produce a preflight `.patch` showing AST-level changes to the file and the locale files it will touch.
   - `--dry-run` is the default for per-file ops.
 * Acceptance criteria: Teams can incrementally add localized pages without risking broad changes or accidentally pruning unrelated keys.
+
+**Progress notes (2025-11-26):**
+- ✅ Added `--target` to both `i18nsmith transform` and `i18nsmith sync`, accepting repeatable file paths or globs to scope scans/writes to a specific feature.
+- ✅ Targeted sync runs now filter references, summaries, and actionable diagnostics to the requested files while disabling unused-key pruning; interactive mode honors the same scope.
+- ✅ Added automated coverage (`syncer.test.ts`, `transformer.test.ts`) plus README instructions so per-file onboarding is documented end-to-end.
 
 
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
