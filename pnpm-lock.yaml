@@ -41,9 +41,15 @@ importers:
       commander:
         specifier: ^11.0.0
         version: 11.1.0
+      diff:
+        specifier: ^8.0.2
+        version: 8.0.2
       inquirer:
         specifier: ^9.0.0
         version: 9.3.8(@types/node@20.19.25)
+      ts-morph:
+        specifier: ^21.0.0
+        version: 21.0.1
 
   packages/core:
     dependencies:
