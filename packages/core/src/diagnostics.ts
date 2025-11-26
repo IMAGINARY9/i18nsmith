@@ -5,7 +5,7 @@ import { I18nConfig } from './config.js';
 import { ActionableItem } from './actionable.js';
 
 const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
-const RUNTIME_DEPENDENCIES = [
+const DEFAULT_RUNTIME_DEPENDENCIES = [
   'react-i18next',
   'i18next',
   'next-i18next',
@@ -14,20 +14,20 @@ const RUNTIME_DEPENDENCIES = [
   '@lingui/react',
 ];
 
-const PROVIDER_GLOBS = [
+const DEFAULT_PROVIDER_GLOBS = [
   'app/**/providers.{ts,tsx,js,jsx}',
   'src/app/**/providers.{ts,tsx,js,jsx}',
   'src/providers/**/*.{ts,tsx,js,jsx}',
   '**/i18n-provider.{ts,tsx,js,jsx}',
 ];
 
-const ADAPTER_HINTS: AdapterDetection[] = [
+const DEFAULT_ADAPTER_HINTS: AdapterDetection[] = [
   { path: 'src/components/i18n-provider.tsx', type: 'react-i18next' },
   { path: 'src/lib/i18n.ts', type: 'react-i18next' },
   { path: 'src/contexts/translation-context.tsx', type: 'custom' },
 ];
 
-const MAX_SOURCE_FILES = 200;
+const DEFAULT_MAX_SOURCE_FILES = 200;
 
 export interface RuntimePackageInfo {
   name: string;
@@ -97,9 +97,9 @@ export async function diagnoseWorkspace(config: I18nConfig, options: DiagnoseOpt
 
   const localeFiles = await detectLocaleFiles(localesDir, config);
   const detectedLocales = localeFiles.filter((entry) => !entry.missing && !entry.parseError).map((entry) => entry.locale);
-  const runtimePackages = await detectRuntimePackages(workspaceRoot);
-  const providerFiles = await detectProviderFiles(workspaceRoot);
-  const adapterFiles = await detectAdapterFiles(workspaceRoot);
+  const runtimePackages = await detectRuntimePackages(workspaceRoot, config);
+  const providerFiles = await detectProviderFiles(workspaceRoot, config);
+  const adapterFiles = await detectAdapterFiles(workspaceRoot, config);
   const translationUsage = await detectTranslationUsage(workspaceRoot, config);
 
   const { actionableItems, conflicts, recommendations } = buildActionableInsights({
@@ -267,8 +267,11 @@ async function detectLocaleFiles(localesDir: string, config: I18nConfig): Promis
   return entries.sort((a, b) => a.locale.localeCompare(b.locale));
 }
 
-async function detectRuntimePackages(workspaceRoot: string): Promise<RuntimePackageInfo[]> {
+async function detectRuntimePackages(workspaceRoot: string, config: I18nConfig): Promise<RuntimePackageInfo[]> {
   const pkgPath = path.join(workspaceRoot, 'package.json');
+  const candidates = Array.from(
+    new Set([...DEFAULT_RUNTIME_DEPENDENCIES, ...(config.diagnostics?.runtimePackages ?? [])])
+  );
   try {
     const raw = await fs.readFile(pkgPath, 'utf8');
     const pkg = JSON.parse(raw) as {
@@ -279,7 +282,7 @@ async function detectRuntimePackages(workspaceRoot: string): Promise<RuntimePack
     const devDeps = pkg.devDependencies ?? {};
     const detections: RuntimePackageInfo[] = [];
 
-    for (const dep of RUNTIME_DEPENDENCIES) {
+    for (const dep of candidates) {
       if (deps[dep]) {
         detections.push({ name: dep, version: deps[dep], source: 'dependencies' });
       } else if (devDeps[dep]) {
@@ -293,8 +296,11 @@ async function detectRuntimePackages(workspaceRoot: string): Promise<RuntimePack
   }
 }
 
-async function detectProviderFiles(workspaceRoot: string): Promise<ProviderInsight[]> {
-  const matches = await fg(PROVIDER_GLOBS, {
+async function detectProviderFiles(workspaceRoot: string, config: I18nConfig): Promise<ProviderInsight[]> {
+  const globs = Array.from(
+    new Set([...DEFAULT_PROVIDER_GLOBS, ...(config.diagnostics?.providerGlobs ?? [])])
+  );
+  const matches = await fg(globs, {
     cwd: workspaceRoot,
     absolute: true,
     suppressErrors: true,
@@ -321,10 +327,11 @@ async function detectProviderFiles(workspaceRoot: string): Promise<ProviderInsig
   return providers;
 }
 
-async function detectAdapterFiles(workspaceRoot: string): Promise<AdapterDetection[]> {
+async function detectAdapterFiles(workspaceRoot: string, config: I18nConfig): Promise<AdapterDetection[]> {
   const detections: AdapterDetection[] = [];
+  const hints = [...DEFAULT_ADAPTER_HINTS, ...(config.diagnostics?.adapterHints ?? [])];
   await Promise.all(
-    ADAPTER_HINTS.map(async (hint) => {
+    hints.map(async (hint) => {
       const absolute = path.resolve(workspaceRoot, hint.path);
       try {
         await fs.access(absolute);
@@ -338,10 +345,13 @@ async function detectAdapterFiles(workspaceRoot: string): Promise<AdapterDetecti
 }
 
 async function detectTranslationUsage(workspaceRoot: string, config: I18nConfig): Promise<TranslationUsageInsight> {
-  const includePatterns = (config.include && config.include.length ? config.include : DEFAULT_INCLUDE).map((pattern) =>
+  const includeGlobs = Array.from(
+    new Set([...config.include, ...(config.diagnostics?.include ?? [])])
+  );
+  const includePatterns = (includeGlobs.length ? includeGlobs : DEFAULT_INCLUDE).map((pattern) =>
     path.resolve(workspaceRoot, pattern)
   );
-  const excludePatterns = config.exclude ?? [];
+  const excludePatterns = Array.from(new Set([...(config.exclude ?? []), ...(config.diagnostics?.exclude ?? [])]));
   const files = await fg(includePatterns, {
     ignore: excludePatterns,
     absolute: true,
@@ -349,7 +359,8 @@ async function detectTranslationUsage(workspaceRoot: string, config: I18nConfig)
     onlyFiles: true,
   }).catch(() => [] as string[]);
 
-  const sampled = files.slice(0, MAX_SOURCE_FILES);
+  const maxFiles = config.diagnostics?.maxSourceFiles ?? DEFAULT_MAX_SOURCE_FILES;
+  const sampled = files.slice(0, maxFiles);
   const hookName = config.translationAdapter?.hookName ?? 'useTranslation';
   const identifier = config.sync?.translationIdentifier ?? 't';
   const hookPattern = `\\b${escapeRegex(hookName)}\\b`;

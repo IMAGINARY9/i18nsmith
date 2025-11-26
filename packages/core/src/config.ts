@@ -28,6 +28,16 @@ const ensureArray = (value: unknown, fallback: string[]): string[] => {
   return fallback;
 };
 
+const ensureOptionalArray = (value: unknown): string[] | undefined => {
+  const normalized = ensureStringArray(value);
+  return normalized.length ? normalized : undefined;
+};
+
+const ensureUniqueStrings = (value: unknown): string[] | undefined => {
+  const normalized = ensureOptionalArray(value);
+  return normalized ? Array.from(new Set(normalized)) : undefined;
+};
+
 const ensureStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -106,6 +116,8 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     ? keyGen.shortHashLen
     : 6;
 
+  const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
+
   const normalized: I18nConfig = {
     // Default to schema version 1 if not explicitly set. Future versions can
     // branch on this value for migrations while staying backwards compatible.
@@ -134,9 +146,57 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       emptyValueMarkers,
       dynamicKeyAssumptions,
     },
+    diagnostics: diagnosticsConfig,
   };
 
   return normalized;
+}
+
+function normalizeDiagnosticsConfig(input: unknown): DiagnosticsConfig | undefined {
+  if (!input || typeof input !== 'object') {
+    return undefined;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const runtimePackages = ensureUniqueStrings(raw.runtimePackages);
+  const providerGlobs = ensureUniqueStrings(raw.providerGlobs);
+  const include = ensureUniqueStrings(raw.include);
+  const exclude = ensureUniqueStrings(raw.exclude);
+  const adapterHints = Array.isArray(raw.adapterHints)
+    ? raw.adapterHints
+        .map((entry) => normalizeAdapterHint(entry))
+        .filter((entry): entry is DiagnosticsAdapterHintConfig => Boolean(entry))
+    : undefined;
+  const maxSourceFiles =
+    typeof raw.maxSourceFiles === 'number' && Number.isFinite(raw.maxSourceFiles) && raw.maxSourceFiles > 0
+      ? Math.floor(raw.maxSourceFiles)
+      : undefined;
+
+  const diagnostics: DiagnosticsConfig = {};
+  if (runtimePackages) diagnostics.runtimePackages = runtimePackages;
+  if (providerGlobs) diagnostics.providerGlobs = providerGlobs;
+  if (include) diagnostics.include = include;
+  if (exclude) diagnostics.exclude = exclude;
+  if (adapterHints && adapterHints.length) diagnostics.adapterHints = adapterHints;
+  if (maxSourceFiles) diagnostics.maxSourceFiles = maxSourceFiles;
+
+  return Object.keys(diagnostics).length ? diagnostics : undefined;
+}
+
+function normalizeAdapterHint(entry: unknown): DiagnosticsAdapterHintConfig | undefined {
+  if (!entry || typeof entry !== 'object') {
+    return undefined;
+  }
+  const raw = entry as Record<string, unknown>;
+  const pathValue = typeof raw.path === 'string' ? raw.path.trim() : '';
+  if (!pathValue) {
+    return undefined;
+  }
+  const typeValue = raw.type === 'react-i18next' || raw.type === 'custom' ? raw.type : undefined;
+  return {
+    path: pathValue,
+    type: typeValue ?? 'custom',
+  };
 }
 
 export interface TranslationAdapterConfig {
@@ -217,6 +277,8 @@ export interface I18nConfig {
   seedTargetLocales?: boolean;
 
   sync?: SyncConfig;
+
+  diagnostics?: DiagnosticsConfig;
 }
 
 export interface SyncConfig {
@@ -226,6 +288,20 @@ export interface SyncConfig {
   emptyValuePolicy?: EmptyValuePolicy;
   emptyValueMarkers?: string[];
   dynamicKeyAssumptions?: string[];
+}
+
+export interface DiagnosticsConfig {
+  runtimePackages?: string[];
+  providerGlobs?: string[];
+  adapterHints?: DiagnosticsAdapterHintConfig[];
+  include?: string[];
+  exclude?: string[];
+  maxSourceFiles?: number;
+}
+
+export interface DiagnosticsAdapterHintConfig {
+  path: string;
+  type: 'react-i18next' | 'custom';
 }
 
 export type PlaceholderFormat = 'doubleCurly' | 'percentCurly' | 'percentSymbol';
