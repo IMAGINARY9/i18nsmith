@@ -80,7 +80,11 @@ export class Transformer {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
     });
-    const summary = scanner.scan({ collectNodes: true, targets: runOptions.targets });
+    const summary = scanner.scan({
+      collectNodes: true,
+      targets: runOptions.targets,
+      scanCalls: runOptions.migrateTextKeys,
+    });
 
     const enriched = await this.enrichCandidates(summary.detailedCandidates);
 
@@ -122,7 +126,8 @@ export class Transformer {
 
           await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
           
-          if (this.config.seedTargetLocales) {
+          const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
+          if (shouldMigrate) {
             for (const locale of this.targetLocales) {
               // Try to migrate existing value if the text was used as a key
               // We check both normalized and raw text to be safe
@@ -283,6 +288,17 @@ export class Transformer {
         expression.replaceWithText(keyCall);
       } else {
         node.replaceWithText(`{${keyCall}}`);
+      }
+      return;
+    }
+
+    if (candidate.kind === 'call-expression') {
+      if (!Node.isCallExpression(node)) {
+        throw new Error('Candidate node mismatch for call-expression');
+      }
+      const [arg] = node.getArguments();
+      if (arg && Node.isStringLiteral(arg)) {
+        arg.replaceWithText(`'${candidate.suggestedKey}'`);
       }
       return;
     }

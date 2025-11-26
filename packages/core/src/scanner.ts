@@ -11,7 +11,7 @@ import {
 import fg from 'fast-glob';
 import { I18nConfig } from './config.js';
 
-export type CandidateKind = 'jsx-text' | 'jsx-attribute' | 'jsx-expression';
+export type CandidateKind = 'jsx-text' | 'jsx-attribute' | 'jsx-expression' | 'call-expression';
 
 export interface ScanCandidate {
   id: string;
@@ -53,6 +53,7 @@ export interface ScannerOptions {
 export interface ScanExecutionOptions {
   collectNodes?: boolean;
   targets?: string[];
+  scanCalls?: boolean;
 }
 
 type CandidateRecorder = (candidate: ScanCandidate, node: Node, file: SourceFile) => void;
@@ -86,6 +87,7 @@ export class Scanner {
   public scan(options: ScanExecutionOptions & { collectNodes: true }): DetailedScanSummary;
   public scan(options?: ScanExecutionOptions): ScanSummary | DetailedScanSummary {
     const collectNodes = options?.collectNodes ?? false;
+    const scanCalls = options?.scanCalls ?? false;
     const patterns = this.getGlobPatterns();
     const targetFiles = options?.targets?.length ? this.resolveTargetFiles(options.targets) : undefined;
     let files: SourceFile[];
@@ -130,6 +132,11 @@ export class Scanner {
 
         if (Node.isJsxExpression(node)) {
           this.captureJsxExpression(node, file, record);
+          return;
+        }
+
+        if (scanCalls && Node.isCallExpression(node)) {
+          this.captureCallExpression(node, file, record);
         }
       });
     }
@@ -138,6 +145,11 @@ export class Scanner {
       filesScanned: files.length,
       candidates,
     };
+
+    if (files.length === 0) {
+      console.warn('⚠️  Scanner found 0 files. Check your "include" patterns in i18n.config.json.');
+      console.warn(`   Current patterns: ${patterns.join(', ')}`);
+    }
 
     if (collectNodes) {
       return {
@@ -225,6 +237,40 @@ export class Scanner {
       kind: 'jsx-expression',
       text,
       context: this.getJsxContext(node),
+    }), node, file);
+  }
+
+  private captureCallExpression(node: Node, file: SourceFile, record: CandidateRecorder) {
+    if (!Node.isCallExpression(node)) return;
+
+    const identifier = this.config.sync?.translationIdentifier ?? 't';
+    const expression = node.getExpression();
+    if (!Node.isIdentifier(expression) || expression.getText() !== identifier) {
+      return;
+    }
+
+    const [arg] = node.getArguments();
+    if (!arg || !Node.isStringLiteral(arg)) {
+      return;
+    }
+
+    const text = this.normalizeText(arg.getLiteralText());
+    if (!text) {
+      return;
+    }
+
+    // Only capture if it looks like a sentence (contains spaces)
+    // This avoids capturing existing structured keys like 'common.title'
+    if (!text.includes(' ')) {
+      return;
+    }
+
+    record(this.createCandidate({
+      node,
+      file,
+      kind: 'call-expression',
+      text,
+      context: 't() call',
     }), node, file);
   }
 

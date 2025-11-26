@@ -35,6 +35,7 @@ export interface TransformRunOptions {
   write?: boolean;
   targets?: string[];
   diff?: boolean;
+  migrateTextKeys?: boolean;
 }
 
 export interface TransformerOptions {

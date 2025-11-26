@@ -423,7 +423,8 @@ program
   .option('--diff', 'Display unified diffs for locale files that would change', false)
   .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
   .option('--target <pattern...>', 'Limit scanning to specific files or glob patterns', collectTargetPatterns, [])
-  .action(async (options: ScanOptions & { write?: boolean; check?: boolean; diff?: boolean; patchDir?: string }) => {
+  .option('--migrate-text-keys', 'Migrate existing t("Text") calls to structured keys')
+  .action(async (options: ScanOptions & { write?: boolean; check?: boolean; diff?: boolean; patchDir?: string; migrateTextKeys?: boolean }) => {
     const diffEnabled = Boolean(options.diff || options.patchDir);
     console.log(
       chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
@@ -436,6 +437,7 @@ program
         write: options.write,
         targets: options.target,
         diff: diffEnabled,
+        migrateTextKeys: options.migrateTextKeys,
       });
 
       if (options.report) {
