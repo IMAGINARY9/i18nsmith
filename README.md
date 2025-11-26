@@ -6,11 +6,31 @@ Universal Automated i18n Library.
 
 1. Install pnpm (if you don't have it).
 2. Add `@i18nsmith/cli` to your project (once it’s published) or run the CLI from this monorepo.
-3. Run `i18nsmith init` in your app to generate an `i18n.config.json`.
-4. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
-5. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
+3. Run `i18nsmith diagnose` to detect any existing locale files, runtime adapters, or provider scaffolds. Review the actionable items before continuing (add `--json` for automation or `--report .i18nsmith/diagnostics.json` to persist a report for CI/VS Code tooling).
+4. Run `i18nsmith init` in your app to generate an `i18n.config.json`. If `diagnose` found existing assets, pass `--merge` to opt into the guided merge flow so you don’t overwrite what’s already there.
+5. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
+6. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
 
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
+
+## Diagnose existing i18n assets
+
+Before you scaffold anything new, run the new repository health check:
+
+```bash
+i18nsmith diagnose --json --report .i18nsmith/diagnostics.json
+```
+
+The command inspects `package.json`, your configured `localesDir`, and up to 200 source files to surface:
+
+- Locale coverage (missing/invalid locales, key counts, file sizes).
+- Installed runtimes (`react-i18next`, `next-intl`, `lingui`, etc.).
+- Provider candidates (e.g., `app/providers.tsx`) annotated with whether they already wrap `<I18nProvider>`.
+- Translation usage statistics (how often `useTranslation` / `t()` appears, sample files).
+- Adapter/runtime files that `i18nsmith scaffold-adapter` would normally create.
+- Actionable items & merge recommendations, plus conflicts that should block onboarding (invalid JSON, missing source locale, etc.).
+
+Use `--report` to persist the JSON output for CI or editors, and rely on the exit code to fail automation when blocking conflicts exist. Pair this with `i18nsmith init --merge` to reuse existing locales instead of overwriting them.
 
 ## Configuration
 
@@ -64,9 +84,17 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 
 > The transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. You must either use the zero-deps adapter or set up a `react-i18next` runtime.
 
+### Merge-aware `init`
+
+If `diagnose` detected existing locales or runtime files, rerun `i18nsmith init --merge`. The CLI will reuse the detection report to:
+
+- Highlight the locales/providers already present.
+- Prompt you to choose a merge strategy (`keep-source`, `overwrite`, or `interactive`) instead of blindly scaffolding.
+- Skip scaffolding if you decline, so your current adapter stays untouched. You can still force a scaffold with `--force` if you deliberately want to overwrite.
+
 ## Adapter & runtime scaffolding
 
-`i18nsmith scaffold-adapter` offers two guided flows, and the `init` command exposes the same prompts so you can wire everything up in one pass.
+`i18nsmith scaffold-adapter` offers two guided flows, and the `init` command exposes the same prompts so you can wire everything up in one pass. The CLI now auto-skips scaffolding when it detects an existing runtime (to avoid overwriting your provider); pass `--no-skip-if-detected` or `--force` if you really do want to regenerate the files.
 
 ### Custom context (zero dependencies)
 
