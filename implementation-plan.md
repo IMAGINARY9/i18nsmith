@@ -94,7 +94,7 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   **Hook Injection:** Locate the closest function component body and insert `const { t } = useTranslation();` if missing.
 *   **Text Replacement:**
   *   `<div>Hello</div>` → `<div>{t('auto.abc123')}</div>`.
-  *   `placeholder="Name"` → `placeholder={t('auto.def456')}`.
+  *   `placeholder="Name"` → `placeholder={t('auto.def456'}`.
 *   **Safety rails:** dry-run mode, skip files with syntax errors, and surface conflicts in the summary.
 *   **Formatting:** Run `prettier` (when available) after writes; fall back to `ts-morph` printer.
 
@@ -289,7 +289,7 @@ These additions map to the real-world cases we reviewed earlier and are prioriti
 - ✅ `i18nsmith init --merge` now consumes the diagnostics report, warns about pre-existing runtimes/locales, and walks the user through merge strategy selection instead of blindly scaffolding.
 - ✅ `scaffold-adapter` skips regeneration when an adapter/provider already exists (unless `--no-skip-if-detected` or `--force` is passed) and points users back to `diagnose` for remediation guidance.
 
-#### Phase 3.13 Add-on Plan (2025-11-26)
+#### 3.13 Add-on Plan (2025-11-26)
 To close this gap we will ship an add-on sprint with the following deliverables:
 
 1. **Core Detection Engine (`@i18nsmith/core/diagnostics`):**
@@ -333,74 +333,139 @@ To close this gap we will ship an add-on sprint with the following deliverables:
 - ✅ Targeted sync runs now filter references, summaries, and actionable diagnostics to the requested files while disabling unused-key pruning; interactive mode honors the same scope.
 - ✅ Added automated coverage (`syncer.test.ts`, `transformer.test.ts`) plus README instructions so per-file onboarding is documented end-to-end.
 
+## Phase 3.5: Immediate Refinements
+**Objective:** Evolve the developer experience from "safe" to "seamless and intelligent" based on Phase 3.13 findings.
+
+### 3.15. Post-Implementation Review (Phase 3.13)
+**Analysis (2025-11-26):**
+The `diagnose` command and its integration into `init` and `scaffold-adapter` successfully prevent accidental overwrites in "brownfield" projects. However, the workflow requires manual command chaining (`diagnose` → `init --merge` → `sync`), and CI integration is limited by generic exit codes.
+
+### 3.16. Active Tasks (Backlog-ready)
+
+- [x] **3.16.1 · Guided `i18nsmith check` command**
+  - *Problem:* Onboarding requires manual command chaining.
+  - *Scope:* CLI command that orchestrates diagnostics + sync dry-run, emits a consolidated action plan, and suggests exact follow-up commands.
+  - *Owners:* CLI squad · Est. 2–3 days.
+
+- [x] **3.16.2 · Granular exit codes for diagnostics**
+  - *Problem:* `diagnose` returns generic `1`, hindering CI logic.
+  - *Scope:* Map conflict classes to deterministic exit codes (e.g., 2=missing locale, 3=invalid JSON).
+  - *Owners:* Core + CLI shared · Est. 1 day.
+
+- [x] **3.16.3 · Pluggable detection heuristics**
+  - *Problem:* Hardcoded detection blocks unconventional layouts.
+  - *Scope:* `diagnostics` config schema for custom globs/packages.
+  - *Owners:* Core squad · Est. 2 days.
+
+**Execution Order:** Ship 3.16.1 first for immediate UX impact; 3.16.2 follows for CI; 3.16.3 for extensibility.
+
+#### Implementation Kickoff: Guided Check (3.16.1)
+**Contract (v1 draft):**
+- *Inputs:* `i18n.config.json`, `--json`, `--report <file>`, `--fail-on warnings|conflicts`.
+- *Outputs:* `CheckSummary` (diagnostics + sync + actions) & human-readable table.
+- *Error modes:* Non-zero exits aligned with 3.16.2 mapping.
+
+**Plan:**
+1. **Core:** `CheckRunner` composes `DiagnosticsService` + `Syncer` (dry-run) and normalizes actionable items.
+2. **CLI:** `check` command with shared printers and prompt logic.
+3. **Tests:** Unit coverage for runner + CLI snapshots.
+4. **Docs:** Update README & `docs/external-testing.md`.
+
+**Progress notes (2025-11-27):**
+- ✅ 3.16.1 delivered the guided `check` command with consolidated actionable items, suggested commands, JSON/report outputs, and CI-friendly failure thresholds (`--fail-on`).
+- ✅ 3.16.2 introduced deterministic diagnostics exit codes (2=missing source locale, 3=invalid JSON, 4=reserved provider clash, 5=fallback) plus CLI helpers/tests and README documentation so CI can branch on specific failure modes.
+- ✅ 3.16.3 added a `diagnostics` config block so teams can plug in custom runtime package detections, provider globs, adapter hints, and translation usage globs/max file overrides—complete with README docs and regression tests.
 
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
-**Objective:** Integrate optional, pluggable adapters for translation services.
+**Objective:** Integrate optional, pluggable adapters for automated machine translation, enabling `i18nsmith translate` to fill missing locale keys.
 
-### 4.1. Translator Interface
-*   In `@i18nsmith/translation`, define a simple `Translator` interface:
+### 4.1. Architecture & Interface
+*   **Core Abstraction:** `TranslationService` in `@i18nsmith/core` manages the translation pipeline (batching, caching, retries).
+*   **Adapter Contract:** Define `Translator` interface in `@i18nsmith/translation`:
     ```typescript
     interface Translator {
+      /**
+       * Translate a batch of strings.
+       * @param texts - Array of source strings to translate.
+       * @param sourceLang - Source language code (e.g., 'en').
+       * @param targetLang - Target language code (e.g., 'es').
+       * @returns Promise resolving to an array of translated strings in the same order.
+       */
       translate(texts: string[], sourceLang: string, targetLang: string): Promise<string[]>;
+      
+      /** Optional: Estimate cost for a batch of characters. */
+      estimateCost?(characterCount: number): string;
     }
     ```
+*   **Plugin Loading:** The CLI dynamically imports adapters based on `i18n.config.json`.
+    *   Convention: `@i18nsmith/translator-<provider>` (e.g., `deepl`, `google`, `openai`).
 
-### 4.2. Adapter Implementation
-*   Create separate, optional packages for each adapter (e.g., `@i18nsmith/translator-deepl`, `@i18nsmith/translator-google`).
-*   These packages will be **optional dependencies**. A user installs them only if they need them.
-*   The `i18nsmith translate` command will dynamically `import()` the adapter specified in `i18n.config.json`.
+### 4.2. Configuration & Security
+*   **Config Schema:**
+    ```json
+    {
+      "translation": {
+        "provider": "deepl",
+        "secretEnvVar": "DEEPL_API_KEY",
+        "concurrency": 5
+      }
+    }
+    ```
+*   **Security:** API keys are **never** stored in config files. The config only references the *name* of the environment variable (e.g., `DEEPL_API_KEY`). The CLI reads this variable at runtime.
 
-### 4.3. Security & Dev Experience
-*   API keys must be provided via environment variables (e.g., `DEEPL_API_KEY`). The config will only reference the variable name.
-*   Provide a mock local adapter (`@i18nsmith/translator-mock`) that returns pseudo-translations (e.g., `[EN] Hello`) for fast, offline development.
+### 4.3. CLI Command: `translate`
+*   **Workflow:**
+    1.  **Scan:** Identify keys in `sourceLanguage` that are missing in `targetLanguages`.
+    2.  **Plan:** Calculate total characters and (optionally) estimate cost.
+    3.  **Prompt:** "Translating 50 keys to 'es' (~500 chars). Proceed? [y/N]"
+    4.  **Execute:** Batch requests to the provider (respecting rate limits).
+    5.  **Write:** Update locale JSON files atomically.
+*   **Flags:**
+    *   `--dry-run`: Show what would be translated and estimated cost.
+    *   `--locales <list>`: Limit to specific target locales.
+    *   `--force`: Overwrite existing translations (default is skip existing).
+
+### 4.4. Official Adapters
+*   **`@i18nsmith/translator-mock`:** Local-only adapter for testing/dev. Returns pseudo-localization (e.g., `[es] Hello` -> `¡Hello!`).
+*   **`@i18nsmith/translator-deepl`:** Production-ready adapter for DeepL API.
+*   **`@i18nsmith/translator-google`:** Production-ready adapter for Google Cloud Translation.
 
 ## Phase 5: CI/CD & Workflow (Weeks 15+)
-**Objective:** Integrate into the developer lifecycle.
+**Objective:** Deeply integrate i18nsmith into the developer's daily workflow (Editor, CI, Git).
 
-### 5.1. CLI Polish
-*   Enhance commands with interactive prompts using `inquirer`.
-*   Improve output formatting with `chalk` and add progress indicators.
+### 5.1. CLI Polish & Interactivity
+*   **Interactive Mode:** Enhance `init`, `sync`, and `translate` with rich `inquirer` prompts (checkboxes for selecting keys, confirmation steps).
+*   **Visual Feedback:** Use `ora` spinners for long-running tasks (scanning, translating) and `chalk` for readable diffs.
 
-### 5.2. GitHub Action
-*   Create a GitHub Action to run `i18nsmith scan --check` on Pull Requests.
-*   This command will fail the build if it finds new, untranslated strings that haven't been extracted.
+### 5.2. GitHub Action / CI Integration
+*   **Action:** `i18nsmith-action` to run `scan --check` or `sync --check` on Pull Requests.
+*   **Behavior:**
+    *   Fails the build if new untranslated strings are found (drift detection).
+    *   Optionally posts a PR comment with the `diagnose` report summary.
 
-### 5.3. VS Code Extension (Future)
-**Problem:** All insights currently live in terminal output. Developers want inline diagnostics, quick fixes, and command palette shortcuts without leaving the editor.
+### 5.3. VS Code Extension
+**Goal:** Bring CLI insights directly into the editor to reduce context switching.
+*   **Architecture:** The extension acts as a UI layer over the CLI. It spawns `i18nsmith` commands in the background and parses their JSON output.
+*   **Feature Set:**
+    1.  **Inline Diagnostics:**
+        *   Watch `.i18nsmith/diagnostics.json` (generated by `check`).
+        *   Underline keys in source code that are missing translations or have type mismatches.
+        *   *Quick Fix:* "Add missing translation" (prompts for value).
+    2.  **Extraction Assistant:**
+        *   **CodeLens:** "Extract to i18n" appears above hardcoded strings detected by the scanner.
+        *   **Action:** Clicking it opens a prompt for the key name, then runs `transform --target <file> --write`.
+    3.  **Hover Information:**
+        *   Hovering over `t('key')` shows the actual text values for configured locales (e.g., `en: "Hello"`, `es: "Hola"`).
+    4.  **Command Palette:**
+        *   `I18nsmith: Run Health Check` (runs `check`).
+        *   `I18nsmith: Translate Missing Keys` (runs `translate`).
 
-**Phase Scope:** Build a first-class VS Code extension that consumes the CLI/JSON APIs and surfaces actionable guidance:
-1. **Diagnostics Bridge:**
-  - Watch for `.i18nsmith/diagnostics.json` emitted by `i18nsmith check`.
-  - Convert entries (missing keys, placeholder mismatches, empty values) into VS Code diagnostics with proper severity and code actions linking back to CLI commands.
-2. **Hardcoded String Detector:**
-  - Provide a CodeLens/hover when the scanner identifies literal strings eligible for extraction.
-  - Offer a “Extract with i18nsmith” quick fix that shells out to `i18nsmith transform --target <file> --write` and refreshes the diagnostics file.
-3. **Command Palette Actions:**
-  - `I18nsmith: Run Check` – executes the new guided `i18nsmith check` command and streams progress to an output channel.
-  - `I18nsmith: Open Drift Report` – opens the latest JSON report with a structured tree view (missing vs unused vs validation errors).
-4. **Settings & Auth:**
-  - Surface configuration for workspace path, preferred package manager, and environment variables (for translation adapters) so the extension can run CLI commands consistently.
-
-**Stretch Goals:** Inline diff preview for locale changes, multi-root workspace support, and preflight prompts before running write-mode commands.
-
-### 5.4. Extended Backlog
-* **Guided `check` command:** A top-level `i18nsmith check` command that runs a comprehensive health check (scan, sync, validate) and produces a single, actionable report with suggested fix commands. This would improve developer experience over the simple `--check` flag.
-* **Customizable Key Generation Pattern:** Allow users to define a key structure in `i18n.config.json` (e.g., `keyGeneration.pattern: "{filePath}.{textHash}"`) to better match team conventions.
-* **Editor Diagnostics Connector:** A lightweight VS Code extension that reads a diagnostic report file (e.g., `i18nsmith.diagnostics.json`) and uses the standard Diagnostics API to highlight issues directly in the editor, bridging the gap until a full extension is built.
-* Multi-framework adapters (Vue, Solid, Svelte) via unified hook signature.
-* Optional Prettier integration with user config detection.
-* Performance profiling (cache AST parse results between runs).
-* Telemetry opt-in (anonymous stats: candidate kinds, transformation counts).
-* Locale splitting strategy (namespace sharding for large apps).
-
-## Completed Summary (Phases & Extra Enhancements)
-* Phase 1 foundation (scanner + config + init) ✅
-* Transformer end-to-end (scan → key generation → write) ✅
-* `--write` and `--check` CLI modes ✅
-* Deterministic key generation & locale store with seeding ✅
-* Adapter configuration & scaffolding (custom / react-i18next) ✅
-* Runtime auto-setup integrated into `init` & `scaffold-adapter` ✅
-* Documentation refreshed (README runtime & adapter sections) ✅
-
-## Historical Plans Consolidation
-Implementation plans v2 and v3 have been merged here; their future items now live under Backlog sections. Separate files removed.
+### 5.4. Extended Ecosystem & Future Roadmap
+*   **Customizable Key Generation:**
+    *   Allow teams to define key patterns in config (e.g., `"{filePath}.{textHash}"` or `"{context}.{slug}"`) to match legacy conventions.
+*   **Multi-Framework Support:**
+    *   Expand `scaffold-adapter` and `transformer` to support Vue (`vue-i18n`), Svelte (`svelte-i18n`), and SolidJS.
+*   **Performance Profiling:**
+    *   Implement AST caching (content-addressable store) to make `scan`/`sync` instant for large monorepos.
+*   **Locale Splitting:**
+    *   Support splitting translations into multiple files (namespaces) per locale (e.g., `common.json`, `auth.json`) for lazy-loading in large apps.

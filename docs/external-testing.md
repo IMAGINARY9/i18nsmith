@@ -18,6 +18,8 @@ This document explains how to run the i18nsmith transformer against a local exte
    ```
 4. From the i18nsmith repo root, run `pnpm install` so the CLI, core, and transformer packages are available locally.
 
+> Tip: Run `i18nsmith check --fail-on warnings` inside the external project before transforming to confirm locales/runtimes are healthy. The command is read-only and surfaces actionable follow-up commands.
+
 ## Running the transformer against an external project
 
 A convenience script is available that accepts the external project path as the first argument or via the `EXTERNAL_PROJECT_ROOT` environment variable.

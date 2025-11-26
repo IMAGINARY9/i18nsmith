@@ -6,3 +6,4 @@ export * from './syncer.js';
 export * from './key-renamer.js';
 export * from './actionable.js';
 export * from './diagnostics.js';
+export * from './check-runner.js';

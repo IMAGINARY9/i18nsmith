@@ -102,4 +102,85 @@ export const Component = () => {
     expect(conflict).toBeDefined();
     expect(report.actionableItems.find((item) => item.kind === 'diagnostics-invalid-locale-json')).toBeDefined();
   });
+
+  it('detects custom runtime packages configured via diagnostics overrides', async () => {
+    const config: I18nConfig = {
+      ...baseConfig,
+      diagnostics: {
+        runtimePackages: ['@acme/i18n-runtime'],
+      },
+    };
+
+    await writePackageJson({ dependencies: { '@acme/i18n-runtime': '1.2.3' } });
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ greeting: 'Hello' }, null, 2)
+    );
+
+    const report = await diagnoseWorkspace(config, { workspaceRoot: tempDir });
+    expect(report.runtimePackages.some((pkg) => pkg.name === '@acme/i18n-runtime')).toBe(true);
+  });
+
+  it('uses custom provider globs when scanning for providers', async () => {
+    const config: I18nConfig = {
+      ...baseConfig,
+      diagnostics: {
+        providerGlobs: ['packages/web/**/*.{ts,tsx}'],
+      },
+    };
+
+    await writePackageJson({ dependencies: {} });
+    await fs.mkdir(path.join(tempDir, 'packages', 'web'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'packages', 'web', 'providers.tsx'),
+      `export const Providers = ({ children }) => <I18nProvider>{children}</I18nProvider>;`
+    );
+
+    const report = await diagnoseWorkspace(config, { workspaceRoot: tempDir });
+    expect(report.providerFiles.some((file) => file.relativePath.includes('packages/web/providers.tsx'))).toBe(true);
+  });
+
+  it('honors custom adapter hints supplied in diagnostics config', async () => {
+    const config: I18nConfig = {
+      ...baseConfig,
+      diagnostics: {
+        adapterHints: [{ path: 'shared/i18n/provider.tsx', type: 'custom' }],
+      },
+    };
+
+    await writePackageJson({ dependencies: {} });
+    await fs.mkdir(path.join(tempDir, 'shared', 'i18n'), { recursive: true });
+    await fs.writeFile(path.join(tempDir, 'shared', 'i18n', 'provider.tsx'), '// existing provider');
+
+    const report = await diagnoseWorkspace(config, { workspaceRoot: tempDir });
+    expect(report.adapterFiles.some((adapter) => adapter.path.endsWith('shared/i18n/provider.tsx'))).toBe(true);
+  });
+
+  it('extends translation usage scan with custom include globs', async () => {
+    const config: I18nConfig = {
+      ...baseConfig,
+      diagnostics: {
+        include: ['packages/**/*.tsx'],
+      },
+    };
+
+    await writePackageJson({ dependencies: { 'react-i18next': '^13.0.0' } });
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ greeting: 'Hello' }, null, 2)
+    );
+    await fs.mkdir(path.join(tempDir, 'packages', 'feature'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'packages', 'feature', 'Component.tsx'),
+      `import { useTranslation } from 'react-i18next';
+export const Example = () => {
+  const { t } = useTranslation();
+  return <p>{t('greeting')}</p>;
+};
+`
+    );
+
+    const report = await diagnoseWorkspace(config, { workspaceRoot: tempDir });
+    expect(report.translationUsage.hookOccurrences).toBeGreaterThan(0);
+  });
 });

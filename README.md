@@ -7,9 +7,10 @@ Universal Automated i18n Library.
 1. Install pnpm (if you don't have it).
 2. Add `@i18nsmith/cli` to your project (once it’s published) or run the CLI from this monorepo.
 3. Run `i18nsmith diagnose` to detect any existing locale files, runtime adapters, or provider scaffolds. Review the actionable items before continuing (add `--json` for automation or `--report .i18nsmith/diagnostics.json` to persist a report for CI/VS Code tooling).
-4. Run `i18nsmith init` in your app to generate an `i18n.config.json`. If `diagnose` found existing assets, pass `--merge` to opt into the guided merge flow so you don’t overwrite what’s already there.
-5. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
-6. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
+4. Run `i18nsmith check` for a guided health report that merges diagnostics + a sync dry-run. The command prints actionable items, suggested follow-up commands, and fails CI when blocking issues remain.
+5. Run `i18nsmith init` in your app to generate an `i18n.config.json`. If `diagnose` found existing assets, pass `--merge` to opt into the guided merge flow so you don’t overwrite what’s already there.
+6. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
+7. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
 
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
 
@@ -30,7 +31,34 @@ The command inspects `package.json`, your configured `localesDir`, and up to 200
 - Adapter/runtime files that `i18nsmith scaffold-adapter` would normally create.
 - Actionable items & merge recommendations, plus conflicts that should block onboarding (invalid JSON, missing source locale, etc.).
 
-Use `--report` to persist the JSON output for CI or editors, and rely on the exit code to fail automation when blocking conflicts exist. Pair this with `i18nsmith init --merge` to reuse existing locales instead of overwriting them.
+Use `--report` to persist the JSON output for CI or editors, and rely on deterministic exit codes to fail automation when blocking conflicts exist:
+
+- `0`: no blocking conflicts detected
+- `2`: configured source locale file is missing
+- `3`: locale JSON file could not be parsed
+- `4`: unsafe provider/adapter clash detected (reserved for future heuristics)
+- `5`: generic/unknown diagnostics conflict
+
+Pair this with `i18nsmith init --merge` to reuse existing locales instead of overwriting them.
+
+## Guided repository health check
+
+When you want a single command that answers “Can I safely run init/transform/sync right now?”, use `i18nsmith check`. It combines `diagnose` with a `sync` dry-run, aggregates actionable items, and prints copy-pasteable follow-up commands.
+
+```bash
+i18nsmith check --json --report .i18nsmith/check-report.json
+```
+
+Highlights:
+
+- Runs diagnostics + sync dry-run in one pass (always non-destructive).
+- Produces a consolidated summary with severity badges, so you can spot blocking errors vs. warnings quickly.
+- Suggests exact CLI commands (e.g., `i18nsmith sync --write`, `i18nsmith scaffold-adapter --type react-i18next`) tailored to the issues it found.
+- Accepts the same targeting flags as `sync` (`--assume`, `--target`, `--diff`, `--validate-interpolations`, `--no-empty-values`).
+- Supports `--fail-on conflicts` (default) or `--fail-on warnings` so CI can enforce whatever bar you choose.
+- Use `--report` to persist the JSON output for the VS Code extension or other tooling.
+
+Pair `check` with `diagnose` when onboarding a brownfield repo: run `diagnose` first to understand existing assets, then `check` to see exactly which commands to run next.
 
 ## Configuration
 
@@ -81,6 +109,25 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `sync.emptyValuePolicy`: Controls how empty/placeholder translations are treated. Use `"warn"` (default), `"fail"`, or `"ignore"`.
 - `sync.emptyValueMarkers`: Extra sentinel values that should be treated as “empty” (defaults to `todo`, `tbd`, `fixme`, `pending`, `???`).
 - `sync.dynamicKeyAssumptions`: List of translation keys that are only referenced dynamically (e.g., via template literals) so the syncer can treat them as in-use.
+- `diagnostics.runtimePackages`: Extra package names to treat as i18n runtimes when scanning `package.json` (e.g., `"@acme/i18n-runtime"`).
+- `diagnostics.providerGlobs`: Additional glob patterns for detecting provider files (relative to the repo root).
+- `diagnostics.adapterHints`: Explicit file paths that should be treated as pre-existing adapters. Each entry accepts `{ "path": "src/i18n/provider.tsx", "type": "custom" }`.
+- `diagnostics.include` / `diagnostics.exclude`: Globs that augment the default translation-usage scan (useful when your source lives outside `src/`).
+- `diagnostics.maxSourceFiles`: Override the number of files sampled when estimating translation usage (default: 200).
+
+Example diagnostics override:
+
+```jsonc
+{
+	"diagnostics": {
+		"runtimePackages": ["@acme/i18n-runtime"],
+		"providerGlobs": ["apps/**/*providers.{ts,tsx}"],
+		"adapterHints": [{ "path": "libs/i18n/provider.tsx", "type": "custom" }],
+		"include": ["packages/**/*.tsx"],
+		"maxSourceFiles": 400
+	}
+}
+```
 
 > The transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. You must either use the zero-deps adapter or set up a `react-i18next` runtime.
 
