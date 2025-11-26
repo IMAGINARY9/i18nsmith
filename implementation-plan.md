@@ -113,6 +113,36 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 - ✅ Implemented `scaffold-adapter` flows: zero-deps context & react-i18next runtime (i18n initializer + provider) to eliminate `NO_I18NEXT_INSTANCE`.
 - ✅ Integrated runtime scaffolding into `init` (automatic prompts + dependency warnings).
 
+### 2.A. Multi-Framework Transformer Architecture (Add-on)
+**Problem:** The current transformer is tightly coupled to React/`useTranslation` semantics. Even though adapters can change import names, the AST manipulation logic (hook injection, JSX rewrites) cannot be reused for Vue, Solid, Astro, or plain TypeScript modules. This creates a hard ceiling on adoption.
+
+**Goals:**
+- Introduce an explicit `Writer` abstraction so framework-specific logic lives in pluggable classes (e.g., `ReactWriter`, `VueWriter`, `SolidWriter`).
+- Move hook/component detection, stateful memoization, and import management behind a common interface so future frameworks can be onboarded without forking the transformer.
+- Expose adapter metadata in `i18n.config.json` (`translationAdapter.kind`) to select the correct writer at runtime and guide CLI scaffolding.
+
+**Scope & Deliverables:**
+1. Refactor `packages/transformer/src/transformer.ts` to delegate AST edits to a `Writer` interface:
+   ```ts
+   interface Writer {
+     ensureImports(file: SourceFile): void;
+     ensureBinding(node: Node): WriterContext | null;
+     replaceNode(candidate: TransformCandidate, ctx: WriterContext): void;
+   }
+   ```
+2. Implement `ReactWriter` using existing logic but remove hard-coded hook names (pull from adapter config).
+3. Provide a `NoopWriter` that simply records candidates without editing files—useful for dry-runs or unsupported frameworks.
+4. Update CLI `transform` command to fail fast with an actionable message when no writer supports the chosen adapter (e.g., “Vue writer coming in Phase 4—run `i18nsmith transform --preview` for now”).
+5. Document the architecture in `ARCHITECTURE.md` so contributors can add writers for other frameworks.
+
+**Milestones:**
+- Week 1: Introduce abstraction, migrate React logic, add tests for writer selection.
+- Week 2: Publish contributor guide + create tracking issues for Vue/Solid writers.
+
+**Risks & Mitigations:**
+- *Risk:* Regression in existing React behavior during refactor. → Mitigate with snapshot tests covering JSX text/attribute/expression replacements and hook injection cases.
+- *Risk:* Explosion of adapter configuration surface area. → Keep schema minimal (`kind`, `module`, `hookName`) until subsequent phases.
+
 ## Phase 3: State Management & Sync (Weeks 9-10)
 **Objective:** Handle updates, deletions, and synchronization between code and JSON locale files.
 
@@ -253,6 +283,36 @@ These additions map to the real-world cases we reviewed earlier and are prioriti
   - `interactive`: prompt per-conflict.
 * Acceptance criteria: Repos with prior i18n work are recognized and not accidentally double-scaffolded; `diagnose` gives clear next steps.
 
+**Progress notes (2025-11-26):**
+- ✅ Added a dedicated `@i18nsmith/core/diagnostics` module that inspects locale JSON health, runtime dependencies, provider scaffolds, and translation usage, surfacing actionable items + conflicts.
+- ✅ Introduced `i18nsmith diagnose` with `--json` and `--report` outputs; the command exits non-zero on blocking conflicts so CI can halt risky merges.
+- ✅ `i18nsmith init --merge` now consumes the diagnostics report, warns about pre-existing runtimes/locales, and walks the user through merge strategy selection instead of blindly scaffolding.
+- ✅ `scaffold-adapter` skips regeneration when an adapter/provider already exists (unless `--no-skip-if-detected` or `--force` is passed) and points users back to `diagnose` for remediation guidance.
+
+#### Phase 3.13 Add-on Plan (2025-11-26)
+To close this gap we will ship an add-on sprint with the following deliverables:
+
+1. **Core Detection Engine (`@i18nsmith/core/diagnostics`):**
+  - Scan `package.json` for known libraries, report versions.
+  - Inspect configured `localesDir` for locale files, detect missing default locales, capture stats.
+  - Walk source files (reusing `Scanner`) to find `t()` usage, custom hooks, or provider patterns; emit warnings when mismatched identifiers are detected.
+2. **CLI Command – `i18nsmith diagnose`:**
+  - Accept `--json` and `--config` like other commands.
+  - Provide human-readable console output plus machine-friendly JSON with sections: `locales`, `packages`, `providers`, `conflicts`, `recommendations`.
+  - Exit with non-zero code when blocking conflicts are detected (e.g., scaffold mismatch) so CI can fail early.
+3. **Merge-aware `init --merge`:**
+  - When locale files already exist, prompt to merge vs overwrite.
+  - Offer strategies (`keep-source`, `overwrite`, `interactive`) and reuse the detection report to pre-fill answers.
+4. **Scaffold Guardrails:**
+  - `scaffold-adapter` gains `--skip-if-detected` as default behavior; when a runtime exists, it prints instructions referencing the diagnose findings unless `--force` is passed.
+5. **Documentation + Examples:**
+  - Update README and `docs/onboarding.md` with a “Start with Diagnose” flow, sample outputs, and guidance for teams migrating from `next-i18next` or `lingui`.
+6. **Tests:**
+  - Core unit tests for detection heuristics (package detection, locale stats, provider markers).
+  - CLI integration tests for `diagnose --json` and `init --merge` interactive session (mocked prompts).
+
+**Timeline:** 3–4 days, beginning immediately after this review. Blocking tasks for Phase 4 must wait until this add-on is complete.
+
 ### 3.14. Per‑File Onboarding / New‑Page Integration
 * Objective: Support safely adding a new page/component to an existing project with minimal disruption.
 * Use cases:
@@ -306,10 +366,27 @@ These additions map to the real-world cases we reviewed earlier and are prioriti
 *   This command will fail the build if it finds new, untranslated strings that haven't been extracted.
 
 ### 5.3. VS Code Extension (Future)
-*   Highlight hardcoded strings directly in the editor.
-*   Provide a "Quick Fix" action to run `i18nsmith` on the current file.
+**Problem:** All insights currently live in terminal output. Developers want inline diagnostics, quick fixes, and command palette shortcuts without leaving the editor.
+
+**Phase Scope:** Build a first-class VS Code extension that consumes the CLI/JSON APIs and surfaces actionable guidance:
+1. **Diagnostics Bridge:**
+  - Watch for `.i18nsmith/diagnostics.json` emitted by `i18nsmith check`.
+  - Convert entries (missing keys, placeholder mismatches, empty values) into VS Code diagnostics with proper severity and code actions linking back to CLI commands.
+2. **Hardcoded String Detector:**
+  - Provide a CodeLens/hover when the scanner identifies literal strings eligible for extraction.
+  - Offer a “Extract with i18nsmith” quick fix that shells out to `i18nsmith transform --target <file> --write` and refreshes the diagnostics file.
+3. **Command Palette Actions:**
+  - `I18nsmith: Run Check` – executes the new guided `i18nsmith check` command and streams progress to an output channel.
+  - `I18nsmith: Open Drift Report` – opens the latest JSON report with a structured tree view (missing vs unused vs validation errors).
+4. **Settings & Auth:**
+  - Surface configuration for workspace path, preferred package manager, and environment variables (for translation adapters) so the extension can run CLI commands consistently.
+
+**Stretch Goals:** Inline diff preview for locale changes, multi-root workspace support, and preflight prompts before running write-mode commands.
 
 ### 5.4. Extended Backlog
+* **Guided `check` command:** A top-level `i18nsmith check` command that runs a comprehensive health check (scan, sync, validate) and produces a single, actionable report with suggested fix commands. This would improve developer experience over the simple `--check` flag.
+* **Customizable Key Generation Pattern:** Allow users to define a key structure in `i18n.config.json` (e.g., `keyGeneration.pattern: "{filePath}.{textHash}"`) to better match team conventions.
+* **Editor Diagnostics Connector:** A lightweight VS Code extension that reads a diagnostic report file (e.g., `i18nsmith.diagnostics.json`) and uses the standard Diagnostics API to highlight issues directly in the editor, bridging the gap until a full extension is built.
 * Multi-framework adapters (Vue, Solid, Svelte) via unified hook signature.
 * Optional Prettier integration with user config detection.
 * Performance profiling (cache AST parse results between runs).

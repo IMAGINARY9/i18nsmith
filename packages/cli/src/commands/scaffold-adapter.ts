@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
+import { diagnoseWorkspace, loadConfig } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
 import { detectPackageManager, installDependencies } from '../utils/package-manager';
@@ -16,6 +17,7 @@ interface ScaffoldCommandOptions {
   force?: boolean;
   installDeps?: boolean;
   dryRun?: boolean;
+  skipIfDetected?: boolean;
 }
 
 interface ScaffoldAnswers {
@@ -40,7 +42,8 @@ export function registerScaffoldAdapter(program: Command) {
     .option('--locales-dir <dir>', 'Locales directory relative to project root', 'locales')
     .option('-f, --force', 'Overwrite files if they already exist', false)
     .option('--install-deps', 'Automatically install adapter dependencies when missing', false)
-  .option('--dry-run', 'Preview provider injection changes without modifying files', false)
+    .option('--dry-run', 'Preview provider injection changes without modifying files', false)
+    .option('--no-skip-if-detected', 'Force scaffolding even if existing adapters/providers are detected')
     .action(async (options: ScaffoldCommandOptions) => {
       console.log(chalk.blue('Scaffolding translation resources...'));
 
@@ -95,6 +98,18 @@ export function registerScaffoldAdapter(program: Command) {
           default: Boolean(options.force),
         },
       ]);
+
+      if ((options.skipIfDetected ?? true) && !options.force && !answers.force) {
+        const detection = await detectExistingRuntime();
+        if (detection) {
+          console.log(
+            chalk.yellow(
+              `Existing i18n runtime detected (${detection}). Skipping scaffold. Use --no-skip-if-detected or --force to override.`
+            )
+          );
+          return;
+        }
+      }
 
       try {
         if (answers.type === 'custom') {
@@ -181,4 +196,27 @@ export function registerScaffoldAdapter(program: Command) {
         console.error(chalk.red('Failed to scaffold adapter:'), (error as Error).message);
       }
     });
+}
+
+async function detectExistingRuntime(): Promise<string | null> {
+  try {
+    const config = await loadConfig();
+    const report = await diagnoseWorkspace(config);
+    type AdapterInfo = (typeof report.adapterFiles)[number];
+    type ProviderInfo = (typeof report.providerFiles)[number];
+
+    if (report.adapterFiles.length) {
+      return report.adapterFiles.map((adapter: AdapterInfo) => adapter.path).join(', ');
+    }
+    const provider = report.providerFiles.find((entry: ProviderInfo) => entry.hasI18nProvider);
+    if (provider) {
+      return provider.relativePath;
+    }
+  } catch (error) {
+    if ((error as Error).message?.includes('Config file not found')) {
+      return null;
+    }
+    console.warn(chalk.gray(`Skipping adapter detection: ${(error as Error).message}`));
+  }
+  return null;
 }

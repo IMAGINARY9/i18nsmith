@@ -3,8 +3,13 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
+import { diagnoseWorkspace, I18nConfig } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
+
+interface InitCommandOptions {
+  merge?: boolean;
+}
 
 interface InitAnswers {
   sourceLanguage: string;
@@ -31,7 +36,8 @@ export function registerInit(program: Command) {
   program
     .command('init')
     .description('Initialize i18nsmith configuration')
-    .action(async () => {
+    .option('--merge', 'Merge with existing locales/runtimes when detected', false)
+    .action(async (commandOptions: InitCommandOptions) => {
       console.log(chalk.blue('Initializing i18nsmith configuration...'));
 
       const answers = await inquirer.prompt<InitAnswers>([
@@ -180,7 +186,7 @@ export function registerInit(program: Command) {
           ? (answers.customAdapterHook?.trim() || 'useTranslation')
           : 'useTranslation';
 
-      const config = {
+      const config: I18nConfig = {
         version: 1 as const,
         sourceLanguage: answers.sourceLanguage,
         targetLanguages: parseList(answers.targetLanguages),
@@ -202,7 +208,14 @@ export function registerInit(program: Command) {
         seedTargetLocales: answers.seedTargetLocales,
       };
 
-      const configPath = path.join(process.cwd(), 'i18n.config.json');
+      const workspaceRoot = process.cwd();
+      const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
+      if (mergeDecision?.aborted) {
+        console.log(chalk.yellow('Aborting init to avoid overwriting existing i18n assets. Re-run with --merge to bypass.'));
+        return;
+      }
+
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
       
       try {
         await fs.writeFile(configPath, JSON.stringify(config, null, 2));
@@ -256,9 +269,90 @@ export function registerInit(program: Command) {
             console.log(chalk.cyan('  pnpm add react-i18next i18next'));
           }
         }
+
+        if (mergeDecision?.strategy) {
+          console.log(
+            chalk.blue(
+              `Merge strategy selected: ${mergeDecision.strategy}. Use this when running i18nsmith sync or diagnose to reconcile locales.`
+            )
+          );
+        }
       } catch (error) {
         console.error(chalk.red('Failed to write configuration file:'), error);
       }
     });
+}
+
+type MergeStrategy = 'keep-source' | 'overwrite' | 'interactive';
+
+interface MergeDecision {
+  strategy: MergeStrategy | null;
+  aborted: boolean;
+}
+
+async function maybePromptMergeStrategy(
+  config: I18nConfig,
+  workspaceRoot: string,
+  mergeRequested: boolean
+): Promise<MergeDecision | null> {
+  try {
+    const report = await diagnoseWorkspace(config, { workspaceRoot });
+    type LocaleInsight = (typeof report.localeFiles)[number];
+    type ProviderInsight = (typeof report.providerFiles)[number];
+    const existingLocales = report.localeFiles.filter((entry: LocaleInsight) => !entry.missing && !entry.parseError);
+    const hasRuntime =
+      report.adapterFiles.length > 0 || report.providerFiles.some((provider: ProviderInsight) => provider.hasI18nProvider);
+
+    if (!existingLocales.length && !hasRuntime) {
+      return { strategy: null, aborted: false };
+    }
+
+    console.log(chalk.yellow('\nExisting i18n assets detected:'));
+    if (existingLocales.length) {
+  const localeList = existingLocales.map((entry: LocaleInsight) => entry.locale).join(', ');
+      console.log(`  • Locales: ${localeList}`);
+    }
+    if (hasRuntime) {
+      console.log('  • Runtime files already present.');
+    }
+    if (report.conflicts.length) {
+      for (const conflict of report.conflicts) {
+        console.log(chalk.red(`  • ${conflict.message}`));
+      }
+    }
+
+    if (!mergeRequested) {
+      const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
+        {
+          type: 'confirm',
+          name: 'proceed',
+          message: 'Merge with the existing setup instead of overwriting?',
+          default: true,
+        },
+      ]);
+      if (!proceed) {
+        return { strategy: null, aborted: true };
+      }
+    }
+
+    const { strategy } = await inquirer.prompt<{ strategy: MergeStrategy }>([
+      {
+        type: 'list',
+        name: 'strategy',
+        message: 'Choose a merge strategy for existing locale keys',
+        choices: [
+          { name: 'Keep source values (append new keys only)', value: 'keep-source' },
+          { name: 'Overwrite with placeholders (backup first)', value: 'overwrite' },
+          { name: 'Interactive review during sync', value: 'interactive' },
+        ],
+        default: 'keep-source',
+      },
+    ]);
+
+    return { strategy, aborted: false };
+  } catch (error) {
+    console.warn(chalk.gray(`Skipping merge diagnostics: ${(error as Error).message}`));
+    return { strategy: null, aborted: false };
+  }
 }
 

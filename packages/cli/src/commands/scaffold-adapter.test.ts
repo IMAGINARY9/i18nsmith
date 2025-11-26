@@ -2,6 +2,49 @@ import { describe, it, expect, vi } from 'vitest';
 import { Command } from 'commander';
 import { registerScaffoldAdapter } from './scaffold-adapter';
 
+vi.mock('@i18nsmith/core', () => ({
+  loadConfig: vi.fn().mockResolvedValue({
+    version: 1,
+    sourceLanguage: 'en',
+    targetLanguages: ['es'],
+    localesDir: 'locales',
+    include: ['src/**/*.{ts,tsx}'],
+    exclude: [],
+    minTextLength: 1,
+    translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+    keyGeneration: { namespace: 'common', shortHashLen: 6 },
+    seedTargetLocales: false,
+    sync: {
+      translationIdentifier: 't',
+      validateInterpolations: false,
+      placeholderFormats: ['doubleCurly', 'percentCurly', 'percentSymbol'],
+      emptyValuePolicy: 'warn',
+      emptyValueMarkers: ['todo'],
+      dynamicKeyAssumptions: [],
+    },
+  }),
+  diagnoseWorkspace: vi.fn().mockResolvedValue({
+    localesDir: 'locales',
+    localeFiles: [],
+    detectedLocales: [],
+    runtimePackages: [],
+    providerFiles: [],
+    adapterFiles: [],
+    translationUsage: {
+      hookName: 'useTranslation',
+      translationIdentifier: 't',
+      filesExamined: 0,
+      hookOccurrences: 0,
+      identifierOccurrences: 0,
+      hookExampleFiles: [],
+      identifierExampleFiles: [],
+    },
+    actionableItems: [],
+    conflicts: [],
+    recommendations: [],
+  }),
+}));
+
 vi.mock('inquirer', () => ({
   default: {
     prompt: vi.fn().mockResolvedValue({
