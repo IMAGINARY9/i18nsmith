@@ -20,15 +20,16 @@ import {
 } from '@i18nsmith/core';
 import type { CheckSummary, CheckSuggestedCommand, DiagnosisReport } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
-import { registerInit } from './commands/init';
-import { registerScaffoldAdapter } from './commands/scaffold-adapter';
-import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils';
-import { getDiagnosisExitSignal } from './utils/diagnostics-exit';
+import { registerInit } from './commands/init.js';
+import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
+import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils.js';
+import { getDiagnosisExitSignal } from './utils/diagnostics-exit.js';
 
 interface ScanOptions {
   config?: string;
   json?: boolean;
   target?: string[];
+  report?: string;
 }
 
 interface DiagnoseCommandOptions {
@@ -416,10 +417,14 @@ program
   .description('Scan project and apply i18n transformations')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .option('--check', 'Exit with error code if changes are needed', false)
+  .option('--diff', 'Display unified diffs for locale files that would change', false)
+  .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
   .option('--target <pattern...>', 'Limit scanning to specific files or glob patterns', collectTargetPatterns, [])
-  .action(async (options: ScanOptions & { write?: boolean; check?: boolean }) => {
+  .action(async (options: ScanOptions & { write?: boolean; check?: boolean; diff?: boolean; patchDir?: string }) => {
+    const diffEnabled = Boolean(options.diff || options.patchDir);
     console.log(
       chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
     );
@@ -427,7 +432,18 @@ program
     try {
       const config = await loadConfig(options.config);
       const transformer = new Transformer(config);
-  const summary = await transformer.run({ write: options.write, targets: options.target });
+      const summary = await transformer.run({
+        write: options.write,
+        targets: options.target,
+        diff: diffEnabled,
+      });
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+        console.log(chalk.green(`Transform report written to ${outputPath}`));
+      }
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -435,6 +451,13 @@ program
       }
 
       printTransformSummary(summary);
+
+      if (diffEnabled) {
+        printLocaleDiffs(summary.diffs);
+      }
+      if (options.patchDir) {
+        await writeLocaleDiffPatches(summary.diffs, options.patchDir);
+      }
 
       if (options.check && summary.candidates.some((candidate) => candidate.status === 'pending')) {
         console.error(chalk.red('\nCheck failed: Pending translations found. Run with --write to fix.'));
@@ -497,6 +520,7 @@ program
   .description('Detect missing locale keys and prune unused entries')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .option('--check', 'Exit with error code if drift detected', false)
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
@@ -545,6 +569,13 @@ program
         invalidateCache,
         targets: options.target,
       });
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+        console.log(chalk.green(`Sync report written to ${outputPath}`));
+      }
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -807,6 +838,7 @@ program
   .argument('<newKey>', 'Replacement translation key')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .action(async (oldKey: string, newKey: string, options: ScanOptions & { write?: boolean }) => {
     console.log(chalk.blue(options.write ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
@@ -815,6 +847,13 @@ program
       const config = await loadConfig(options.config);
       const renamer = new KeyRenamer(config);
       const summary = await renamer.rename(oldKey, newKey, { write: options.write });
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+        console.log(chalk.green(`Rename report written to ${outputPath}`));
+      }
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -838,6 +877,7 @@ program
   .requiredOption('-m, --map <path>', 'Path to JSON map file (object or array of {"from","to"})')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .action(async (options: RenameMapOptions) => {
     console.log(
@@ -849,6 +889,13 @@ program
       const mappings = await loadRenameMappings(options.map);
       const renamer = new KeyRenamer(config);
       const summary = await renamer.renameBatch(mappings, { write: options.write });
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+        console.log(chalk.green(`Batch rename report written to ${outputPath}`));
+      }
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));

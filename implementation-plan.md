@@ -376,6 +376,46 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 - ✅ 3.16.2 introduced deterministic diagnostics exit codes (2=missing source locale, 3=invalid JSON, 4=reserved provider clash, 5=fallback) plus CLI helpers/tests and README documentation so CI can branch on specific failure modes.
 - ✅ 3.16.3 added a `diagnostics` config block so teams can plug in custom runtime package detections, provider globs, adapter hints, and translation usage globs/max file overrides—complete with README docs and regression tests.
 
+### 3.17. Reliability & Polish (Post-Testing)
+**Objective:** Address critical stability issues and usability friction identified during external testing (e.g., ESM compatibility, inconsistent flags).
+
+- [x] **3.17.1 · Critical: ESM Module Resolution Fix**
+  - *Problem:* CLI crashes in Node ESM environments (`ERR_MODULE_NOT_FOUND`) because compiled JS files lack `.js` extensions in relative imports.
+  - *Scope:* Update all relative imports in `packages/cli` (and other packages) to include `.js` extensions. Verify with a pure ESM consumer test.
+  - *Priority:* **Blocker**.
+
+- [x] **3.17.2 · CLI Flag Consistency**
+  - *Problem:* `check` supports `--report`, but `sync`, `transform`, and `rename-key` do not, making it hard to generate artifacts for other workflows.
+  - *Scope:* Add `--report <path>` support to `sync`, `transform`, and `rename-key` commands. Ensure consistent JSON output structure.
+
+- [x] **3.17.3 · Config Lookup & Heuristic Refinements**
+  - *Problem:* Config is only looked for in CWD (breaks monorepo sub-folder usage). Scanner is too noisy with attributes like `className`.
+  - *Scope:*
+    - Implement upward config lookup (find `i18n.config.json` in parent dirs).
+    - Update default scanner exclusions to ignore `className`, `style`, `id`, `key`, `ref`, `width`, `height`.
+
+### 3.18. Critical Fixes & Enhancements (Post-Analysis)
+**Objective:** Address remaining high-priority issues from external testing (Issues 4-10, A-F).
+
+- [x] **3.18.1 · Provider Detection Noise Reduction**
+  - *Problem:* `diagnose` reports internal `node_modules` paths (e.g., `next/dist/...`) as provider candidates.
+  - *Scope:* Update `DiagnosticsService` or `ProviderInjector` to exclude `node_modules` from default globs.
+
+- [x] **3.18.2 · Diff/Patch UX Consistency**
+  - *Problem:* `--patch-dir` is only available when writing, but is needed for dry-run CI workflows.
+  - *Scope:* Enable `--patch-dir` in dry-run mode for `sync` and `transform`. Ensure patches are generated without writing to disk.
+
+- [x] **3.18.3 · Key/Value Integrity Safeguards**
+  - *Problem:* Deprecated keys rewritten as text-as-value; literal text used as keys; source values overwritten.
+  - *Scope:*
+    - Implement validation in `KeyGenerator` to reject text-as-key patterns.
+    - Update `Syncer` to prefer existing source values over key names when seeding.
+    - Add safeguards to prevent overwriting existing source values with key names.
+
+- [x] **3.18.4 · Locale Retention & Pruning Control**
+  - *Problem:* Non-English locales are pruned too aggressively.
+  - *Scope:* Add `sync.retainLocales` config option to prevent deletion of specific locales or groups.
+
 ## Phase 4: Pluggable Translation Engine (Weeks 11-14)
 **Objective:** Integrate optional, pluggable adapters for automated machine translation, enabling `i18nsmith translate` to fill missing locale keys.
 

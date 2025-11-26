@@ -1,6 +1,7 @@
 import type {
   CandidateKind,
   KeyGenerator,
+  LocaleDiffEntry,
   LocaleFileStats,
   LocaleStore,
   ScanCandidate,
@@ -25,6 +26,7 @@ export interface TransformSummary {
   filesChanged: string[];
   candidates: TransformCandidate[];
   localeStats: LocaleFileStats[];
+  diffs: LocaleDiffEntry[];
   skippedFiles: Array<{ filePath: string; reason: string }>;
   write: boolean;
 }
@@ -32,6 +34,7 @@ export interface TransformSummary {
 export interface TransformRunOptions {
   write?: boolean;
   targets?: string[];
+  diff?: boolean;
 }
 
 export interface TransformerOptions {

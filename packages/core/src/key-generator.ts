@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
-import { CandidateKind } from './scanner';
+import { CandidateKind } from './scanner.js';
 
 export interface KeyGenerationContext {
   filePath: string;

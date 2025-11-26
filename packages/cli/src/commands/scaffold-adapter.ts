@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { diagnoseWorkspace, loadConfig } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
-import { detectPackageManager, installDependencies } from '../utils/package-manager';
+import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
 import { maybeInjectProvider } from '../utils/provider-injector.js';
 
 interface ScaffoldCommandOptions {

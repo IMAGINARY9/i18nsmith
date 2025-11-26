@@ -305,6 +305,7 @@ async function detectProviderFiles(workspaceRoot: string, config: I18nConfig): P
     absolute: true,
     suppressErrors: true,
     unique: true,
+    ignore: ['**/node_modules/**'],
   }).catch(() => [] as string[]);
 
   const providers: ProviderInsight[] = [];

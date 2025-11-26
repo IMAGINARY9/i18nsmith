@@ -9,7 +9,7 @@ import {
   SyntaxKind,
 } from 'ts-morph';
 import fg from 'fast-glob';
-import { I18nConfig } from './config';
+import { I18nConfig } from './config.js';
 
 export type CandidateKind = 'jsx-text' | 'jsx-attribute' | 'jsx-expression';
 
@@ -201,6 +201,14 @@ export class Scanner {
   }
 
   private captureJsxExpression(node: JsxExpression, file: SourceFile, record: CandidateRecorder) {
+    const parent = node.getParent();
+    if (Node.isJsxAttribute(parent)) {
+      const attributeName = parent.getNameNode().getText();
+      if (!TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
+        return;
+      }
+    }
+
     const expression = node.getExpression();
     if (!expression || !Node.isStringLiteral(expression)) {
       return;

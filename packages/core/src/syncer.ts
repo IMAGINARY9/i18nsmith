@@ -2,11 +2,11 @@ import fs from 'fs/promises';
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import fg from 'fast-glob';
-import { createPatch } from 'diff';
 import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { ActionableItem } from './actionable.js';
+import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
 
 export interface TranslationReference {
   key: string;
@@ -38,6 +38,7 @@ export interface SyncSummary {
   placeholderIssues: PlaceholderIssue[];
   emptyValueViolations: EmptyValueViolation[];
   dynamicKeyWarnings: DynamicKeyWarning[];
+  suspiciousKeys: SuspiciousKeyWarning[];
   validation: SyncValidationState;
   assumedKeys: string[];
   write: boolean;
@@ -80,24 +81,19 @@ export interface DynamicKeyWarning {
   reason: DynamicKeyReason;
 }
 
+export interface SuspiciousKeyWarning {
+  key: string;
+  filePath: string;
+  position: {
+    line: number;
+    column: number;
+  };
+  reason: string;
+}
+
 export interface SyncValidationState {
   interpolations: boolean;
   emptyValuePolicy: EmptyValuePolicy;
-}
-
-export interface LocaleDiffPreview {
-  locale: string;
-  add: string[];
-  remove: string[];
-}
-
-export interface LocaleDiffEntry {
-  locale: string;
-  path: string;
-  diff: string;
-  added: string[];
-  updated: string[];
-  removed: string[];
 }
 
 interface FileFingerprint {
@@ -251,6 +247,21 @@ export class Syncer {
       : [];
     const emptyValueViolations = this.collectEmptyValueViolations(localeData);
 
+    const suspiciousKeys: SuspiciousKeyWarning[] = [];
+    for (const key of scopedKeySet) {
+      if (this.isSuspiciousKey(key)) {
+        const refs = scopedReferencesByKey.get(key) ?? [];
+        for (const ref of refs) {
+          suspiciousKeys.push({
+            key,
+            filePath: ref.filePath,
+            position: ref.position,
+            reason: 'Contains spaces',
+          });
+        }
+      }
+    }
+
     let localeStats: LocaleFileStats[] = [];
     if (write) {
       await this.applyMissingKeys(missingKeysToApply);
@@ -258,8 +269,15 @@ export class Syncer {
       localeStats = await this.localeStore.flush();
     }
 
-    const localePreview = this.buildLocalePreview(projectedLocaleData, localeData);
-    const diffs = runtime.generateDiffs ? this.buildLocaleDiffs(localeData, projectedLocaleData) : [];
+    const localePreview = buildLocalePreview(projectedLocaleData, localeData);
+    const diffs = runtime.generateDiffs
+      ? buildLocaleDiffs(
+          localeData,
+          projectedLocaleData,
+          (locale) => this.localeStore.getFilePath(locale),
+          this.workspaceRoot
+        )
+      : [];
     await this.saveReferenceCache(nextCacheEntries);
 
     const actionableItems = this.buildActionableItems({
@@ -268,6 +286,7 @@ export class Syncer {
       placeholderIssues,
       emptyValueViolations,
       dynamicKeyWarnings: scopedDynamicKeyWarnings,
+      suspiciousKeys,
       validation: {
         interpolations: runtime.validateInterpolations,
         emptyValuePolicy: runtime.emptyValuePolicy,
@@ -286,6 +305,7 @@ export class Syncer {
       placeholderIssues,
       emptyValueViolations,
       dynamicKeyWarnings: scopedDynamicKeyWarnings,
+      suspiciousKeys,
       validation: {
         interpolations: runtime.validateInterpolations,
         emptyValuePolicy: runtime.emptyValuePolicy,
@@ -294,6 +314,10 @@ export class Syncer {
       write,
       actionableItems,
     };
+  }
+
+  private isSuspiciousKey(key: string): boolean {
+    return key.includes(' ');
   }
 
   private scopeAnalysisToTargets(input: {
@@ -391,7 +415,12 @@ export class Syncer {
       }));
     }
 
-    const unusedKeysToApply = this.filterSelection(unusedKeys, selectedUnusedKeys);
+    const unusedKeysToApply = selectedUnusedKeys
+      ? this.filterSelection(unusedKeys, selectedUnusedKeys)
+      : this.config.sync?.retainLocales
+      ? []
+      : unusedKeys;
+
     for (const record of unusedKeysToApply) {
       record.locales.forEach((locale) => {
         this.applyProjectedRemoval(projectedLocaleData, locale, record.key);
@@ -401,44 +430,30 @@ export class Syncer {
     return { unusedKeys, unusedKeysToApply };
   }
 
-  private buildLocalePreview(
-    projectedData: Map<string, Record<string, string>>,
-    originalData: Map<string, Record<string, string>>
-  ): LocaleDiffPreview[] {
-    const allLocales = new Set([...projectedData.keys(), ...originalData.keys()]);
-    const preview: LocaleDiffPreview[] = [];
-
-    for (const locale of allLocales) {
-      const projected = projectedData.get(locale) ?? {};
-      const original = originalData.get(locale) ?? {};
-      const projectedKeys = new Set(Object.keys(projected));
-      const originalKeys = new Set(Object.keys(original));
-
-      const added = [...projectedKeys].filter((key) => !originalKeys.has(key));
-      const removed = [...originalKeys].filter((key) => !projectedKeys.has(key));
-
-      if (added.length || removed.length) {
-        preview.push({
-          locale,
-          add: added.sort(),
-          remove: removed.sort(),
-        });
-      }
-    }
-
-    return preview;
-  }
-
   private buildActionableItems(input: {
     missingKeys: MissingKeyRecord[];
     unusedKeys: UnusedKeyRecord[];
     placeholderIssues: PlaceholderIssue[];
     emptyValueViolations: EmptyValueViolation[];
     dynamicKeyWarnings: DynamicKeyWarning[];
+    suspiciousKeys: SuspiciousKeyWarning[];
     validation: SyncValidationState;
     assumedKeys: string[];
   }): ActionableItem[] {
     const items: ActionableItem[] = [];
+
+    input.suspiciousKeys.forEach((warning) => {
+      items.push({
+        kind: 'suspicious-key',
+        severity: 'warn',
+        key: warning.key,
+        filePath: warning.filePath,
+        message: `Suspicious key format detected: "${warning.key}" (contains spaces)`,
+        details: {
+          reason: warning.reason,
+        },
+      });
+    });
 
     input.missingKeys.forEach((record) => {
       const reference = record.references[0];
@@ -1044,95 +1059,5 @@ export class Syncer {
   private applyProjectedRemoval(projected: Map<string, Record<string, string>>, locale: string, key: string) {
     const data = this.ensureProjectedLocale(projected, locale);
     delete data[key];
-  }
-
-  private buildLocaleDiffs(
-    originalData: Map<string, Record<string, string>>,
-    projectedData: Map<string, Record<string, string>>
-  ): LocaleDiffEntry[] {
-    const locales = new Set([...originalData.keys(), ...projectedData.keys()]);
-    const diffs: LocaleDiffEntry[] = [];
-
-    for (const locale of locales) {
-      const before = this.sortLocaleData(originalData.get(locale) ?? {});
-      const after = this.sortLocaleData(projectedData.get(locale) ?? {});
-
-      if (this.areLocaleDataEqual(before, after)) {
-        continue;
-      }
-
-      const beforeSerialized = `${JSON.stringify(before, null, 2)}\n`;
-      const afterSerialized = `${JSON.stringify(after, null, 2)}\n`;
-      const filePath = this.localeStore.getFilePath(locale);
-      const patch = createPatch(this.getRelativePath(filePath), beforeSerialized, afterSerialized);
-
-      const { added, updated, removed } = this.computeDiffStats(before, after);
-
-      diffs.push({
-        locale,
-        path: filePath,
-        diff: patch,
-        added,
-        updated,
-        removed,
-      });
-    }
-
-    return diffs;
-  }
-
-  private sortLocaleData(data: Record<string, string>): Record<string, string> {
-    return Object.keys(data)
-      .sort((a, b) => a.localeCompare(b))
-      .reduce<Record<string, string>>((acc, key) => {
-        acc[key] = data[key];
-        return acc;
-      }, {});
-  }
-
-  private areLocaleDataEqual(a: Record<string, string>, b: Record<string, string>): boolean {
-    const aKeys = Object.keys(a);
-    const bKeys = Object.keys(b);
-    if (aKeys.length !== bKeys.length) {
-      return false;
-    }
-    for (const key of aKeys) {
-      if (a[key] !== b[key]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private computeDiffStats(
-    before: Record<string, string>,
-    after: Record<string, string>
-  ): { added: string[]; updated: string[]; removed: string[] } {
-    const added: string[] = [];
-    const updated: string[] = [];
-    const removed: string[] = [];
-    const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
-
-    for (const key of allKeys) {
-      const prev = before[key];
-      const next = after[key];
-      if (typeof prev === 'undefined' && typeof next !== 'undefined') {
-        added.push(key);
-        continue;
-      }
-      if (typeof next === 'undefined') {
-        removed.push(key);
-        continue;
-      }
-      if (prev !== next) {
-        updated.push(key);
-      }
-    }
-
-    return {
-      added: added.sort(),
-      updated: updated.sort(),
-      removed: removed.sort(),
-    };
   }
 }
