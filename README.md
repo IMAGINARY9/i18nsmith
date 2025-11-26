@@ -129,6 +129,7 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `sync.emptyValuePolicy`: Controls how empty/placeholder translations are treated. Use `"warn"` (default), `"fail"`, or `"ignore"`.
 - `sync.emptyValueMarkers`: Extra sentinel values that should be treated as “empty” (defaults to `todo`, `tbd`, `fixme`, `pending`, `???`).
 - `sync.dynamicKeyAssumptions`: List of translation keys that are only referenced dynamically (e.g., via template literals) so the syncer can treat them as in-use.
+- `sync.dynamicKeyGlobs`: Glob patterns (e.g., `relativeTime.*`, `navigation.**`) that mark entire namespaces as runtime-only so `sync` skips unused warnings for those keys.
 - `diagnostics.runtimePackages`: Extra package names to treat as i18n runtimes when scanning `package.json` (e.g., `"@acme/i18n-runtime"`).
 - `diagnostics.providerGlobs`: Additional glob patterns for detecting provider files (relative to the repo root).
 - `diagnostics.adapterHints`: Explicit file paths that should be treated as pre-existing adapters. Each entry accepts `{ "path": "src/i18n/provider.tsx", "type": "custom" }`.
@@ -211,7 +212,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 - **Unused keys**: Locale entries that are never referenced in your codebase.
 - **Placeholder validation**: Add `--validate-interpolations` (or set `sync.validateInterpolations`) to ensure placeholders such as `{{name}}`, `%{count}`, or `%s` appear in every translation for the key.
 - **Empty translation policies**: Use `--no-empty-values` (or set `sync.emptyValuePolicy: "fail"`) to treat empty strings, whitespace-only values, and TODO markers as drift.
-- **Dynamic key warnings**: Template literals (e.g., ``t(`errors.${code}`)``) are surfaced with file/line references so you can review them. Pass `--assume key1 key2` (or configure `sync.dynamicKeyAssumptions`) to whitelist known runtime-only keys.
+- **Dynamic key warnings**: Template literals (e.g., ``t(`errors.${code}`)``) are surfaced with file/line references so you can review them. Pass `--assume key1 key2` (or configure `sync.dynamicKeyAssumptions`/`sync.dynamicKeyGlobs`) to whitelist known runtime-only keys or entire namespaces.
 - **Dry-run previews**: Before writing, you’ll see per-locale counts of additions/removals so you can review changes in CI.
 - **Auto-fixes**: Run with `--write` to add placeholders for missing keys (and seed targets when `seedTargetLocales` is true) and prune unused entries.
 - **Unified diffs & patch exports**: Use `i18nsmith sync --diff` to print git-style unified diffs for each locale JSON file that would change. To persist per-locale patches for review or CI artifacts, use `i18nsmith sync --patch-dir ./artifacts` which writes `.patch` files (one per locale) suitable for `git apply` or upload.

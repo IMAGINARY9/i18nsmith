@@ -32,10 +32,24 @@ export function generateValueFromKey(key: string): string {
     return '';
   }
 
-  return normalizeWhitespace(
-    normalized
-      .split(' ')
-      .map(formatWord)
-      .join(' ')
-  );
+  const tokens = normalized.split(' ').filter(Boolean);
+  const formatted: string[] = [];
+  let lastTokenLower: string | undefined;
+
+  for (const token of tokens) {
+    const word = formatWord(token);
+    if (!word) {
+      continue;
+    }
+
+    const lower = word.toLowerCase();
+    if (lastTokenLower === lower) {
+      continue;
+    }
+
+    formatted.push(word);
+    lastTokenLower = lower;
+  }
+
+  return formatted.join(' ');
 }

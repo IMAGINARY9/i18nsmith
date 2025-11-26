@@ -151,6 +151,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const emptyValueMarkersRaw = ensureStringArray(syncConfig.emptyValueMarkers);
   const emptyValueMarkers = emptyValueMarkersRaw.length ? emptyValueMarkersRaw : DEFAULT_EMPTY_VALUE_MARKERS;
   const dynamicKeyAssumptions = ensureStringArray(syncConfig.dynamicKeyAssumptions);
+  const dynamicKeyGlobs = ensureStringArray(syncConfig.dynamicKeyGlobs);
   const retainLocales = typeof syncConfig.retainLocales === 'boolean'
     ? syncConfig.retainLocales
     : false;
@@ -191,6 +192,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       emptyValuePolicy,
       emptyValueMarkers,
       dynamicKeyAssumptions,
+      dynamicKeyGlobs,
       retainLocales: typeof syncConfig.retainLocales === 'boolean' ? syncConfig.retainLocales : true,
     },
     diagnostics: diagnosticsConfig,
@@ -335,6 +337,7 @@ export interface SyncConfig {
   emptyValuePolicy?: EmptyValuePolicy;
   emptyValueMarkers?: string[];
   dynamicKeyAssumptions?: string[];
+  dynamicKeyGlobs?: string[];
   retainLocales?: boolean;
 }
 
