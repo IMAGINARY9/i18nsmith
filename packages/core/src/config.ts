@@ -187,7 +187,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       emptyValuePolicy,
       emptyValueMarkers,
       dynamicKeyAssumptions,
-      retainLocales,
+      retainLocales: typeof syncConfig.retainLocales === 'boolean' ? syncConfig.retainLocales : true,
     },
     diagnostics: diagnosticsConfig,
   };
