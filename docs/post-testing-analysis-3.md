@@ -57,15 +57,15 @@ Entries like `"marketplace.subtitle": "marketplace.subtitle"`.
 2.  **Force Migration of Text-as-Keys:**
     - **Status:** ✅ **Completed**
     - **Implementation:** Added `--migrate-text-keys` flag to `transform` command.
-    - **Logic:** `Scanner` now detects `t('String with spaces')` calls. `Transformer` generates structured keys for them and updates the code and locale files. It also forces migration of values to target locales.
+    - **Logic:** `Scanner` now detects `t('String with spaces')` calls, including property/element access patterns like `i18n.t('...')`, `props?.t('...')`, and `obj['t']('...')`. `Transformer` generates structured keys for them, updates the code, and copies the existing localized values into the new keys—even when `seedTargetLocales` is disabled.
 
 3.  **Scanner Robustness:**
-    - **Status:** ⚠️ **Pending Investigation**
-    - **Note:** Added `scanCalls` capability. Need to verify if file skipping persists.
+    - **Status:** ✅ **Completed**
+    - **Note:** Added `scanCalls` capability plus broader detection of translation call shapes. Default include globs now cover both `src/` and Next.js `app/`/`pages/` directories, common build outputs (e.g., `.next/`, `dist/`) are excluded automatically, and `i18nsmith scan --list-files` can print the exact files matched to catch gaps quickly. Scanner now treats no-substitution template literals the same as string literals across JSX attributes/expressions and `t()` calls, so text embedded in template strings is no longer skipped. Continue monitoring for non-React file gaps, but template literal coverage is handled.
 
 4.  **Value Generation:**
     - **Status:** ✅ **Verified**
-    - **Note:** `Transformer` correctly uses the original text as the value for the new key.
+    - **Note:** `Transformer` now prefers any legacy locale value tied to the detected text-as-key before touching fallbacks, and the `Syncer` only uses the humanized key (`account.name` → `Account Name`) when no reusable text exists. This keeps earlier copy intact whenever it was previously mapped, with the generator acting strictly as a backup.
 
 ## Recommendations for User
 1.  **Enable `retainLocales: true`** in `i18n.config.json` immediately to stop data loss.

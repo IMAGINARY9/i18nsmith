@@ -215,6 +215,58 @@ describe('Transformer', () => {
     expect(updatedFile).not.toContain('react-i18next');
   });
 
+  it('migrates text-as-key call expressions and preserves existing locale values', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-migrate-calls-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Legacy.tsx');
+    const initial = `
+      import { useTranslation } from 'react-i18next';
+      export function Legacy() {
+        const { t } = useTranslation();
+        return <div>{t('Hello legacy world')}</div>;
+      }
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const localesDir = path.join(tempDir, 'locales');
+    await fs.mkdir(localesDir, { recursive: true });
+    await fs.writeFile(path.join(localesDir, 'en.json'), JSON.stringify({ 'Hello legacy world': 'Hello legacy world' }));
+    await fs.writeFile(path.join(localesDir, 'fr.json'), JSON.stringify({ 'Hello legacy world': 'Bonjour hérité' }));
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: ['fr'],
+      localesDir,
+      include: ['src/**/*.tsx'],
+      seedTargetLocales: false,
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const summary = await transformer.run({ write: true, migrateTextKeys: true });
+    const callCandidate = summary.candidates.find((candidate) => candidate.kind === 'call-expression');
+    expect(callCandidate?.status).toBe('applied');
+    expect(callCandidate?.suggestedKey).toBeTruthy();
+
+    const newKey = callCandidate?.suggestedKey as string;
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    const hasKey =
+      updatedFile.includes(`t('${newKey}')`) ||
+      updatedFile.includes(`t("${newKey}")`);
+    expect(hasKey).toBe(true);
+
+    const frContents = JSON.parse(await fs.readFile(path.join(localesDir, 'fr.json'), 'utf8'));
+    expect(frContents[newKey]).toBe('Bonjour hérité');
+  });
+
   it('migrates existing values from text-as-key to structured keys', async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-migration-'));
     const srcDir = path.join(tempDir, 'src');
@@ -255,5 +307,52 @@ describe('Transformer', () => {
     const newKey = keys.find(k => k !== "Hello world");
     expect(newKey).toBeDefined();
     expect(frContents[newKey!]).toBe('Bonjour le monde');
+  });
+
+  it('prefers existing source locale values before falling back to generated text', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-prefer-legacy-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'LegacySource.tsx');
+    const initial = `
+      import { useTranslation } from 'react-i18next';
+      export function LegacySource() {
+        const { t } = useTranslation();
+        return <p>{t('Legacy CTA label')}</p>;
+      }
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const localesDir = path.join(tempDir, 'locales');
+    await fs.mkdir(localesDir, { recursive: true });
+    await fs.writeFile(
+      path.join(localesDir, 'en.json'),
+      JSON.stringify({ 'Legacy CTA label': 'Existing CTA copy' }, null, 2)
+    );
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir,
+      include: ['src/**/*.tsx'],
+      seedTargetLocales: false,
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const summary = await transformer.run({ write: true, migrateTextKeys: true });
+    const callCandidate = summary.candidates.find((candidate) => candidate.kind === 'call-expression');
+    expect(callCandidate?.status).toBe('applied');
+
+    const newKey = callCandidate?.suggestedKey as string;
+    const enContents = JSON.parse(await fs.readFile(path.join(localesDir, 'en.json'), 'utf8'));
+    expect(enContents[newKey]).toBe('Existing CTA copy');
   });
 });

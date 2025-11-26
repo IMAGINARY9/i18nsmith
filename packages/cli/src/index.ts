@@ -30,6 +30,7 @@ interface ScanOptions {
   json?: boolean;
   target?: string[];
   report?: string;
+  listFiles?: boolean;
 }
 
 interface DiagnoseCommandOptions {
@@ -222,6 +223,7 @@ program
   .description('Scan project for strings to translate')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--list-files', 'List the files that were scanned', false)
   .action(async (options: ScanOptions) => {
     console.log(chalk.blue('Starting scan...'));
 
@@ -247,6 +249,23 @@ program
       }
 
       printCandidateTable(summary.candidates);
+
+      if (options.listFiles) {
+        if (summary.filesExamined.length === 0) {
+          console.log(chalk.yellow('No files matched the configured include/exclude patterns.'));
+        } else {
+          console.log(chalk.blue(`Files scanned (${summary.filesExamined.length}):`));
+          const preview = summary.filesExamined.slice(0, 200);
+          preview.forEach((file) => console.log(`  • ${file}`));
+          if (summary.filesExamined.length > preview.length) {
+            console.log(
+              chalk.gray(
+                `  ...and ${summary.filesExamined.length - preview.length} more. Use --target to narrow the list.`
+              )
+            );
+          }
+        }
+      }
     } catch (error) {
       console.error(chalk.red('Scan failed:'), (error as Error).message);
       process.exitCode = 1;

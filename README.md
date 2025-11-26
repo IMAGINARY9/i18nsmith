@@ -41,6 +41,21 @@ Use `--report` to persist the JSON output for CI or editors, and rely on determi
 
 Pair this with `i18nsmith init --merge` to reuse existing locales instead of overwriting them.
 
+## Source scanning & diagnostics
+
+Need to double-check which files the tooling will touch? Run the standalone scanner to preview coverage without mutating anything:
+
+```bash
+i18nsmith scan --list-files
+```
+
+- The command respects the `include`/`exclude` globs from `i18n.config.json` (defaulting to `src/`, `app/`, and `pages/` while skipping `node_modules/`, `.next/`, and `dist/`).
+- `--list-files` prints up to 200 matched files so you can spot gaps quickly—handy when onboarding Next.js layouts or monorepo packages that sit outside `src/`.
+- Combine with `--json` to feed the summary (including `filesExamined`) into CI or editor tooling.
+- Pass extra `--include` / `--exclude` globs on the CLI for one-off runs without touching your config.
+
+This makes it easy to verify scanner coverage before running heavier workflows like `transform` or `sync`.
+
 ## Guided repository health check
 
 When you want a single command that answers “Can I safely run init/transform/sync right now?”, use `i18nsmith check`. It combines `diagnose` with a `sync` dry-run, aggregates actionable items, and prints copy-pasteable follow-up commands.
@@ -71,8 +86,12 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 	"sourceLanguage": "en",
 	"targetLanguages": ["fr", "de"],
 	"localesDir": "locales",
-	"include": ["src/**/*.{ts,tsx,js,jsx}"],
-	"exclude": ["node_modules/**", "**/*.test.*"],
+	"include": [
+		"src/**/*.{ts,tsx,js,jsx}",
+		"app/**/*.{ts,tsx,js,jsx}",
+		"pages/**/*.{ts,tsx,js,jsx}"
+	],
+	"exclude": ["node_modules/**", ".next/**", "dist/**", "**/*.test.*"],
 	"minTextLength": 1,
 	"translation": {
 		"service": "manual"
@@ -95,8 +114,8 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `sourceLanguage`: Source language code (default: `"en"`).
 - `targetLanguages`: Array of target language codes.
 - `localesDir`: Directory for locale JSON files (default: `"locales"`).
-- `include`: Glob patterns for files to scan (default: `["src/**/*.{ts,tsx,js,jsx}"]`).
-- `exclude`: Glob patterns to exclude.
+- `include`: Glob patterns for files to scan (default: `src/`, `app/`, and `pages/` trees with TS/JS extensions).
+- `exclude`: Glob patterns to exclude (default: `node_modules/**`, `.next/**`, and `dist/**`; add your own such as `**/*.test.*`).
 - `minTextLength`: Minimum length for translatable text (default: `1`).
 - `translation.service`: Translation service (`"google"`, `"deepl"`, or `"manual"`).
 - `translationAdapter.module`: Module to import the translation hook from (default: `"react-i18next"`).
