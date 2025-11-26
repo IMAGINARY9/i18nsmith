@@ -9,8 +9,13 @@ describe('generateValueFromKey', () => {
 
   it('handles kebab, snake, and camel case segments', () => {
     expect(generateValueFromKey('common.account_name.title')).toBe('Common Account Name Title');
-  expect(generateValueFromKey('ctaPrimaryAction')).toBe('Cta Primary Action');
+    expect(generateValueFromKey('ctaPrimaryAction')).toBe('Cta Primary Action');
     expect(generateValueFromKey('CTASecondary')).toBe('CTA Secondary');
+  });
+
+  it('deduplicates repeated namespace segments', () => {
+    expect(generateValueFromKey('account.accountInformation')).toBe('Account Information');
+    expect(generateValueFromKey('activity.activityVerified')).toBe('Activity Verified');
   });
 
   it('returns empty string for invalid keys', () => {

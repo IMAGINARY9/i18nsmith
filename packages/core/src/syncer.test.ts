@@ -226,6 +226,32 @@ export const Status = () => {
     expect(summary.unusedKeys).toHaveLength(0);
   });
 
+  it('treats dynamic key globs as assumed keys for unused analysis', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Shell.tsx'),
+      `export const Shell = () => <div>noop</div>;`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ 'relativeTime.minutes': '1 minute', 'relativeTime.hours': '1 hour' }, null, 2)
+    );
+
+    const config: I18nConfig = {
+      ...baseConfig,
+      sync: {
+        ...baseConfig.sync!,
+        dynamicKeyGlobs: ['relativeTime.*'],
+      },
+    };
+
+    const syncer = new Syncer(config, { workspaceRoot: tempDir });
+    const summary = await syncer.run();
+
+    expect(summary.unusedKeys).toEqual([]);
+    expect(summary.assumedKeys).toEqual([]);
+  });
+
   it('applies selection filters for missing and unused keys', async () => {
     await fs.writeFile(
       path.join(tempDir, 'src', 'Selective.tsx'),

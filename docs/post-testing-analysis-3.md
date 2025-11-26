@@ -67,6 +67,10 @@ Entries like `"marketplace.subtitle": "marketplace.subtitle"`.
     - **Status:** ✅ **Verified**
     - **Note:** `Transformer` now prefers any legacy locale value tied to the detected text-as-key before touching fallbacks, and the `Syncer` only uses the humanized key (`account.name` → `Account Name`) when no reusable text exists. This keeps earlier copy intact whenever it was previously mapped, with the generator acting strictly as a backup.
 
+5.  **Namespace-based dynamic key allowlists:**
+    - **Status:** ✅ **Completed**
+    - **Note:** `sync.dynamicKeyGlobs` lets us treat whole namespaces (e.g., `relativeTime.*`, `navigation.**`) as runtime-only so broad groups no longer flood the report with unused-key noise. The globs expand lazily from locale files—which keeps reports readable while still preventing accidental pruning.
+
 ## Recommendations for User
 1.  **Enable `retainLocales: true`** in `i18n.config.json` immediately to stop data loss.
 2.  **Check `include` globs:** Ensure `src/**/*.{ts,tsx}` covers all needed files.
