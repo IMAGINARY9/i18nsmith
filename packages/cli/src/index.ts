@@ -46,6 +46,7 @@ interface CheckCommandOptions extends ScanOptions {
   emptyValues?: boolean;
   diff?: boolean;
   invalidateCache?: boolean;
+  preferDiagnosticsExit?: boolean;
 }
 
 interface RenameMapOptions extends ScanOptions {
@@ -155,6 +156,7 @@ program
   .option('--diff', 'Include locale diff previews for missing/unused key fixes', false)
   .option('--invalidate-cache', 'Ignore cached sync analysis and rescan all source files', false)
   .option('--target <pattern...>', 'Limit translation reference scanning to specific files or patterns', collectTargetPatterns, [])
+  .option('--prefer-diagnostics-exit', 'Prefer diagnostics exit codes when --fail-on=conflicts and blocking conflicts exist', false)
   .action(async (options: CheckCommandOptions) => {
     console.log(chalk.blue('Running guided repository health check...'));
     try {
@@ -188,8 +190,9 @@ program
       // If diagnostics discovered blocking conflicts, prefer the diagnostics' exit
       // signal so CI can branch on specific failure modes (missing source locale,
       // invalid JSON, etc.). This mirrors `i18nsmith diagnose` behavior.
+      // Only when --prefer-diagnostics-exit is true and --fail-on=conflicts.
       const diagExit = getDiagnosisExitSignal(summary.diagnostics);
-      if (diagExit) {
+      if (diagExit && options.preferDiagnosticsExit && options.failOn === 'conflicts') {
         console.error(chalk.red(`\nBlocking diagnostic conflict detected: ${diagExit.reason}`));
         console.error(chalk.red(`Exit code ${diagExit.code}`));
         process.exitCode = diagExit.code;

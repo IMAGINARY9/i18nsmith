@@ -56,6 +56,7 @@ Highlights:
 - Suggests exact CLI commands (e.g., `i18nsmith sync --write`, `i18nsmith scaffold-adapter --type react-i18next`) tailored to the issues it found.
 - Accepts the same targeting flags as `sync` (`--assume`, `--target`, `--diff`, `--validate-interpolations`, `--no-empty-values`).
 - Supports `--fail-on conflicts` (default) or `--fail-on warnings` so CI can enforce whatever bar you choose.
+- Use `--prefer-diagnostics-exit` to prefer deterministic diagnostics exit codes (e.g., 2 for missing source locale) when `--fail-on=conflicts` and blocking conflicts exist, mirroring `diagnose` behavior for CI consistency.
 - Use `--report` to persist the JSON output for the VS Code extension or other tooling.
 
 Pair `check` with `diagnose` when onboarding a brownfield repo: run `diagnose` first to understand existing assets, then `check` to see exactly which commands to run next.
