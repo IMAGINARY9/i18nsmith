@@ -2,8 +2,12 @@ import fs from 'fs/promises';
 import path from 'path';
 
 
-const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
-const DEFAULT_EXCLUDE = ['node_modules/**'];
+const DEFAULT_INCLUDE = [
+  'src/**/*.{ts,tsx,js,jsx}',
+  'app/**/*.{ts,tsx,js,jsx}',
+  'pages/**/*.{ts,tsx,js,jsx}',
+];
+const DEFAULT_EXCLUDE = ['node_modules/**', '.next/**', 'dist/**'];
 const DEFAULT_PLACEHOLDER_FORMATS: PlaceholderFormat[] = ['doubleCurly', 'percentCurly', 'percentSymbol'];
 const DEFAULT_EMPTY_VALUE_MARKERS = ['todo', 'tbd', 'fixme', 'pending', '???'];
 

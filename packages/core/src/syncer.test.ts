@@ -105,7 +105,7 @@ export default Component;
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({
       'existing.key': 'Existing Text',
-      'new.key': 'new.key',
+      'new.key': 'New Key',
     });
     expect(enContents).not.toHaveProperty('unused.key');
 
@@ -284,7 +284,7 @@ export default Selective;
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({
       'existing.key': 'Existing Text',
-      'new.key': 'new.key',
+      'new.key': 'New Key',
     });
     expect(enContents).not.toHaveProperty('extra.key');
     expect(enContents).not.toHaveProperty('unused.one');

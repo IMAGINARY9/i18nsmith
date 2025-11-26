@@ -17,6 +17,7 @@ import {
   LocaleStore,
   Scanner,
   ScannerNodeCandidate,
+  generateValueFromKey,
 } from '@i18nsmith/core';
 import {
   ensureUseTranslationBinding,
@@ -124,18 +125,17 @@ export class Transformer {
             filesChanged.set(candidate.filePath, sourceFile);
           }
 
-          await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
+          const sourceValue =
+            (await this.findLegacyLocaleValue(this.sourceLocale, candidate.text)) ??
+            candidate.text ??
+            generateValueFromKey(candidate.suggestedKey);
+          await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, sourceValue);
           
           const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
           if (shouldMigrate) {
             for (const locale of this.targetLocales) {
-              // Try to migrate existing value if the text was used as a key
-              // We check both normalized and raw text to be safe
-              const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
-              const existingValue = await this.localeStore.getValue(locale, normalizedText);
-              const rawValue = await this.localeStore.getValue(locale, candidate.text);
-              
-              await this.localeStore.upsert(locale, candidate.suggestedKey, existingValue || rawValue || '');
+              const legacyValue = await this.findLegacyLocaleValue(locale, candidate.text);
+              await this.localeStore.upsert(locale, candidate.suggestedKey, legacyValue ?? '');
             }
           }
         } catch (error) {
@@ -312,5 +312,26 @@ export class Transformer {
     const module = adapter?.module?.trim() || 'react-i18next';
     const hookName = adapter?.hookName?.trim() || 'useTranslation';
     return { module, hookName };
+  }
+
+  private async findLegacyLocaleValue(locale: string, rawKey: string): Promise<string | undefined> {
+    const candidates = this.buildLegacyKeyCandidates(rawKey);
+    for (const key of candidates) {
+      const value = await this.localeStore.getValue(locale, key);
+      if (typeof value !== 'undefined') {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private buildLegacyKeyCandidates(rawKey: string): string[] {
+    const variants = new Set<string>();
+    if (rawKey) {
+      variants.add(rawKey);
+      variants.add(rawKey.trim());
+      variants.add(rawKey.replace(/\s+/g, ' ').trim());
+    }
+    return Array.from(variants).filter(Boolean);
   }
 }

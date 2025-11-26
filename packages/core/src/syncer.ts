@@ -7,6 +7,7 @@ import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
+import { generateValueFromKey } from './value-generator.js';
 
 export interface TranslationReference {
   key: string;
@@ -377,7 +378,8 @@ export class Syncer {
 
     const missingKeysToApply = this.filterSelection(missingKeys, selectedMissingKeys);
     for (const record of missingKeysToApply) {
-      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, record.key);
+      const defaultValue = this.buildDefaultSourceValue(record.key);
+      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         for (const locale of this.targetLocales) {
           this.applyProjectedValue(projectedLocaleData, locale, record.key, '');
@@ -801,7 +803,8 @@ export class Syncer {
 
   private async applyMissingKeys(missingKeys: MissingKeyRecord[]) {
     for (const record of missingKeys) {
-      await this.localeStore.upsert(this.sourceLocale, record.key, record.key);
+      const defaultValue = this.buildDefaultSourceValue(record.key);
+      await this.localeStore.upsert(this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         for (const locale of this.targetLocales) {
           await this.localeStore.upsert(locale, record.key, '');
@@ -1059,5 +1062,9 @@ export class Syncer {
   private applyProjectedRemoval(projected: Map<string, Record<string, string>>, locale: string, key: string) {
     const data = this.ensureProjectedLocale(projected, locale);
     delete data[key];
+  }
+
+  private buildDefaultSourceValue(key: string): string {
+    return generateValueFromKey(key) || key;
   }
 }

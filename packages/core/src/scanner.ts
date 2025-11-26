@@ -33,6 +33,7 @@ export interface ScanCandidate {
 
 export interface ScanSummary {
   filesScanned: number;
+  filesExamined: string[];
   candidates: ScanCandidate[];
 }
 
@@ -104,8 +105,8 @@ export class Scanner {
       }
     }
 
-    const candidates: ScanCandidate[] = [];
-    const detailedCandidates: ScannerNodeCandidate[] = [];
+  const candidates: ScanCandidate[] = [];
+  const detailedCandidates: ScannerNodeCandidate[] = [];
 
     const record: CandidateRecorder = (candidate, node, file) => {
       candidates.push(candidate);
@@ -141,8 +142,11 @@ export class Scanner {
       });
     }
 
+    const filesExamined = files.map((file) => this.getRelativePath(file.getFilePath()));
+
     const summary: ScanSummary = {
       filesScanned: files.length,
+      filesExamined,
       candidates,
     };
 
@@ -189,12 +193,12 @@ export class Scanner {
 
     let value: string | undefined;
 
-    if (Node.isStringLiteral(initializer)) {
+    if (Node.isStringLiteral(initializer) || Node.isNoSubstitutionTemplateLiteral(initializer)) {
       value = initializer.getLiteralText();
     } else if (Node.isJsxExpression(initializer)) {
       const expression = initializer.getExpression();
-      if (expression && Node.isStringLiteral(expression)) {
-        value = expression.getLiteralText();
+      if (expression) {
+        value = this.extractLiteralText(expression);
       }
     }
 
@@ -222,11 +226,12 @@ export class Scanner {
     }
 
     const expression = node.getExpression();
-    if (!expression || !Node.isStringLiteral(expression)) {
+    if (!expression) {
       return;
     }
 
-    const text = this.normalizeText(expression.getLiteralText());
+    const raw = this.extractLiteralText(expression);
+    const text = this.normalizeText(raw);
     if (!text) {
       return;
     }
@@ -245,16 +250,17 @@ export class Scanner {
 
     const identifier = this.config.sync?.translationIdentifier ?? 't';
     const expression = node.getExpression();
-    if (!Node.isIdentifier(expression) || expression.getText() !== identifier) {
+    if (!this.isTranslationCallTarget(expression, identifier)) {
       return;
     }
 
     const [arg] = node.getArguments();
-    if (!arg || !Node.isStringLiteral(arg)) {
+    if (!arg) {
       return;
     }
 
-    const text = this.normalizeText(arg.getLiteralText());
+    const raw = this.extractLiteralText(arg);
+    const text = this.normalizeText(raw);
     if (!text) {
       return;
     }
@@ -272,6 +278,60 @@ export class Scanner {
       text,
       context: 't() call',
     }), node, file);
+  }
+
+  private extractLiteralText(node: Node | undefined): string | undefined {
+    if (!node) {
+      return undefined;
+    }
+
+    if (Node.isStringLiteral(node)) {
+      return node.getLiteralText();
+    }
+
+    if (Node.isNoSubstitutionTemplateLiteral(node)) {
+      return node.getLiteralText();
+    }
+
+    if (Node.isTemplateExpression(node)) {
+      // Template expressions with placeholders represent dynamic text/keys.
+      // We skip these because they cannot be safely treated as literals.
+      return undefined;
+    }
+
+    if (Node.isParenthesizedExpression(node) || Node.isAsExpression(node) || Node.isNonNullExpression(node)) {
+      return this.extractLiteralText(node.getExpression());
+    }
+
+    return undefined;
+  }
+
+  private isTranslationCallTarget(node: Node, identifier: string): boolean {
+    if (Node.isIdentifier(node)) {
+      return node.getText() === identifier;
+    }
+
+    if (Node.isPropertyAccessExpression(node)) {
+      if (node.getName() === identifier) {
+        return true;
+      }
+      return this.isTranslationCallTarget(node.getExpression(), identifier);
+    }
+
+    if (Node.isElementAccessExpression(node)) {
+      const argument = node.getArgumentExpression();
+      if (argument && Node.isStringLiteral(argument) && argument.getLiteralText() === identifier) {
+        return true;
+      }
+      return this.isTranslationCallTarget(node.getExpression(), identifier);
+    }
+
+    if (Node.isNonNullExpression(node) || Node.isParenthesizedExpression(node) || Node.isAsExpression(node)) {
+      const inner = node.getExpression();
+      return inner ? this.isTranslationCallTarget(inner, identifier) : false;
+    }
+
+    return false;
   }
 
   private createCandidate(params: {
