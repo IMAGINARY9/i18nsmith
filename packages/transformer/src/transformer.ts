@@ -9,6 +9,7 @@ import {
   SourceFile,
 } from 'ts-morph';
 import {
+  buildLocaleDiffs,
   DetailedScanSummary,
   I18nConfig,
   KeyGenerationContext,
@@ -62,9 +63,17 @@ export class Transformer {
 
   public async run(runOptions: TransformRunOptions = {}): Promise<TransformSummary> {
     const write = runOptions.write ?? this.defaultWrite;
+    const generateDiffs = runOptions.diff ?? false;
 
     if (write) {
       this.checkDependencies();
+    }
+
+    const originalLocaleData = new Map<string, Record<string, string>>();
+    if (generateDiffs) {
+      for (const locale of [this.sourceLocale, ...this.targetLocales]) {
+        originalLocaleData.set(locale, await this.localeStore.get(locale));
+      }
     }
 
     const scanner = new Scanner(this.config, {
@@ -78,7 +87,9 @@ export class Transformer {
     const filesChanged = new Map<string, SourceFile>();
     const skippedFiles: FileTransformRecord[] = [];
 
-    if (write) {
+    const shouldProcess = write || generateDiffs;
+
+    if (shouldProcess) {
       for (const candidate of enriched) {
         if (candidate.status !== 'pending') {
           continue;
@@ -86,10 +97,14 @@ export class Transformer {
 
         try {
           const sourceFile = candidate.raw.sourceFile;
-          ensureUseTranslationImport(sourceFile, {
-            moduleSpecifier: this.translationAdapter.module,
-            namedImport: this.translationAdapter.hookName,
-          });
+          
+          if (write) {
+            ensureUseTranslationImport(sourceFile, {
+              moduleSpecifier: this.translationAdapter.module,
+              namedImport: this.translationAdapter.hookName,
+            });
+          }
+
           const scope = findNearestFunctionScope(candidate.raw.node);
           if (!scope) {
             candidate.status = 'skipped';
@@ -98,18 +113,26 @@ export class Transformer {
             continue;
           }
 
-          ensureUseTranslationBinding(scope, this.translationAdapter.hookName);
-          this.applyCandidate(candidate);
+          if (write) {
+            ensureUseTranslationBinding(scope, this.translationAdapter.hookName);
+            this.applyCandidate(candidate);
+            candidate.status = 'applied';
+            filesChanged.set(candidate.filePath, sourceFile);
+          }
+
           await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, candidate.text);
           
           if (this.config.seedTargetLocales) {
             for (const locale of this.targetLocales) {
-              await this.localeStore.upsert(locale, candidate.suggestedKey, '');
+              // Try to migrate existing value if the text was used as a key
+              // We check both normalized and raw text to be safe
+              const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
+              const existingValue = await this.localeStore.getValue(locale, normalizedText);
+              const rawValue = await this.localeStore.getValue(locale, candidate.text);
+              
+              await this.localeStore.upsert(locale, candidate.suggestedKey, existingValue || rawValue || '');
             }
           }
-
-          candidate.status = 'applied';
-          filesChanged.set(candidate.filePath, sourceFile);
         } catch (error) {
           candidate.status = 'skipped';
           candidate.reason = (error as Error).message;
@@ -117,24 +140,45 @@ export class Transformer {
         }
       }
 
-      await Promise.all(
-        Array.from(filesChanged.values()).map(async (file) => {
-          await file.save();
-          await formatFileWithPrettier(file.getFilePath());
-        })
-      );
+      if (write) {
+        await Promise.all(
+          Array.from(filesChanged.values()).map(async (file) => {
+            await file.save();
+            await formatFileWithPrettier(file.getFilePath());
+          })
+        );
+      }
     }
 
     const localeStats = write ? await this.localeStore.flush() : [];
+    
+    const diffs = generateDiffs
+      ? await this.generateDiffs(originalLocaleData)
+      : [];
 
     return {
       filesScanned: summary.filesScanned,
       filesChanged: Array.from(filesChanged.keys()),
       candidates: enriched.map(({ raw, ...rest }) => rest),
       localeStats,
+      diffs,
       skippedFiles,
       write,
     };
+  }
+
+  private async generateDiffs(originalData: Map<string, Record<string, string>>) {
+    const projectedData = new Map<string, Record<string, string>>();
+    for (const locale of [this.sourceLocale, ...this.targetLocales]) {
+      projectedData.set(locale, await this.localeStore.get(locale));
+    }
+
+    return buildLocaleDiffs(
+      originalData,
+      projectedData,
+      (locale) => this.localeStore.getFilePath(locale),
+      this.workspaceRoot
+    );
   }
 
   private checkDependencies() {

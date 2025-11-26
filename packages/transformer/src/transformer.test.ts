@@ -214,4 +214,46 @@ describe('Transformer', () => {
     expect(updatedFile).toContain("@/contexts/translation-context");
     expect(updatedFile).not.toContain('react-i18next');
   });
+
+  it('migrates existing values from text-as-key to structured keys', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-migration-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'App.tsx');
+    const initial = "export const App = () => { return <div>Hello world</div>; };";
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const localesDir = path.join(tempDir, 'locales');
+    await fs.mkdir(localesDir, { recursive: true });
+    
+    // Simulate existing text-as-key translations
+    await fs.writeFile(path.join(localesDir, 'en.json'), JSON.stringify({ "Hello world": "Hello world" }));
+    await fs.writeFile(path.join(localesDir, 'fr.json'), JSON.stringify({ "Hello world": "Bonjour le monde" }));
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: ['fr'],
+      localesDir,
+      include: ['src/**/*.tsx'],
+      seedTargetLocales: true, // Enable seeding to trigger migration logic
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const frContents = JSON.parse(await fs.readFile(path.join(localesDir, 'fr.json'), 'utf8'));
+    // Should contain the new structured key with the OLD value
+    const keys = Object.keys(frContents);
+    const newKey = keys.find(k => k !== "Hello world");
+    expect(newKey).toBeDefined();
+    expect(frContents[newKey!]).toBe('Bonjour le monde');
+  });
 });

@@ -53,8 +53,47 @@ const ensureStringArray = (value: unknown): string[] => {
   return [];
 };
 
+async function findUp(filename: string, cwd: string): Promise<string | null> {
+  let currentDir = cwd;
+  while (true) {
+    const filePath = path.join(currentDir, filename);
+    try {
+      await fs.access(filePath);
+      return filePath;
+    } catch {
+      // continue
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
 export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nConfig> {
-  const resolvedPath = path.resolve(process.cwd(), configPath);
+  let resolvedPath: string;
+
+  if (path.isAbsolute(configPath)) {
+    resolvedPath = configPath;
+  } else {
+    // Try to resolve relative to CWD first
+    const cwdPath = path.resolve(process.cwd(), configPath);
+    try {
+      await fs.access(cwdPath);
+      resolvedPath = cwdPath;
+    } catch {
+      // If not found in CWD, and it looks like a default/simple filename, try finding up the tree
+      if (!configPath.includes(path.sep) || configPath === 'i18n.config.json') {
+        const found = await findUp(configPath, process.cwd());
+        resolvedPath = found ?? cwdPath;
+      } else {
+        resolvedPath = cwdPath;
+      }
+    }
+  }
+
   let fileContents: string;
 
   try {
@@ -62,7 +101,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err.code === 'ENOENT') {
-      throw new Error(`Config file not found at ${resolvedPath}. Run \"i18nsmith init\" to create one.`);
+      throw new Error(`Config file not found at ${resolvedPath}. Run "i18nsmith init" to create one.`);
     }
     throw new Error(`Unable to read config file at ${resolvedPath}: ${err.message}`);
   }
@@ -108,6 +147,9 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const emptyValueMarkersRaw = ensureStringArray(syncConfig.emptyValueMarkers);
   const emptyValueMarkers = emptyValueMarkersRaw.length ? emptyValueMarkersRaw : DEFAULT_EMPTY_VALUE_MARKERS;
   const dynamicKeyAssumptions = ensureStringArray(syncConfig.dynamicKeyAssumptions);
+  const retainLocales = typeof syncConfig.retainLocales === 'boolean'
+    ? syncConfig.retainLocales
+    : false;
 
   const keyNamespace = typeof keyGen.namespace === 'string' && keyGen.namespace.trim().length > 0
     ? keyGen.namespace.trim()
@@ -145,6 +187,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       emptyValuePolicy,
       emptyValueMarkers,
       dynamicKeyAssumptions,
+      retainLocales,
     },
     diagnostics: diagnosticsConfig,
   };
@@ -288,6 +331,7 @@ export interface SyncConfig {
   emptyValuePolicy?: EmptyValuePolicy;
   emptyValueMarkers?: string[];
   dynamicKeyAssumptions?: string[];
+  retainLocales?: boolean;
 }
 
 export interface DiagnosticsConfig {
