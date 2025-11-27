@@ -3,13 +3,19 @@
     "target": "ES2020",
     "module": "ES2020",
     "moduleResolution": "node",
+    "baseUrl": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "composite": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@i18nsmith/core": ["packages/core/src/index.ts"],
+      "@i18nsmith/transformer": ["packages/transformer/src/index.ts"],
+      "@i18nsmith/translation": ["packages/translation/src/index.ts"]
+    }
   },
   "exclude": ["node_modules", "**/*.test.ts"]
 }

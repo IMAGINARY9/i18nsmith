@@ -26,6 +26,7 @@ import type { CheckSummary, DiagnosisReport } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init.js';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
+import { registerTranslate } from './commands/translate.js';
 import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils.js';
 import { getDiagnosisExitSignal } from './utils/diagnostics-exit.js';
 
@@ -124,6 +125,7 @@ program
 
 registerInit(program);
 registerScaffoldAdapter(program);
+registerTranslate(program);
 
 program
   .command('diagnose')

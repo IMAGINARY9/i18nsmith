@@ -11,6 +11,7 @@ Universal Automated i18n Library.
 5. Run `i18nsmith init` in your app to generate an `i18n.config.json`. If `diagnose` found existing assets, pass `--merge` to opt into the guided merge flow so you don’t overwrite what’s already there.
 6. Run `i18nsmith transform --write` to inject `useTranslation` calls and update locale JSON.
 7. Keep locale files clean with `i18nsmith sync --check` (CI) or `i18nsmith sync --write` locally.
+8. Fill missing locale values automatically with `i18nsmith translate` (dry-run by default, pass `--write` to apply results).
 
 See `ARCHITECTURE.md` and `implementation-plan.md` for deeper technical context.
 
@@ -94,7 +95,10 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 	"exclude": ["node_modules/**", ".next/**", "dist/**", "**/*.test.*"],
 	"minTextLength": 1,
 	"translation": {
-		"service": "manual"
+		"provider": "deepl",
+		"secretEnvVar": "DEEPL_API_KEY",
+		"concurrency": 5,
+		"batchSize": 25
 	},
 	"translationAdapter": {
 		"module": "react-i18next",
@@ -119,7 +123,11 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `include`: Glob patterns for files to scan (default: `src/`, `app/`, and `pages/` trees with TS/JS extensions).
 - `exclude`: Glob patterns to exclude (default: `node_modules/**`, `.next/**`, and `dist/**`; add your own such as `**/*.test.*`).
 - `minTextLength`: Minimum length for translatable text (default: `1`).
-- `translation.service`: Translation service (`"google"`, `"deepl"`, or `"manual"`).
+- `translation.provider`: Name of the translation provider/adapter (e.g., `"deepl"`, `"google"`, `"mock"`, or `"manual"` to disable automated translations).
+- `translation.module`: Optional module specifier to load instead of the default `@i18nsmith/translator-${provider}` package.
+- `translation.secretEnvVar`: Name of the environment variable that stores your API key (recommended so secrets never hit config files). Use `translation.apiKey` only for local experimentation.
+- `translation.concurrency` / `translation.batchSize`: Tune request parallelism and batch size when invoking adapters.
+- `translation.locales`: Optional default list of locales to translate when `i18nsmith translate` runs without `--locales`.
 - `translationAdapter.module`: Module to import the translation hook from (default: `"react-i18next"`).
 - `translationAdapter.hookName`: Name of the hook to import (default: `"useTranslation"`).
 - `keyGeneration.namespace`: Prefix for generated keys (default: `"common"`).
@@ -252,6 +260,50 @@ i18nsmith sync --validate-interpolations --no-empty-values --check
 # Suppress warnings for known runtime-only keys
 i18nsmith sync --assume errors.404 errors.500
 ```
+
+## Automated translations (`i18nsmith translate`)
+
+Use `i18nsmith translate` to fill missing locale entries using pluggable translation adapters. The command inspects your locale files, builds a translation plan via the new `TranslationService`, and (optionally) writes the translated strings back through the same atomic JSON pipeline used by `sync`.
+
+Highlights:
+
+- Dry-run by default: prints how many keys per locale need translations, total character counts, and (optionally) cost estimates without touching the filesystem.
+- `--write` applies translations per-locale and rewrites JSON via `LocaleStore`, preserving deterministic sorting and nested vs. flat shapes.
+- `--locales <codes...>` scopes the run to a subset of locales. When omitted, the command uses `translation.locales` from config or all configured targets.
+- `--provider <name>` overrides `translation.provider` at runtime. By default, providers are resolved to `@i18nsmith/translator-${provider}`; set `translation.module` if you host adapters elsewhere.
+- `--force` retranslates keys that already have values (useful when revisiting machine translations later).
+- `--estimate` attempts to call the adapter’s optional `estimateCost` hook, so CI can display approximate spend before running a write.
+- `--no-skip-empty` writes translator results even when they’re blank (the default skips empty/placeholder values so the sync policy stays consistent).
+- `--json`/`--report` emit the same `TranslateSummary` as the CLI output, making it easy to archive artifacts or feed data into editor tooling.
+
+Examples:
+
+```bash
+# Preview missing translations across all locales
+i18nsmith translate
+
+# Estimate and then apply translations for Spanish + French only
+i18nsmith translate --locales es fr --estimate
+i18nsmith translate --locales es fr --write
+
+# Force retranslation for every locale using the mock adapter (handy for demos/tests)
+i18nsmith translate --provider mock --write --force
+```
+
+### Mock adapter for local/dev workflows
+
+This repo ships `@i18nsmith/translator-mock`, a zero-cost adapter that performs pseudo-localization (vowel accenting + locale prefixing). The adapter implements the shared `Translator` contract exported by `@i18nsmith/translation`, so you can point `translation.module` at it for smoke tests or demos without calling a real API:
+
+```jsonc
+{
+	"translation": {
+		"provider": "mock",
+		"module": "@i18nsmith/translator-mock"
+	}
+}
+```
+
+Under the hood, all adapters receive the normalized config (API key env vars, concurrency hints, locale subsets) and return arrays of translated strings. Production adapters (DeepL, Google, etc.) live in their own packages but share the same interface, so teams can build custom adapters—for instance, to proxy internal MT services or wrap vendor-specific SDKs.
 
 ## Features
 

@@ -3,7 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
-import { diagnoseWorkspace, I18nConfig } from '@i18nsmith/core';
+import { diagnoseWorkspace, I18nConfig, TranslationConfig } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
 
@@ -19,6 +19,7 @@ interface InitAnswers {
   exclude: string;
   minTextLength: string;
   service: 'google' | 'deepl' | 'manual';
+  translationSecretEnvVar?: string;
   adapterPreset: 'react-i18next' | 'custom';
   customAdapterModule?: string;
   customAdapterHook?: string;
@@ -87,6 +88,14 @@ export function registerInit(program: Command) {
           message: 'Which translation service do you want to use?',
           choices: ['google', 'deepl', 'manual'],
           default: 'google',
+        },
+        {
+          type: 'input',
+          name: 'translationSecretEnvVar',
+          message: 'Name of the environment variable containing your translation API key',
+          when: (answers) => answers.service !== 'manual',
+          default: (answers: InitAnswers) =>
+            answers.service === 'deepl' ? 'DEEPL_API_KEY' : 'GOOGLE_TRANSLATE_API_KEY',
         },
         {
           type: 'list',
@@ -186,6 +195,15 @@ export function registerInit(program: Command) {
           ? (answers.customAdapterHook?.trim() || 'useTranslation')
           : 'useTranslation';
 
+      const translationConfig: TranslationConfig =
+        answers.service === 'manual'
+          ? { provider: 'manual' }
+          : {
+              provider: answers.service,
+              secretEnvVar: answers.translationSecretEnvVar?.trim() || undefined,
+              concurrency: 5,
+            };
+
       const config: I18nConfig = {
         version: 1 as const,
         sourceLanguage: answers.sourceLanguage,
@@ -194,9 +212,7 @@ export function registerInit(program: Command) {
         include: parseList(answers.include),
         exclude: parseList(answers.exclude),
         minTextLength: parseInt(answers.minTextLength, 10),
-        translation: {
-          service: answers.service,
-        },
+        translation: translationConfig,
         translationAdapter: {
           module: adapterModule ?? 'react-i18next',
           hookName: adapterHook,
