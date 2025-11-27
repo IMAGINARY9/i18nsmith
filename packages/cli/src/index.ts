@@ -9,6 +9,9 @@ import {
   loadConfig,
   Scanner,
   ScanCandidate,
+  KeyValidator,
+  SUSPICIOUS_KEY_REASON_DESCRIPTIONS,
+  LocaleStore,
   SyncSummary,
   Syncer,
   KeyRenamer,
@@ -66,6 +69,14 @@ interface SyncCommandOptions extends ScanOptions {
   diff?: boolean;
   patchDir?: string;
   invalidateCache?: boolean;
+}
+
+interface AuditCommandOptions {
+  config?: string;
+  locale?: string[];
+  json?: boolean;
+  report?: string;
+  strict?: boolean;
 }
 
 const program = new Command();
@@ -141,6 +152,117 @@ program
       }
     } catch (error) {
       console.error(chalk.red('Diagnose failed:'), (error as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('audit')
+  .description('Audit locale files for suspicious keys, key=value patterns, and quality issues')
+  .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+  .option('-l, --locale <locales...>', 'Specific locale(s) to audit (defaults to all)')
+  .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON report to a file')
+  .option('--strict', 'Exit with error code if any issues found', false)
+  .action(async (options: AuditCommandOptions) => {
+    console.log(chalk.blue('Auditing locale files...'));
+    try {
+      const config = await loadConfig(options.config);
+      const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
+      const localeStore = new LocaleStore(localesDir);
+      const validator = new KeyValidator(config.sync?.suspiciousKeyPolicy ?? 'skip');
+
+      // Determine which locales to audit
+      let localesToAudit = options.locale ?? [];
+      if (localesToAudit.length === 0) {
+        localesToAudit = [config.sourceLanguage ?? 'en', ...(config.targetLanguages ?? [])];
+      }
+
+      interface AuditIssue {
+        key: string;
+        value: string;
+        reason: string;
+        description: string;
+        suggestion?: string;
+      }
+
+      interface LocaleAuditResult {
+        locale: string;
+        totalKeys: number;
+        issues: AuditIssue[];
+      }
+
+      const results: LocaleAuditResult[] = [];
+
+      for (const locale of localesToAudit) {
+        const data = await localeStore.get(locale);
+        const keys = Object.keys(data);
+        const issues: AuditIssue[] = [];
+
+        for (const key of keys) {
+          const value = data[key];
+          const analysis = validator.analyzeWithValue(key, value);
+
+          if (analysis.suspicious && analysis.reason) {
+            issues.push({
+              key,
+              value: value.length > 50 ? `${value.slice(0, 47)}...` : value,
+              reason: analysis.reason,
+              description: SUSPICIOUS_KEY_REASON_DESCRIPTIONS[analysis.reason] ?? 'Unknown issue',
+              suggestion: validator.suggestFix(key, analysis.reason),
+            });
+          }
+        }
+
+        results.push({
+          locale,
+          totalKeys: keys.length,
+          issues,
+        });
+      }
+
+      const totalIssues = results.reduce((sum, r) => sum + r.issues.length, 0);
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify({ results, totalIssues }, null, 2));
+        console.log(chalk.green(`Audit report written to ${outputPath}`));
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify({ results, totalIssues }, null, 2));
+      } else {
+        // Pretty print results
+        for (const result of results) {
+          if (result.issues.length === 0) {
+            console.log(chalk.green(`✓ ${result.locale}.json: ${result.totalKeys} keys, no issues`));
+          } else {
+            console.log(chalk.yellow(`⚠ ${result.locale}.json: ${result.totalKeys} keys, ${result.issues.length} issues`));
+            for (const issue of result.issues) {
+              console.log(chalk.dim(`  - "${issue.key}"`));
+              console.log(chalk.dim(`    ${issue.description}`));
+              if (issue.suggestion) {
+                console.log(chalk.dim(`    Suggestion: ${issue.suggestion}`));
+              }
+            }
+          }
+        }
+
+        console.log();
+        if (totalIssues === 0) {
+          console.log(chalk.green('✓ No issues found in locale files'));
+        } else {
+          console.log(chalk.yellow(`Found ${totalIssues} issue(s) across ${results.filter(r => r.issues.length > 0).length} locale(s)`));
+        }
+      }
+
+      if (options.strict && totalIssues > 0) {
+        console.error(chalk.red(`\nAudit failed with ${totalIssues} issue(s). Use --strict=false to allow.`));
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      console.error(chalk.red('Audit failed:'), (error as Error).message);
       process.exitCode = 1;
     }
   });

@@ -14,6 +14,9 @@ import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstan
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
 import { generateValueFromKey } from './value-generator.js';
+import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
+
+export { SuspiciousKeyReason } from './key-validator.js';
 
 export interface TranslationReference {
   key: string;
@@ -78,13 +81,6 @@ export interface EmptyValueViolation {
 }
 
 export type DynamicKeyReason = 'template' | 'binary' | 'expression';
-
-export type SuspiciousKeyReason =
-  | 'contains-spaces'
-  | 'single-word-no-namespace'
-  | 'trailing-punctuation'
-  | 'pascal-case-sentence'
-  | 'sentence-article';
 
 export interface DynamicKeyWarning {
   filePath: string;
@@ -180,6 +176,7 @@ export class Syncer {
   private readonly cacheDir: string;
   private readonly referenceCachePath: string;
   private readonly suspiciousKeyPolicy: SuspiciousKeyPolicy;
+  private readonly keyValidator: KeyValidator;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -207,6 +204,7 @@ export class Syncer {
       : DEFAULT_EMPTY_VALUE_MARKERS;
     this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
     this.suspiciousKeyPolicy = syncOptions.suspiciousKeyPolicy ?? 'skip';
+    this.keyValidator = new KeyValidator(this.suspiciousKeyPolicy);
     this.defaultAssumedKeys = syncOptions.dynamicKeyAssumptions ?? [];
     const globPatterns = syncOptions.dynamicKeyGlobs ?? [];
     this.dynamicKeyGlobMatchers = globPatterns
@@ -353,45 +351,11 @@ export class Syncer {
   }
 
   private analyzeSuspiciousKey(key: string): { suspicious: boolean; reason?: SuspiciousKeyReason } {
-    // Keys containing spaces are clearly raw UI text
-    if (key.includes(' ')) {
-      return { suspicious: true, reason: 'contains-spaces' };
-    }
-
-    // Single-word keys without a namespace (e.g., `Found`, `tags`) are likely raw labels
-    if (!key.includes('.') && /^[A-Za-z]+$/.test(key)) {
-      return { suspicious: true, reason: 'single-word-no-namespace' };
-    }
-
-    // Keys with sentence-like punctuation (colons, question marks, exclamation) at the end
-    if (/[:?!]$/.test(key)) {
-      return { suspicious: true, reason: 'trailing-punctuation' };
-    }
-
-    // Keys that look like Title Case sentences (3+ consecutive capitalized words)
-    // e.g., "When To Use Categorized View" or "WhenToUseCategorizedView"
-    const withoutNamespace = key.includes('.') ? key.split('.').pop()! : key;
-    if (/([A-Z][a-z]+){3,}/.test(withoutNamespace) && !/[-_]/.test(withoutNamespace)) {
-      // Check if it's just camelCase with 3+ words (acceptable) vs PascalCase sentence
-      // PascalCase sentences typically have all words capitalized
-      const words = withoutNamespace.split(/(?=[A-Z])/);
-      if (words.length >= 4 && words.every(w => w.length > 1)) {
-        return { suspicious: true, reason: 'pascal-case-sentence' };
-      }
-    }
-
-    // Keys containing articles/prepositions suggesting sentence structure
-    // Only flag if also mixed with capitalized words
-    const sentenceIndicators = /\b(The|A|An|To|Of|For|In|On|At|By|With|From|As|Is|Are|Was|Were|Be|Been|Being|Have|Has|Had|Do|Does|Did|Will|Would|Could|Should|May|Might|Must|Shall|Can)\b/;
-    if (sentenceIndicators.test(withoutNamespace)) {
-      return { suspicious: true, reason: 'sentence-article' };
-    }
-
-    return { suspicious: false };
+    return this.keyValidator.analyze(key);
   }
 
   private isSuspiciousKey(key: string): boolean {
-    return this.analyzeSuspiciousKey(key).suspicious;
+    return this.keyValidator.analyze(key).suspicious;
   }
 
   private scopeAnalysisToTargets(input: {
