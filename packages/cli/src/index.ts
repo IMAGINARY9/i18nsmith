@@ -18,7 +18,7 @@ import {
   diagnoseWorkspace,
   CheckRunner,
 } from '@i18nsmith/core';
-import type { CheckSummary, CheckSuggestedCommand, DiagnosisReport } from '@i18nsmith/core';
+import type { CheckSummary, DiagnosisReport } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
 import { registerInit } from './commands/init.js';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';

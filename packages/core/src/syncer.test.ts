@@ -105,7 +105,7 @@ export default Component;
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({
       'existing.key': 'Existing Text',
-      'new.key': 'New Key',
+      'new.key': 'Key',
     });
     expect(enContents).not.toHaveProperty('unused.key');
 
@@ -176,6 +176,83 @@ export default SuspiciousAllow;
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toHaveProperty(keyWithSpaces);
+  });
+
+  it('treats single-word keys without namespace as suspicious', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'SingleWord.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const SingleWord = () => {
+  const { t } = useTranslation();
+  return <p>{t('Found')}</p>;
+};
+
+export default SingleWord;
+`
+    );
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), '{}');
+    await fs.writeFile(path.join(tempDir, 'locales', 'es.json'), '{}');
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ write: true });
+
+    const missing = summary.missingKeys.find((entry) => entry.key === 'Found');
+    expect(missing?.suspicious).toBe(true);
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).not.toHaveProperty('Found');
+  });
+
+  it('treats sentence-like keys with punctuation or articles as suspicious', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'SentenceKeys.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const SentenceKeys = () => {
+  const { t } = useTranslation();
+  return (
+    <>
+      <p>{t('When to Use Categorized View:')}</p>
+      <p>{t('HowToGetStarted')}</p>
+      <p>{t('TheQuickBrownFox')}</p>
+      <p>{t('normal.valid.key')}</p>
+    </>
+  );
+};
+
+export default SentenceKeys;
+`
+    );
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), '{}');
+    await fs.writeFile(path.join(tempDir, 'locales', 'es.json'), '{}');
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ write: true });
+
+    // Keys with colons at the end should be suspicious
+    const colonKey = summary.missingKeys.find((e) => e.key === 'When to Use Categorized View:');
+    expect(colonKey?.suspicious).toBe(true);
+
+    // Keys with common articles like "The" should be suspicious
+    const theKey = summary.missingKeys.find((e) => e.key === 'TheQuickBrownFox');
+    expect(theKey?.suspicious).toBe(true);
+
+    // Keys with "To" (article/preposition) should be suspicious
+    const toKey = summary.missingKeys.find((e) => e.key === 'HowToGetStarted');
+    expect(toKey?.suspicious).toBe(true);
+
+    // Normal dotted keys should NOT be suspicious
+    const normalKey = summary.missingKeys.find((e) => e.key === 'normal.valid.key');
+    expect(normalKey?.suspicious).toBe(false);
+
+    // Suspicious keys should NOT be written
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).not.toHaveProperty('When to Use Categorized View:');
+    expect(enContents).not.toHaveProperty('TheQuickBrownFox');
+    expect(enContents).toHaveProperty('normal.valid.key');
   });
 
   it('reports placeholder mismatches when interpolation validation is enabled', async () => {
@@ -372,7 +449,7 @@ export default Selective;
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({
       'existing.key': 'Existing Text',
-      'new.key': 'New Key',
+      'new.key': 'Key',
     });
     expect(enContents).not.toHaveProperty('extra.key');
     expect(enContents).not.toHaveProperty('unused.one');

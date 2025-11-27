@@ -91,7 +91,9 @@ const ensureStringArray = (value: unknown): string[] => {
 
 async function findUp(filename: string, cwd: string): Promise<string | null> {
   let currentDir = cwd;
-  while (true) {
+  let parentDir = path.dirname(currentDir);
+
+  do {
     const filePath = path.join(currentDir, filename);
     try {
       await fs.access(filePath);
@@ -100,12 +102,14 @@ async function findUp(filename: string, cwd: string): Promise<string | null> {
       // continue
     }
 
-    const parentDir = path.dirname(currentDir);
+    parentDir = path.dirname(currentDir);
     if (parentDir === currentDir) {
       return null;
     }
     currentDir = parentDir;
-  }
+  } while (currentDir !== parentDir);
+
+  return null;
 }
 
 export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nConfig> {
@@ -188,9 +192,6 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const emptyValueMarkers = emptyValueMarkersRaw.length ? emptyValueMarkersRaw : DEFAULT_EMPTY_VALUE_MARKERS;
   const dynamicKeyAssumptions = ensureStringArray(syncConfig.dynamicKeyAssumptions);
   const dynamicKeyGlobs = ensureStringArray(syncConfig.dynamicKeyGlobs);
-  const retainLocales = typeof syncConfig.retainLocales === 'boolean'
-    ? syncConfig.retainLocales
-    : false;
   const suspiciousKeyPolicy = isSuspiciousKeyPolicy(syncConfig.suspiciousKeyPolicy)
     ? syncConfig.suspiciousKeyPolicy
     : 'skip';

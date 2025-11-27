@@ -6,7 +6,8 @@
     "pretest": "pnpm -w -r build",
     "test": "pnpm --filter \"@i18nsmith/*\" test",
     "check:packages": "node ./scripts/check-package-resolution.mjs",
-    "lint": "pnpm lint --workspaces",
+    "lint": "eslint 'packages/*/src/**/*.{ts,tsx}' --max-warnings 0",
+    "lint:fix": "eslint 'packages/*/src/**/*.{ts,tsx}' --fix",
     "external:transform": "node ./scripts/run-external-transform.mjs"
   },
   "workspaces": [
@@ -16,6 +17,8 @@
     "typescript": "^5.0.0",
     "vitest": "^0.34.0",
     "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
     "prettier": "^3.0.0",
     "@types/node": "^20.0.0",
     "@types/inquirer": "^9.0.0"

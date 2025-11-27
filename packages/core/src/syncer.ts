@@ -345,7 +345,41 @@ export class Syncer {
   }
 
   private isSuspiciousKey(key: string): boolean {
-    return key.includes(' ');
+    // Keys containing spaces are clearly raw UI text
+    if (key.includes(' ')) {
+      return true;
+    }
+
+    // Single-word keys without a namespace (e.g., `Found`, `tags`) are likely raw labels
+    if (!key.includes('.') && /^[A-Za-z]+$/.test(key)) {
+      return true;
+    }
+
+    // Keys with sentence-like punctuation (colons, question marks, exclamation) at the end
+    if (/[:?!]$/.test(key)) {
+      return true;
+    }
+
+    // Keys that look like Title Case sentences (3+ consecutive capitalized words)
+    // e.g., "When To Use Categorized View" or "WhenToUseCategorizedView"
+    const withoutNamespace = key.includes('.') ? key.split('.').pop()! : key;
+    if (/([A-Z][a-z]+){3,}/.test(withoutNamespace) && !/[-_]/.test(withoutNamespace)) {
+      // Check if it's just camelCase with 3+ words (acceptable) vs PascalCase sentence
+      // PascalCase sentences typically have all words capitalized
+      const words = withoutNamespace.split(/(?=[A-Z])/);
+      if (words.length >= 4 && words.every(w => w.length > 1)) {
+        return true;
+      }
+    }
+
+    // Keys containing articles/prepositions suggesting sentence structure
+    // Only flag if also mixed with capitalized words
+    const sentenceIndicators = /\b(The|A|An|To|Of|For|In|On|At|By|With|From|As|Is|Are|Was|Were|Be|Been|Being|Have|Has|Had|Do|Does|Did|Will|Would|Could|Should|May|Might|Must|Shall|Can)\b/;
+    if (sentenceIndicators.test(withoutNamespace)) {
+      return true;
+    }
+
+    return false;
   }
 
   private scopeAnalysisToTargets(input: {

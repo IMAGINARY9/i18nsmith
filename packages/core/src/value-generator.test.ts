@@ -2,20 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { generateValueFromKey } from './value-generator.js';
 
 describe('generateValueFromKey', () => {
-  it('converts dotted keys to human readable text', () => {
-    expect(generateValueFromKey('account.name')).toBe('Account Name');
-    expect(generateValueFromKey('auth.login.title')).toBe('Auth Login Title');
+  it('uses only the last segment for dotted keys', () => {
+    expect(generateValueFromKey('account.name')).toBe('Name');
+    expect(generateValueFromKey('auth.login.title')).toBe('Title');
+    expect(generateValueFromKey('management.activityHistory.activities')).toBe('Activities');
   });
 
   it('handles kebab, snake, and camel case segments', () => {
-    expect(generateValueFromKey('common.account_name.title')).toBe('Common Account Name Title');
+    expect(generateValueFromKey('common.account_name.title')).toBe('Title');
     expect(generateValueFromKey('ctaPrimaryAction')).toBe('Cta Primary Action');
     expect(generateValueFromKey('CTASecondary')).toBe('CTA Secondary');
   });
 
-  it('deduplicates repeated namespace segments', () => {
+  it('splits camelCase in last segment', () => {
     expect(generateValueFromKey('account.accountInformation')).toBe('Account Information');
     expect(generateValueFromKey('activity.activityVerified')).toBe('Activity Verified');
+    expect(generateValueFromKey('restaurant.featureUnavailable')).toBe('Feature Unavailable');
   });
 
   it('returns empty string for invalid keys', () => {
