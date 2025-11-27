@@ -514,4 +514,35 @@ export default Component;
     expect(invalidateSpy.mock.calls.length).toBeGreaterThan(0);
     invalidateSpy.mockRestore();
   });
+
+  it('detects key-equals-value patterns in locale files during post-sync audit', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'KeyValue.tsx'),
+      `import { useTranslation } from 'react-i18next';
+const Component = () => {
+  const { t } = useTranslation();
+  return <p>{t('common.save')}</p>;
+};`,
+      'utf8'
+    );
+
+    // Create locale file with key === value pattern
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'en.json'),
+      JSON.stringify({ 'common.save': 'common.save' }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'es.json'),
+      JSON.stringify({}, null, 2)
+    );
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const result = await syncer.run();
+
+    const keyEqualsValueWarnings = result.suspiciousKeys.filter(
+      (w) => w.reason === 'key-equals-value'
+    );
+    expect(keyEqualsValueWarnings.length).toBeGreaterThan(0);
+    expect(keyEqualsValueWarnings[0].key).toBe('common.save');
+  });
 });

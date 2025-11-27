@@ -62,6 +62,7 @@ interface RenameMapOptions extends ScanOptions {
 interface SyncCommandOptions extends ScanOptions {
   write?: boolean;
   check?: boolean;
+  strict?: boolean;
   validateInterpolations?: boolean;
   emptyValues?: boolean;
   assume?: string[];
@@ -85,6 +86,7 @@ const SYNC_EXIT_CODES = {
   DRIFT: 1,
   PLACEHOLDER_MISMATCH: 2,
   EMPTY_VALUES: 3,
+  SUSPICIOUS_KEYS: 4,
 } as const;
 
 const CHECK_EXIT_CODES = {
@@ -666,6 +668,7 @@ program
   .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
   .option('--check', 'Exit with error code if drift detected', false)
+  .option('--strict', 'Exit with error code if any suspicious patterns detected (CI mode)', false)
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
   .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
   .option('--assume <keys...>', 'List of runtime keys to assume present (comma-separated)', collectAssumedKeys, [])
@@ -736,6 +739,57 @@ program
       const shouldFailPlaceholders = summary.validation.interpolations && summary.placeholderIssues.length > 0;
       const shouldFailEmptyValues =
         summary.validation.emptyValuePolicy === 'fail' && summary.emptyValueViolations.length > 0;
+
+      // --strict mode: fail on any suspicious patterns
+      if (options.strict) {
+        const hasSuspiciousKeys = summary.suspiciousKeys.length > 0;
+        const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
+
+        if (hasSuspiciousKeys) {
+          console.error(chalk.red('\n⚠️  Suspicious patterns detected (--strict mode):'));
+          const grouped = new Map<string, string[]>();
+          for (const warning of summary.suspiciousKeys.slice(0, 20)) {
+            const reason = warning.reason;
+            if (!grouped.has(reason)) {
+              grouped.set(reason, []);
+            }
+            grouped.get(reason)!.push(warning.key);
+          }
+          for (const [reason, keys] of grouped) {
+            console.error(chalk.yellow(`  ${reason}:`));
+            keys.slice(0, 5).forEach((key) => console.error(`    • ${key}`));
+            if (keys.length > 5) {
+              console.error(chalk.gray(`    ...and ${keys.length - 5} more.`));
+            }
+          }
+          if (summary.suspiciousKeys.length > 20) {
+            console.error(chalk.gray(`  ...and ${summary.suspiciousKeys.length - 20} more warnings.`));
+          }
+          process.exitCode = SYNC_EXIT_CODES.SUSPICIOUS_KEYS;
+          return;
+        }
+
+        if (shouldFailPlaceholders) {
+          console.error(chalk.red('\nPlaceholder mismatches detected (--strict mode).'));
+          process.exitCode = SYNC_EXIT_CODES.PLACEHOLDER_MISMATCH;
+          return;
+        }
+
+        if (shouldFailEmptyValues) {
+          console.error(chalk.red('\nEmpty locale values detected (--strict mode).'));
+          process.exitCode = SYNC_EXIT_CODES.EMPTY_VALUES;
+          return;
+        }
+
+        if (hasDrift) {
+          console.error(chalk.red('\nDrift detected (--strict mode). Run with --write to fix.'));
+          process.exitCode = SYNC_EXIT_CODES.DRIFT;
+          return;
+        }
+
+        console.log(chalk.green('\n✓ No issues detected (--strict mode passed).'));
+        return;
+      }
 
       if (options.check) {
         const hasDrift = summary.missingKeys.length || summary.unusedKeys.length;
