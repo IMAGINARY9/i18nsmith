@@ -5,6 +5,7 @@ export * from './key-validator.js';
 export * from './locale-store.js';
 export * from './syncer.js';
 export * from './reference-extractor.js';
+export * from './placeholders.js';
 export * from './key-renamer.js';
 export * from './actionable.js';
 export * from './diagnostics.js';

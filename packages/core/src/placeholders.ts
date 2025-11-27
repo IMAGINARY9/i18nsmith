@@ -68,3 +68,63 @@ export function extractPlaceholders(value: string, patterns: PlaceholderPatternI
 
   return Array.from(new Set(results));
 }
+
+/**
+ * Result of comparing placeholders between source and target values.
+ */
+export interface PlaceholderComparisonResult {
+  /** Placeholders present in source but missing from target */
+  missing: string[];
+  /** Placeholders present in target but not in source */
+  extra: string[];
+  /** Whether the comparison passed (no missing or extra placeholders) */
+  valid: boolean;
+}
+
+/**
+ * PlaceholderValidator provides methods for comparing placeholders
+ * between source and target translation values.
+ */
+export class PlaceholderValidator {
+  private readonly patterns: PlaceholderPatternInstance[];
+
+  constructor(formats: PlaceholderFormat[] = ['doubleCurly']) {
+    this.patterns = buildPlaceholderPatterns(formats);
+  }
+
+  /**
+   * Extract placeholders from a value.
+   */
+  public extract(value: string): Set<string> {
+    if (!value || typeof value !== 'string') {
+      return new Set();
+    }
+    return new Set(extractPlaceholders(value, this.patterns));
+  }
+
+  /**
+   * Compare placeholders between source and target values.
+   */
+  public compare(sourceValue: string, targetValue: string): PlaceholderComparisonResult {
+    const sourceSet = this.extract(sourceValue);
+    const targetSet = this.extract(targetValue);
+
+    const missing = Array.from(sourceSet).filter((token) => !targetSet.has(token));
+    const extra = Array.from(targetSet).filter((token) => !sourceSet.has(token));
+
+    return {
+      missing,
+      extra,
+      valid: missing.length === 0 && extra.length === 0,
+    };
+  }
+
+  /**
+   * Validate that a target value contains all placeholders from source.
+   */
+  public validate(sourceValue: string, targetValue: string): boolean {
+    const result = this.compare(sourceValue, targetValue);
+    return result.valid;
+  }
+}
+
