@@ -79,6 +79,13 @@ export interface EmptyValueViolation {
 
 export type DynamicKeyReason = 'template' | 'binary' | 'expression';
 
+export type SuspiciousKeyReason =
+  | 'contains-spaces'
+  | 'single-word-no-namespace'
+  | 'trailing-punctuation'
+  | 'pascal-case-sentence'
+  | 'sentence-article';
+
 export interface DynamicKeyWarning {
   filePath: string;
   position: {
@@ -96,7 +103,7 @@ export interface SuspiciousKeyWarning {
     line: number;
     column: number;
   };
-  reason: string;
+  reason: SuspiciousKeyReason | string;
 }
 
 export interface SyncValidationState {
@@ -276,14 +283,15 @@ export class Syncer {
 
     const suspiciousKeys: SuspiciousKeyWarning[] = [];
     for (const key of scopedKeySet) {
-      if (this.isSuspiciousKey(key)) {
+      const analysis = this.analyzeSuspiciousKey(key);
+      if (analysis.suspicious) {
         const refs = scopedReferencesByKey.get(key) ?? [];
         for (const ref of refs) {
           suspiciousKeys.push({
             key,
             filePath: ref.filePath,
             position: ref.position,
-            reason: 'Contains spaces',
+            reason: analysis.reason ?? 'unknown',
           });
         }
       }
@@ -344,20 +352,20 @@ export class Syncer {
     };
   }
 
-  private isSuspiciousKey(key: string): boolean {
+  private analyzeSuspiciousKey(key: string): { suspicious: boolean; reason?: SuspiciousKeyReason } {
     // Keys containing spaces are clearly raw UI text
     if (key.includes(' ')) {
-      return true;
+      return { suspicious: true, reason: 'contains-spaces' };
     }
 
     // Single-word keys without a namespace (e.g., `Found`, `tags`) are likely raw labels
     if (!key.includes('.') && /^[A-Za-z]+$/.test(key)) {
-      return true;
+      return { suspicious: true, reason: 'single-word-no-namespace' };
     }
 
     // Keys with sentence-like punctuation (colons, question marks, exclamation) at the end
     if (/[:?!]$/.test(key)) {
-      return true;
+      return { suspicious: true, reason: 'trailing-punctuation' };
     }
 
     // Keys that look like Title Case sentences (3+ consecutive capitalized words)
@@ -368,7 +376,7 @@ export class Syncer {
       // PascalCase sentences typically have all words capitalized
       const words = withoutNamespace.split(/(?=[A-Z])/);
       if (words.length >= 4 && words.every(w => w.length > 1)) {
-        return true;
+        return { suspicious: true, reason: 'pascal-case-sentence' };
       }
     }
 
@@ -376,10 +384,14 @@ export class Syncer {
     // Only flag if also mixed with capitalized words
     const sentenceIndicators = /\b(The|A|An|To|Of|For|In|On|At|By|With|From|As|Is|Are|Was|Were|Be|Been|Being|Have|Has|Had|Do|Does|Did|Will|Would|Could|Should|May|Might|Must|Shall|Can)\b/;
     if (sentenceIndicators.test(withoutNamespace)) {
-      return true;
+      return { suspicious: true, reason: 'sentence-article' };
     }
 
-    return false;
+    return { suspicious: false };
+  }
+
+  private isSuspiciousKey(key: string): boolean {
+    return this.analyzeSuspiciousKey(key).suspicious;
   }
 
   private scopeAnalysisToTargets(input: {

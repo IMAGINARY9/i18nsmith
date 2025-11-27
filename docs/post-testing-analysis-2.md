@@ -1,7 +1,7 @@
 # Post-Testing Analysis: External Session 2 (Next.js Real-World Project)
 
 **Date:** 2025-11-26
-**Context:** Integration testing against `bilinmenu` (Next.js 15.4.4, Node 22, pnpm 10).
+**Context:** Integration testing against project based: Next.js 15.4.4, Node 22, pnpm 10.
 
 ## Executive Summary
 The CLI was successfully integrated into a real-world Next.js monorepo, but several critical reliability and usability issues were identified. The most severe issue was broken ESM module resolution in the built CLI, which prevented execution until manually patched. Other feedback highlights inconsistencies in CLI arguments (`--report`), noise in diagnostics, and the need for better handling of dynamic keys and nested JSON structures.
