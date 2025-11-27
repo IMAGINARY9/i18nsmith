@@ -1,8 +1,15 @@
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
+import inquirer from 'inquirer';
 import type { Command } from 'commander';
-import { loadConfig, TranslationPlan, TranslationService } from '@i18nsmith/core';
+import {
+  DEFAULT_PLACEHOLDER_FORMATS,
+  PlaceholderValidator,
+  loadConfig,
+  TranslationPlan,
+  TranslationService,
+} from '@i18nsmith/core';
 import type { TranslationConfig, TranslationLocalePlan, TranslationWriteSummary } from '@i18nsmith/core';
 import {
   loadTranslator,
@@ -23,6 +30,7 @@ interface TranslateCommandOptions {
   force?: boolean;
   estimate?: boolean;
   skipEmpty?: boolean;
+  yes?: boolean;
 }
 
 interface TranslateLocaleResult extends TranslationWriteSummary {
@@ -51,6 +59,7 @@ export function registerTranslate(program: Command) {
     .option('--force', 'Retranslate keys even if a locale already has a value', false)
     .option('--estimate', 'Attempt to estimate cost when running in dry-run mode', false)
     .option('--no-skip-empty', 'Allow writing empty translator results (default skips them)')
+  .option('-y, --yes', 'Skip interactive confirmation when applying translations', false)
     .action(async (options: TranslateCommandOptions) => {
       console.log(
         chalk.blue(options.write ? 'Translating locale files...' : 'Planning translations (dry-run)...')
@@ -63,6 +72,9 @@ export function registerTranslate(program: Command) {
           locales: options.locales,
           force: options.force,
         });
+        const placeholderValidator = new PlaceholderValidator(
+          config.sync?.placeholderFormats?.length ? config.sync.placeholderFormats : DEFAULT_PLACEHOLDER_FORMATS
+        );
 
         if (!plan.totalTasks) {
           console.log(chalk.green('✓ No missing translations detected.'));
@@ -94,6 +106,17 @@ export function registerTranslate(program: Command) {
           );
         }
 
+        if (options.write && !options.yes) {
+          if (!process.stdout.isTTY) {
+            throw new Error('Interactive confirmation required in non-TTY environment. Re-run with --yes to proceed.');
+          }
+          const confirmed = await confirmTranslate(plan, providerSettings.name);
+          if (!confirmed) {
+            console.log(chalk.yellow('Translation aborted by user.'));
+            return;
+          }
+        }
+
         const skipEmpty = options.skipEmpty !== false;
         const localeResults = await executeTranslations({
           plan,
@@ -101,6 +124,7 @@ export function registerTranslate(program: Command) {
           provider: providerSettings,
           overwrite: options.force ?? false,
           skipEmpty,
+          placeholderValidator,
         });
 
         summary.locales = localeResults.results;
@@ -237,12 +261,25 @@ function resolveProviderSettings(
   };
 }
 
+async function confirmTranslate(plan: TranslationPlan, providerName: string): Promise<boolean> {
+  const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
+    {
+      type: 'confirm',
+      name: 'proceed',
+      default: false,
+      message: `Translate ${plan.totalTasks} key${plan.totalTasks === 1 ? '' : 's'} (${plan.totalCharacters} chars) across ${plan.locales.length} locale${plan.locales.length === 1 ? '' : 's'} via ${providerName}?`,
+    },
+  ]);
+  return proceed;
+}
+
 async function executeTranslations(input: {
   plan: TranslationPlan;
   translationService: TranslationService;
   provider: ProviderSettings;
   overwrite: boolean;
   skipEmpty: boolean;
+  placeholderValidator: PlaceholderValidator;
 }): Promise<{ results: TranslateLocaleResult[]; stats: Awaited<ReturnType<TranslationService['flush']>> }> {
   const translator = await loadTranslator(input.provider.loaderOptions);
   const results: TranslateLocaleResult[] = [];
@@ -255,7 +292,8 @@ async function executeTranslations(input: {
           translator,
           localePlan,
           input.plan.sourceLocale,
-          input.provider.loaderOptions.batchSize ?? 25
+          input.provider.loaderOptions.batchSize ?? 25,
+          input.placeholderValidator
         );
         const writeSummary = await input.translationService.writeTranslations(localePlan.locale, updates, {
           overwrite: input.overwrite,
@@ -287,11 +325,11 @@ async function translateLocalePlan(
   translator: Translator,
   localePlan: TranslationLocalePlan,
   sourceLocale: string,
-  batchSize: number
+  batchSize: number,
+  placeholderValidator: PlaceholderValidator
 ) {
   const updates: { key: string; value: string }[] = [];
   for (const chunk of chunkTasks(localePlan.tasks, batchSize)) {
-    const textsToTranslate = chunk.map((task) => task.sourceValue);
     const translationMap = new Map<string, string>();
 
     // Pre-fill with reused values
@@ -322,7 +360,32 @@ async function translateLocalePlan(
       }
 
       tasksRequiringTranslation.forEach((task, index) => {
-        translationMap.set(task.key, translated[index] ?? '');
+        const candidate = translated[index] ?? '';
+        const comparison = placeholderValidator.compare(task.sourceValue, candidate ?? '');
+
+        if (task.placeholders.length && comparison.missing.length) {
+          console.log(
+            chalk.yellow(
+              `Translator output for ${task.key} (${localePlan.locale}) is missing placeholder${
+                comparison.missing.length === 1 ? '' : 's'
+              }: ${comparison.missing.join(', ')}. Falling back to source text.`
+            )
+          );
+          translationMap.set(task.key, task.sourceValue);
+          return;
+        }
+
+        if (comparison.extra.length) {
+          console.log(
+            chalk.yellow(
+              `Translator output for ${task.key} (${localePlan.locale}) introduced unexpected placeholder${
+                comparison.extra.length === 1 ? '' : 's'
+              }: ${comparison.extra.join(', ')}`
+            )
+          );
+        }
+
+        translationMap.set(task.key, candidate ?? '');
       });
     }
 

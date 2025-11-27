@@ -470,6 +470,11 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 *   **`@i18nsmith/translator-deepl`:** Production-ready adapter for DeepL API.
 *   **`@i18nsmith/translator-google`:** Production-ready adapter for Google Cloud Translation.
 
+**Progress notes (2025-11-27):**
+- ✅ Added reusable translation suggestions from sibling locales plus placeholder preservation enforced at translate-time (missing placeholders fall back to source text with warnings).
+- ✅ Introduced interactive confirmation (skippable via `--yes`) before invoking paid providers, matching Phase 4 safety requirements.
+- ⚠️ Outstanding: publish official production adapters (`translator-deepl`, `translator-google`) and document their setup guidance.
+
 ## Phase 5: CI/CD & Workflow (Weeks 15+)
 **Objective:** Deeply integrate i18nsmith into the developer's daily workflow (Editor, CI, Git).
 

@@ -1,6 +1,7 @@
 import path from 'path';
-import { DEFAULT_EMPTY_VALUE_MARKERS, I18nConfig } from './config.js';
+import { DEFAULT_EMPTY_VALUE_MARKERS, DEFAULT_PLACEHOLDER_FORMATS, I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
+import { PlaceholderValidator } from './placeholders.js';
 
 export interface TranslationServiceOptions {
   workspaceRoot?: string;
@@ -21,6 +22,7 @@ export interface TranslationTask {
     locale: string;
     value: string;
   };
+  placeholders: string[];
 }
 
 export interface TranslationLocalePlan {
@@ -65,6 +67,7 @@ export class TranslationService {
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
   private readonly emptyValueMarkers: Set<string>;
+  private readonly placeholderValidator: PlaceholderValidator;
 
   constructor(private readonly config: I18nConfig, options: TranslationServiceOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -72,12 +75,16 @@ export class TranslationService {
     this.localeStore =
       options.localeStore ?? new LocaleStore(localesDir, { format: config.locales?.format, delimiter: config.locales?.delimiter });
     this.sourceLocale = config.sourceLanguage ?? 'en';
-  const configuredTargets = Array.from(new Set((config.targetLanguages ?? []).filter(Boolean)));
-  this.targetLocales = configuredTargets.filter((locale) => locale !== this.sourceLocale);
+    const configuredTargets = Array.from(new Set((config.targetLanguages ?? []).filter(Boolean)));
+    this.targetLocales = configuredTargets.filter((locale) => locale !== this.sourceLocale);
     const emptyMarkers = config.sync?.emptyValueMarkers?.length
       ? config.sync.emptyValueMarkers
       : DEFAULT_EMPTY_VALUE_MARKERS;
     this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
+    const placeholderFormats = config.sync?.placeholderFormats?.length
+      ? config.sync.placeholderFormats
+      : DEFAULT_PLACEHOLDER_FORMATS;
+    this.placeholderValidator = new PlaceholderValidator(placeholderFormats);
   }
 
   public async buildPlan(options: BuildTranslationPlanOptions = {}): Promise<TranslationPlan> {
@@ -142,6 +149,7 @@ export class TranslationService {
           sourceValue,
           existingValue: typeof currentValue === 'string' ? currentValue : undefined,
           reusedValue,
+          placeholders: Array.from(this.placeholderValidator.extract(sourceValue)),
         });
       }
 

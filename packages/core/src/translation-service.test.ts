@@ -27,6 +27,7 @@ describe('TranslationService', () => {
           'common.greeting': 'Hello world',
           'cta.save': 'Save',
           'cta.cancel': 'Cancel',
+          'cta.named': 'Hello {{name}}',
         },
         null,
         2
@@ -37,6 +38,7 @@ describe('TranslationService', () => {
       JSON.stringify(
         {
           'common.greeting': '',
+          'cta.named': '',
         },
         null,
         2
@@ -58,12 +60,12 @@ describe('TranslationService', () => {
     expect(plan.targetLocales).toEqual(['es', 'fr']);
     expect(plan.totalTasks).toBeGreaterThan(0);
 
-  const esPlan = plan.locales.find((localePlan) => localePlan.locale === 'es');
-  expect(esPlan).toBeDefined();
-  expect(esPlan && sortKeys(esPlan.tasks)).toEqual(['common.greeting', 'cta.cancel', 'cta.save']);
+    const esPlan = plan.locales.find((localePlan) => localePlan.locale === 'es');
+    expect(esPlan).toBeDefined();
+    expect(esPlan && sortKeys(esPlan.tasks)).toEqual(['common.greeting', 'cta.cancel', 'cta.named', 'cta.save']);
 
-  const frPlan = plan.locales.find((localePlan) => localePlan.locale === 'fr');
-  expect(frPlan && sortKeys(frPlan.tasks)).toEqual(['common.greeting', 'cta.cancel', 'cta.save']);
+    const frPlan = plan.locales.find((localePlan) => localePlan.locale === 'fr');
+    expect(frPlan && sortKeys(frPlan.tasks)).toEqual(['common.greeting', 'cta.cancel', 'cta.named', 'cta.save']);
   });
 
   it('skips locales that already have translations unless forced', async () => {
@@ -75,6 +77,7 @@ describe('TranslationService', () => {
           'common.greeting': 'Bonjour',
           'cta.save': 'Enregistrer',
           'cta.cancel': 'Annuler',
+          'cta.named': 'Bonjour {{name}}',
         },
         null,
         2
@@ -87,8 +90,16 @@ describe('TranslationService', () => {
 
     const forcedPlan = await service.buildPlan({ locales: ['fr'], force: true });
     expect(forcedPlan.locales.length).toBe(1);
-    expect(forcedPlan.locales[0].tasks).toHaveLength(3);
+    expect(forcedPlan.locales[0].tasks).toHaveLength(4);
     expect(forcedPlan.locales[0].existingCount).toBeGreaterThan(0);
+  });
+
+  it('captures placeholder metadata for each task', async () => {
+    const service = new TranslationService(baseConfig());
+    const plan = await service.buildPlan({ locales: ['es'] });
+    const esPlan = plan.locales[0];
+    const placeholderTask = esPlan.tasks.find((task) => task.key === 'cta.named');
+    expect(placeholderTask?.placeholders).toEqual(['name']);
   });
 
   it('writes translated values and flushes to disk', async () => {
