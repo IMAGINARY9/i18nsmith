@@ -55,7 +55,11 @@ export class Transformer {
   const namespace = options.keyNamespace ?? this.config.keyGeneration?.namespace ?? 'common';
   this.keyGenerator = options.keyGenerator ?? new KeyGenerator({ namespace, hashLength: this.config.keyGeneration?.shortHashLen ?? 6 });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-  this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+  const localeStoreOptions = {
+    format: config.locales?.format ?? 'auto',
+    delimiter: config.locales?.delimiter ?? '.',
+  };
+  this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
   this.defaultWrite = options.write ?? false;
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);

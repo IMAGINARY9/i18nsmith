@@ -156,4 +156,63 @@ describe('LocaleStore', () => {
     const contents = JSON.parse(await fs.readFile(path.join(tempDir, 'en.json'), 'utf8'));
     expect(contents).toEqual({ 'old.key': 'value', 'new.key': 'other' });
   });
+
+  it('preserves nested locale structure when detected', async () => {
+    const file = path.join(tempDir, 'en.json');
+    await fs.writeFile(
+      file,
+      JSON.stringify(
+        {
+          auth: {
+            login: 'Login',
+            form: {
+              title: 'Title',
+            },
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const store = new LocaleStore(tempDir);
+    expect(await store.getValue('en', 'auth.login')).toBe('Login');
+    await store.upsert('en', 'auth.logout', 'Logout');
+    await store.flush();
+
+    const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+    expect(contents).toEqual({
+      auth: {
+        form: { title: 'Title' },
+        login: 'Login',
+        logout: 'Logout',
+      },
+    });
+  });
+
+  it('allows forcing flat locale format', async () => {
+    const file = path.join(tempDir, 'en.json');
+    await fs.writeFile(
+      file,
+      JSON.stringify(
+        {
+          auth: {
+            login: 'Login',
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const store = new LocaleStore(tempDir, { format: 'flat' });
+    await store.upsert('en', 'auth.logout', 'Logout');
+    await store.flush();
+
+    const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+    expect(contents).toEqual({
+      'auth.login': 'Login',
+      'auth.logout': 'Logout',
+    });
+  });
 });

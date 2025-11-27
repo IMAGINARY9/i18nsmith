@@ -114,6 +114,8 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `sourceLanguage`: Source language code (default: `"en"`).
 - `targetLanguages`: Array of target language codes.
 - `localesDir`: Directory for locale JSON files (default: `"locales"`).
+- `locales.format`: Controls how locale JSON is stored. Use `"auto"` (default) to preserve the existing shape (flat vs nested), `"nested"` to always write tree-structured JSON, or `"flat"` to emit dotted keys everywhere.
+- `locales.delimiter`: Delimiter used when flattening/expanding nested keys (default: `"."`).
 - `include`: Glob patterns for files to scan (default: `src/`, `app/`, and `pages/` trees with TS/JS extensions).
 - `exclude`: Glob patterns to exclude (default: `node_modules/**`, `.next/**`, and `dist/**`; add your own such as `**/*.test.*`).
 - `minTextLength`: Minimum length for translatable text (default: `1`).
@@ -130,6 +132,7 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `sync.emptyValueMarkers`: Extra sentinel values that should be treated as “empty” (defaults to `todo`, `tbd`, `fixme`, `pending`, `???`).
 - `sync.dynamicKeyAssumptions`: List of translation keys that are only referenced dynamically (e.g., via template literals) so the syncer can treat them as in-use.
 - `sync.dynamicKeyGlobs`: Glob patterns (e.g., `relativeTime.*`, `navigation.**`) that mark entire namespaces as runtime-only so `sync` skips unused warnings for those keys.
+- `sync.suspiciousKeyPolicy`: Controls how `sync` handles keys that look like raw sentences (contain spaces). Defaults to `"skip"`, which surfaces the warning but refuses to auto-write the key; set to `"allow"` to keep the legacy behavior or `"error"` to fail CI when such keys are detected.
 - `diagnostics.runtimePackages`: Extra package names to treat as i18n runtimes when scanning `package.json` (e.g., `"@acme/i18n-runtime"`).
 - `diagnostics.providerGlobs`: Additional glob patterns for detecting provider files (relative to the repo root).
 - `diagnostics.adapterHints`: Explicit file paths that should be treated as pre-existing adapters. Each entry accepts `{ "path": "src/i18n/provider.tsx", "type": "custom" }`.
@@ -149,6 +152,10 @@ Example diagnostics override:
 	}
 }
 ```
+
+### Locale shape controls
+
+Legacy repositories often store locale JSON as deeply nested trees while newer ones flatten everything into dotted keys. `i18nsmith` now detects the format per locale file automatically and preserves it on write (`locales.format: "auto"`). Override this behavior if you want to migrate everything to one style: set `"nested"` to emit tree-structured JSON or `"flat"` to coerce dotted keys. When using nested mode you can also change the delimiter via `locales.delimiter` if your runtime prefers something other than `.`.
 
 > The transformer only injects `useTranslation` calls—it does **not** bootstrap a runtime. You must either use the zero-deps adapter or set up a `react-i18next` runtime.
 
@@ -209,6 +216,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 `i18nsmith sync` compares every translation helper call with your locale JSON:
 
 - **Missing keys**: Calls like `t('dialog.ok')` that are absent from `en.json`.
+- **Suspicious keys are safe by default**: Keys containing spaces are flagged and skipped during auto-write so accidental "key-as-value" pairs can’t sneak into your locales. Override via `sync.suspiciousKeyPolicy` if you intentionally use free-form keys.
 - **Unused keys**: Locale entries that are never referenced in your codebase.
 - **Placeholder validation**: Add `--validate-interpolations` (or set `sync.validateInterpolations`) to ensure placeholders such as `{{name}}`, `%{count}`, or `%s` appear in every translation for the key.
 - **Empty translation policies**: Use `--no-empty-values` (or set `sync.emptyValuePolicy: "fail"`) to treat empty strings, whitespace-only values, and TODO markers as drift.

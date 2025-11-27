@@ -1,6 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import {
+  detectLocaleFormat,
+  expandLocaleTree,
+  flattenLocaleTree,
+  LocalePersistenceFormat,
+  sortNestedObject,
+} from './utils/locale-shape.js';
 
 export interface LocaleFileStats {
   locale: string;
@@ -11,6 +18,16 @@ export interface LocaleFileStats {
   removed: string[];
 }
 
+export interface LocaleStoreOptions {
+  format?: 'flat' | 'nested' | 'auto';
+  delimiter?: string;
+}
+
+const DEFAULT_LOCALE_STORE_OPTIONS = {
+  format: 'auto' as const,
+  delimiter: '.',
+};
+
 interface LocaleCacheEntry {
   locale: string;
   path: string;
@@ -19,12 +36,19 @@ interface LocaleCacheEntry {
   added: Set<string>;
   updated: Set<string>;
   removed: Set<string>;
+  format: LocalePersistenceFormat;
 }
 
 export class LocaleStore {
   private readonly cache = new Map<string, LocaleCacheEntry>();
 
-  constructor(private readonly localesDir: string) {}
+  private readonly formatMode: 'flat' | 'nested' | 'auto';
+  private readonly delimiter: string;
+
+  constructor(private readonly localesDir: string, options: LocaleStoreOptions = {}) {
+    this.formatMode = options.format ?? DEFAULT_LOCALE_STORE_OPTIONS.format;
+    this.delimiter = options.delimiter ?? DEFAULT_LOCALE_STORE_OPTIONS.delimiter;
+  }
 
   public getFilePath(locale: string): string {
     return path.join(this.localesDir, `${locale}.json`);
@@ -115,7 +139,12 @@ export class LocaleStore {
 
       await fs.mkdir(path.dirname(entry.path), { recursive: true });
       const sortedData = this.sortKeys(entry.data);
-      const serialized = JSON.stringify(sortedData, null, 2);
+      const format = this.resolvePersistenceFormat(entry);
+      const structured =
+        format === 'flat'
+          ? sortedData
+          : sortNestedObject(expandLocaleTree(sortedData, this.delimiter));
+      const serialized = JSON.stringify(structured, null, 2);
       const tempPath = this.createTempPath(entry.path);
       await fs.writeFile(tempPath, `${serialized}\n`, 'utf8');
 
@@ -138,7 +167,7 @@ export class LocaleStore {
       summaries.push({
         locale: entry.locale,
         path: entry.path,
-        totalKeys: Object.keys(sortedData).length,
+  totalKeys: Object.keys(sortedData).length,
         added: Array.from(entry.added).sort(),
         updated: Array.from(entry.updated).sort(),
         removed: Array.from(entry.removed).sort(),
@@ -156,22 +185,89 @@ export class LocaleStore {
     return Array.from(this.cache.keys());
   }
 
+  private async loadLocaleData(filePath: string): Promise<{ data: Record<string, string>; format: LocalePersistenceFormat }> {
+    try {
+      const contents = await fs.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!parsed || typeof parsed !== 'object') {
+        return { data: {}, format: this.resolveFormatPreference('flat') };
+      }
+
+      const detected = detectLocaleFormat(parsed);
+      const data =
+        detected === 'nested'
+          ? flattenLocaleTree(parsed, this.delimiter)
+          : this.normalizeFlatRecord(parsed);
+
+      return {
+        data,
+        format: this.resolveFormatPreference(detected),
+      };
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        return { data: {}, format: this.resolveFormatPreference('flat') };
+      }
+      throw error;
+    }
+  }
+
+  private resolveFormatPreference(detected: LocalePersistenceFormat): LocalePersistenceFormat {
+    if (this.formatMode === 'auto') {
+      return detected;
+    }
+    return this.formatMode;
+  }
+
+  private resolvePersistenceFormat(entry: LocaleCacheEntry): LocalePersistenceFormat {
+    if (this.formatMode === 'auto') {
+      return entry.format;
+    }
+    entry.format = this.formatMode;
+    return entry.format;
+  }
+
+  private normalizeFlatRecord(input: unknown): Record<string, string> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return {};
+    }
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      if (typeof value === 'string') {
+        normalized[key] = value;
+        continue;
+      }
+
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        normalized[key] = String(value);
+        continue;
+      }
+
+      if (value === null || typeof value === 'undefined') {
+        normalized[key] = '';
+        continue;
+      }
+
+      if (Array.isArray(value) || typeof value === 'object') {
+        const flattened = flattenLocaleTree({ [key]: value }, this.delimiter);
+        Object.assign(normalized, flattened);
+        continue;
+      }
+
+      normalized[key] = String(value);
+    }
+
+    return normalized;
+  }
+
   private async ensureLocale(locale: string): Promise<LocaleCacheEntry> {
     if (this.cache.has(locale)) {
       return this.cache.get(locale)!;
     }
 
-  const filePath = this.getFilePath(locale);
-    let data: Record<string, string> = {};
-
-    try {
-      const contents = await fs.readFile(filePath, 'utf8');
-      data = JSON.parse(contents);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
-    }
+    const filePath = this.getFilePath(locale);
+    const { data, format } = await this.loadLocaleData(filePath);
 
     const entry: LocaleCacheEntry = {
       locale,
@@ -181,6 +277,7 @@ export class LocaleStore {
       added: new Set(),
       updated: new Set(),
       removed: new Set(),
+      format,
     };
 
     this.cache.set(locale, entry);

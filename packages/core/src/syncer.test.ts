@@ -116,6 +116,68 @@ export default Component;
     });
   });
 
+  it('skips auto-writing suspicious keys by default', async () => {
+    const keyWithSpaces = 'When to Use Categorized View:';
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Suspicious.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const Suspicious = () => {
+  const { t } = useTranslation();
+  return <p>{t('${keyWithSpaces}')}</p>;
+};
+
+export default Suspicious;
+`
+    );
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), '{}');
+    await fs.writeFile(path.join(tempDir, 'locales', 'es.json'), '{}');
+
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ write: true });
+
+    const missing = summary.missingKeys.find((entry) => entry.key === keyWithSpaces);
+    expect(missing?.suspicious).toBe(true);
+    expect(summary.actionableItems.some((item) => item.kind === 'suspicious-key')).toBe(true);
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).not.toHaveProperty(keyWithSpaces);
+  });
+
+  it('honors suspicious key policy overrides', async () => {
+    const keyWithSpaces = 'When to Use Smart Search View:';
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'SuspiciousAllow.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const SuspiciousAllow = () => {
+  const { t } = useTranslation();
+  return <p>{t('${keyWithSpaces}')}</p>;
+};
+
+export default SuspiciousAllow;
+`
+    );
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), '{}');
+    await fs.writeFile(path.join(tempDir, 'locales', 'es.json'), '{}');
+
+    const config: I18nConfig = {
+      ...baseConfig,
+      sync: {
+        ...baseConfig.sync!,
+        suspiciousKeyPolicy: 'allow',
+      },
+    };
+
+    const syncer = new Syncer(config, { workspaceRoot: tempDir });
+    await syncer.run({ write: true });
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).toHaveProperty(keyWithSpaces);
+  });
+
   it('reports placeholder mismatches when interpolation validation is enabled', async () => {
     await fs.writeFile(
       path.join(tempDir, 'src', 'Greeting.tsx'),
