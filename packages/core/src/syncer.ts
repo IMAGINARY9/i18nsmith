@@ -262,6 +262,7 @@ export class Syncer {
       : [];
     const emptyValueViolations = this.collectEmptyValueViolations(localeData);
 
+    // Collect suspicious keys from code references
     const suspiciousKeys: SuspiciousKeyWarning[] = [];
     for (const key of scopedKeySet) {
       const analysis = this.analyzeSuspiciousKey(key);
@@ -273,6 +274,26 @@ export class Syncer {
             filePath: ref.filePath,
             position: ref.position,
             reason: analysis.reason ?? 'unknown',
+          });
+        }
+      }
+    }
+
+    // Post-sync audit: Check locale file for key-equals-value patterns
+    const sourceData = localeData.get(this.sourceLocale) ?? {};
+    for (const [key, value] of Object.entries(sourceData)) {
+      const analysis = this.keyValidator.analyzeWithValue(key, value);
+      if (analysis.suspicious && analysis.reason === 'key-equals-value') {
+        // Only add if not already reported from code references
+        const alreadyReported = suspiciousKeys.some(
+          (w) => w.key === key && w.reason === 'key-equals-value'
+        );
+        if (!alreadyReported) {
+          suspiciousKeys.push({
+            key,
+            filePath: this.localeStore.getFilePath(this.sourceLocale),
+            position: { line: 0, column: 0 },
+            reason: 'key-equals-value',
           });
         }
       }

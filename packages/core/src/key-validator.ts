@@ -207,6 +207,11 @@ export class KeyValidator {
    * Check if key is identical or nearly identical to its value.
    */
   private isKeyEqualsValue(key: string, value: string): boolean {
+    // Direct equality check (key literally used as value)
+    if (key === value) {
+      return true;
+    }
+
     // Use only the last segment of the key for comparison
     const keySegment = key.includes('.') ? key.split('.').pop()! : key;
     const normalizedKey = this.normalizeForComparison(keySegment);
