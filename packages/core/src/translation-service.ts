@@ -17,6 +17,10 @@ export interface TranslationTask {
   key: string;
   sourceValue: string;
   existingValue?: string;
+  reusedValue?: {
+    locale: string;
+    value: string;
+  };
 }
 
 export interface TranslationLocalePlan {
@@ -88,11 +92,16 @@ export class TranslationService {
     const keys = Object.keys(sourceData).sort((a, b) => a.localeCompare(b));
     const localePlans: TranslationLocalePlan[] = [];
 
+    const allTargetData = new Map<string, Record<string, string>>();
+    for (const l of this.targetLocales) {
+      allTargetData.set(l, await this.localeStore.get(l));
+    }
+
     let totalCharacters = 0;
     let totalTasks = 0;
 
     for (const locale of locales) {
-      const targetData = await this.localeStore.get(locale);
+      const targetData = allTargetData.get(locale) ?? {};
       const tasks: TranslationTask[] = [];
       let localeCharacters = 0;
       let missingCount = 0;
@@ -110,6 +119,17 @@ export class TranslationService {
           continue;
         }
 
+        let reusedValue: TranslationTask['reusedValue'] | undefined;
+        if (!hasMeaningfulValue) {
+          const suggestion = this.findSuggestion(key, locale, allTargetData);
+          if (suggestion && this.hasMeaningfulValue(suggestion.value, true)) {
+            reusedValue = {
+              locale: suggestion.locale,
+              value: suggestion.value,
+            };
+          }
+        }
+
         if (typeof currentValue === 'string') {
           existingCount += 1;
         } else {
@@ -121,6 +141,7 @@ export class TranslationService {
           key,
           sourceValue,
           existingValue: typeof currentValue === 'string' ? currentValue : undefined,
+          reusedValue,
         });
       }
 
@@ -198,6 +219,30 @@ export class TranslationService {
 
   public async flush(): Promise<LocaleFileStats[]> {
     return this.localeStore.flush();
+  }
+
+  private findSuggestion(
+    key: string,
+    targetLocale: string,
+    allData: Map<string, Record<string, string>>
+  ): { locale: string; value: string } | undefined {
+    const baseLanguage = targetLocale.split('-')[0];
+    const searchOrder = [
+      // Exact match already failed, so we look for related locales
+      ...this.targetLocales.filter((l) => l.startsWith(`${baseLanguage}-`) && l !== targetLocale),
+      // Fallback to base language if available
+      this.targetLocales.find((l) => l === baseLanguage),
+    ].filter((l): l is string => Boolean(l));
+
+    for (const locale of searchOrder) {
+      const data = allData.get(locale);
+      const value = data?.[key];
+      if (this.hasMeaningfulValue(value, true)) {
+        return { locale, value: value as string };
+      }
+    }
+
+    return undefined;
   }
 
   private resolveLocales(requested?: string[]): string[] {
