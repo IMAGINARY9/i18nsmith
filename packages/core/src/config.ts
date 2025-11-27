@@ -74,6 +74,69 @@ const ensureUniqueStrings = (value: unknown): string[] | undefined => {
   return normalized ? Array.from(new Set(normalized)) : undefined;
 };
 
+const normalizePositiveInteger = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+};
+
+function normalizeTranslationConfig(input: unknown): TranslationConfig | undefined {
+  if (!input || typeof input !== 'object') {
+    return undefined;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const providerRaw =
+    typeof raw.provider === 'string' && raw.provider.trim().length > 0
+      ? raw.provider.trim()
+      : typeof raw.service === 'string' && raw.service.trim().length > 0
+      ? raw.service.trim()
+      : undefined;
+  const provider = providerRaw ?? 'manual';
+
+  const translationConfig: TranslationConfig = {
+    provider,
+  };
+
+  const secretEnvVar =
+    typeof raw.secretEnvVar === 'string' && raw.secretEnvVar.trim().length > 0
+      ? raw.secretEnvVar.trim()
+      : undefined;
+  if (secretEnvVar) {
+    translationConfig.secretEnvVar = secretEnvVar;
+  }
+
+  const legacyApiKey =
+    typeof raw.apiKey === 'string' && raw.apiKey.trim().length > 0 ? raw.apiKey.trim() : undefined;
+  if (legacyApiKey) {
+    translationConfig.apiKey = legacyApiKey;
+  }
+
+  const moduleSpecifier =
+    typeof raw.module === 'string' && raw.module.trim().length > 0 ? raw.module.trim() : undefined;
+  if (moduleSpecifier) {
+    translationConfig.module = moduleSpecifier;
+  }
+
+  const concurrency = normalizePositiveInteger(raw.concurrency);
+  if (concurrency) {
+    translationConfig.concurrency = concurrency;
+  }
+
+  const batchSize = normalizePositiveInteger(raw.batchSize);
+  if (batchSize) {
+    translationConfig.batchSize = batchSize;
+  }
+
+  const locales = ensureUniqueStrings(raw.locales);
+  if (locales?.length) {
+    translationConfig.locales = locales;
+  }
+
+  return translationConfig;
+}
+
 const ensureStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -155,6 +218,8 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     );
   }
 
+  const translationConfig = normalizeTranslationConfig(parsed.translation);
+
   const adapter =
     typeof parsed.translationAdapter === 'object' && parsed.translationAdapter
       ? parsed.translationAdapter
@@ -217,7 +282,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     include: ensureArray(parsed.include, DEFAULT_INCLUDE),
     exclude: ensureArray(parsed.exclude, DEFAULT_EXCLUDE),
     minTextLength: typeof parsed.minTextLength === 'number' && parsed.minTextLength >= 0 ? parsed.minTextLength : 1,
-    translation: parsed.translation,
+  translation: translationConfig,
     translationAdapter: {
       module: adapterModule,
       hookName: adapterHook,
@@ -307,6 +372,16 @@ export interface TranslationAdapterConfig {
   hookName?: string;
 }
 
+export interface TranslationConfig {
+  provider: string;
+  secretEnvVar?: string;
+  apiKey?: string;
+  module?: string;
+  concurrency?: number;
+  batchSize?: number;
+  locales?: string[];
+}
+
 export interface KeyGenerationConfig {
   /**
    * Namespace prefix for generated keys (e.g. 'common').
@@ -358,10 +433,7 @@ export interface I18nConfig {
   /**
    * Translation service configuration
    */
-  translation?: {
-    service: 'google' | 'deepl' | 'manual';
-    apiKey?: string;
-  };
+  translation?: TranslationConfig;
   /**
    * Configure how transformed components access the `t` helper.
    * Defaults to importing `useTranslation` from `react-i18next`.

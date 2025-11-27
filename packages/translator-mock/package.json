@@ -1,0 +1,21 @@
+{
+  "name": "@i18nsmith/translator-mock",
+  "version": "0.1.0",
+  "description": "Mock translator adapter for i18nsmith",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@i18nsmith/translation": "workspace:*"
+  }
+}

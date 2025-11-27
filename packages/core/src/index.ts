@@ -13,3 +13,4 @@ export * from './diagnostics.js';
 export * from './check-runner.js';
 export * from './diff-utils.js';
 export * from './value-generator.js';
+export * from './translation-service.js';

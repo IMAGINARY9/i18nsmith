@@ -68,6 +68,23 @@ tmp-transformer-*
 *.local-transform-*
 ```
 
+## Filling locale files automatically during tests
+
+Once the external project has a valid `translation` block in `i18n.config.json`, you can automate missing translations via the new `translate` command:
+
+```bash
+# Preview missing strings per locale (no writes)
+i18nsmith translate --locales es fr
+
+# Apply pseudo-localized strings using the mock adapter
+i18nsmith translate --provider mock --write --locales es
+
+# Force DeepL translations using the config’s env var
+DEEPL_API_KEY=... i18nsmith translate --write
+```
+
+Because `translate` is dry-run by default, it’s safe to run in CI to generate a plan or cost estimate. Pass `--write` only after confirming the adapter is configured (provider package installed, env var set). Combined with `sync --check`, this makes it easy to regression-test round trips: run `translate --write`, inspect locale diffs, and then verify `sync --check` reports zero drift.
+
 ## Troubleshooting
 
 - **Missing repo**: The script fails if the supplied path does not exist.
