@@ -11,6 +11,38 @@ const DEFAULT_EXCLUDE = ['node_modules/**', '.next/**', 'dist/**'];
 const DEFAULT_PLACEHOLDER_FORMATS: PlaceholderFormat[] = ['doubleCurly', 'percentCurly', 'percentSymbol'];
 const DEFAULT_EMPTY_VALUE_MARKERS = ['todo', 'tbd', 'fixme', 'pending', '???'];
 
+export type LocaleFormat = 'flat' | 'nested' | 'auto';
+export type SuspiciousKeyPolicy = 'allow' | 'skip' | 'error';
+
+const isLocaleFormat = (value: string): value is LocaleFormat =>
+  value === 'flat' || value === 'nested' || value === 'auto';
+
+const normalizeLocaleFormat = (value: unknown): LocaleFormat => {
+  if (typeof value !== 'string') {
+    return 'auto';
+  }
+  const normalized = value.trim().toLowerCase();
+  return isLocaleFormat(normalized) ? (normalized as LocaleFormat) : 'auto';
+};
+
+const normalizeLocaleDelimiter = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length) {
+      return trimmed;
+    }
+  }
+  return '.';
+};
+
+const isSuspiciousKeyPolicy = (value: unknown): value is SuspiciousKeyPolicy =>
+  value === 'allow' || value === 'skip' || value === 'error';
+
+type RawLocalesConfig = {
+  format?: unknown;
+  delimiter?: unknown;
+};
+
 const isPlaceholderFormat = (value: string): value is PlaceholderFormat =>
   (DEFAULT_PLACEHOLDER_FORMATS as string[]).includes(value);
 
@@ -135,6 +167,10 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
 
   const keyGen = parsed.keyGeneration || {};
   const syncConfig = parsed.sync || {};
+  const localesConfig =
+    typeof parsed.locales === 'object' && parsed.locales !== null
+      ? (parsed.locales as RawLocalesConfig)
+      : undefined;
   const translationIdentifier =
     typeof syncConfig.translationIdentifier === 'string' && syncConfig.translationIdentifier.trim().length > 0
       ? syncConfig.translationIdentifier.trim()
@@ -155,6 +191,9 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const retainLocales = typeof syncConfig.retainLocales === 'boolean'
     ? syncConfig.retainLocales
     : false;
+  const suspiciousKeyPolicy = isSuspiciousKeyPolicy(syncConfig.suspiciousKeyPolicy)
+    ? syncConfig.suspiciousKeyPolicy
+    : 'skip';
 
   const keyNamespace = typeof keyGen.namespace === 'string' && keyGen.namespace.trim().length > 0
     ? keyGen.namespace.trim()
@@ -162,6 +201,8 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const shortHashLen = typeof keyGen.shortHashLen === 'number' && keyGen.shortHashLen > 0
     ? keyGen.shortHashLen
     : 6;
+  const localeFormat = normalizeLocaleFormat(localesConfig?.format);
+  const localeDelimiter = normalizeLocaleDelimiter(localesConfig?.delimiter);
 
   const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
 
@@ -180,6 +221,10 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       module: adapterModule,
       hookName: adapterHook,
     },
+    locales: {
+      format: localeFormat,
+      delimiter: localeDelimiter,
+    },
     keyGeneration: {
       namespace: keyNamespace,
       shortHashLen,
@@ -194,6 +239,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
       dynamicKeyAssumptions,
       dynamicKeyGlobs,
       retainLocales: typeof syncConfig.retainLocales === 'boolean' ? syncConfig.retainLocales : true,
+      suspiciousKeyPolicy,
     },
     diagnostics: diagnosticsConfig,
   };
@@ -293,6 +339,10 @@ export interface I18nConfig {
    */
   localesDir: string;
   /**
+   * Locale storage/persistence configuration
+   */
+  locales?: LocalesConfig;
+  /**
    * Glob patterns to include for scanning
    */
   include: string[];
@@ -339,6 +389,7 @@ export interface SyncConfig {
   dynamicKeyAssumptions?: string[];
   dynamicKeyGlobs?: string[];
   retainLocales?: boolean;
+  suspiciousKeyPolicy?: SuspiciousKeyPolicy;
 }
 
 export interface DiagnosticsConfig {
@@ -353,6 +404,11 @@ export interface DiagnosticsConfig {
 export interface DiagnosticsAdapterHintConfig {
   path: string;
   type: 'react-i18next' | 'custom';
+}
+
+export interface LocalesConfig {
+  format?: LocaleFormat;
+  delimiter?: string;
 }
 
 export type PlaceholderFormat = 'doubleCurly' | 'percentCurly' | 'percentSymbol';

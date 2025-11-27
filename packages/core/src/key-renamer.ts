@@ -69,7 +69,11 @@ export class KeyRenamer {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-    this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+    const localeStoreOptions = {
+      format: config.locales?.format ?? 'auto',
+      delimiter: config.locales?.delimiter ?? '.',
+    };
+    this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
     this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);

@@ -2,7 +2,13 @@ import fs from 'fs/promises';
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import fg from 'fast-glob';
-import { EmptyValuePolicy, I18nConfig, DEFAULT_PLACEHOLDER_FORMATS, DEFAULT_EMPTY_VALUE_MARKERS } from './config.js';
+import {
+  EmptyValuePolicy,
+  I18nConfig,
+  DEFAULT_PLACEHOLDER_FORMATS,
+  DEFAULT_EMPTY_VALUE_MARKERS,
+  SuspiciousKeyPolicy,
+} from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { ActionableItem } from './actionable.js';
@@ -21,6 +27,7 @@ export interface TranslationReference {
 export interface MissingKeyRecord {
   key: string;
   references: TranslationReference[];
+  suspicious?: boolean;
 }
 
 export interface UnusedKeyRecord {
@@ -165,6 +172,7 @@ export class Syncer {
   private readonly dynamicKeyGlobMatchers: RegExp[];
   private readonly cacheDir: string;
   private readonly referenceCachePath: string;
+  private readonly suspiciousKeyPolicy: SuspiciousKeyPolicy;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -172,7 +180,11 @@ export class Syncer {
       skipAddingFilesFromTsConfig: true,
     });
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
-    this.localeStore = options.localeStore ?? new LocaleStore(localesDir);
+    const localeStoreOptions = {
+      format: config.locales?.format ?? 'auto',
+      delimiter: config.locales?.delimiter ?? '.',
+    };
+    this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
     const syncOptions = this.config.sync ?? {};
     const placeholderFormats = syncOptions.placeholderFormats?.length
       ? syncOptions.placeholderFormats
@@ -187,6 +199,7 @@ export class Syncer {
       ? syncOptions.emptyValueMarkers
       : DEFAULT_EMPTY_VALUE_MARKERS;
     this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
+    this.suspiciousKeyPolicy = syncOptions.suspiciousKeyPolicy ?? 'skip';
     this.defaultAssumedKeys = syncOptions.dynamicKeyAssumptions ?? [];
     const globPatterns = syncOptions.dynamicKeyGlobs ?? [];
     this.dynamicKeyGlobMatchers = globPatterns
@@ -306,6 +319,7 @@ export class Syncer {
         emptyValuePolicy: runtime.emptyValuePolicy,
       },
   assumedKeys: Array.from(runtime.displayAssumedKeys).sort(),
+      suspiciousKeyPolicy: this.suspiciousKeyPolicy,
     });
 
     return {
@@ -387,9 +401,13 @@ export class Syncer {
       .map((key) => ({
         key,
         references: referencesByKey.get(key) ?? [],
+        suspicious: this.isSuspiciousKey(key),
       }));
 
-    const missingKeysToApply = this.filterSelection(missingKeys, selectedMissingKeys);
+    const autoApplyCandidates = missingKeys.filter((record) =>
+      this.shouldAutoApplyMissingKey(record, selectedMissingKeys)
+    );
+    const missingKeysToApply = this.filterSelection(autoApplyCandidates, selectedMissingKeys);
     for (const record of missingKeysToApply) {
       const defaultValue = this.buildDefaultSourceValue(record.key);
       this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
@@ -454,18 +472,24 @@ export class Syncer {
     suspiciousKeys: SuspiciousKeyWarning[];
     validation: SyncValidationState;
     assumedKeys: string[];
+    suspiciousKeyPolicy: SuspiciousKeyPolicy;
   }): ActionableItem[] {
     const items: ActionableItem[] = [];
 
+    const suspiciousSeverity = input.suspiciousKeyPolicy === 'error' ? 'error' : 'warn';
+    const skipWrite = input.suspiciousKeyPolicy !== 'allow';
     input.suspiciousKeys.forEach((warning) => {
       items.push({
         kind: 'suspicious-key',
-        severity: 'warn',
+        severity: suspiciousSeverity,
         key: warning.key,
         filePath: warning.filePath,
-        message: `Suspicious key format detected: "${warning.key}" (contains spaces)`,
+        message: `Suspicious key format detected: "${warning.key}" (contains spaces)${
+          skipWrite ? ' — auto-insert skipped until the key is renamed.' : ''
+        }`,
         details: {
           reason: warning.reason,
+          policy: input.suspiciousKeyPolicy,
         },
       });
     });
@@ -1103,6 +1127,18 @@ export class Syncer {
 
   private matchesDynamicKeyGlobs(key: string): boolean {
     return this.dynamicKeyGlobMatchers.some((matcher) => matcher.test(key));
+  }
+
+  private shouldAutoApplyMissingKey(record: MissingKeyRecord, selectedMissingKeys?: Set<string>): boolean {
+    if (!record.suspicious) {
+      return true;
+    }
+
+    if (this.suspiciousKeyPolicy === 'allow') {
+      return true;
+    }
+
+    return selectedMissingKeys?.has(record.key) ?? false;
   }
 
   private compileGlob(pattern: string): RegExp {

@@ -75,3 +75,31 @@ Entries like `"marketplace.subtitle": "marketplace.subtitle"`.
 1.  **Enable `retainLocales: true`** in `i18n.config.json` immediately to stop data loss.
 2.  **Check `include` globs:** Ensure `src/**/*.{ts,tsx}` covers all needed files.
 3.  **Run `diagnose`:** Check if the scanner is actually seeing the files.
+4.  **Whitelist runtime namespaces with `dynamicKeyGlobs`:** Add the following block to `i18n.config.json` (adjust as needed) so `sync` treats heavily dynamic areas as runtime-only and stops flagging them as unused:
+
+        ```jsonc
+        {
+            "sync": {
+                // ...existing options
+                "dynamicKeyGlobs": [
+                    "relativeTime.*",
+                    "timeAgo.*",
+                    "navigation.**",
+                    "restaurant.**",
+                    "reviews.**",
+                    "management.activityHistory.*",
+                    "onboarding.payments.status.*"
+                ]
+            }
+        }
+        ```
+
+        After updating the config, rerun a non-writing preview to verify the noise drops before running `--write`:
+
+        ```bash
+        i18nsmith sync -c i18n.config.json --diff --json > reports/i18nsmith-sync-dryrun-globs.json
+        ```
+
+        Review the new report; missing/unused counts should shrink while dynamic key warnings stay limited to genuinely new patterns.
+5.  **Rely on nested locale preservation:** Locale files that keep nested objects (e.g., `{ "auth": { "login": "Login" } }`) are now auto-detected and rewritten without flattening, so `auth`, `navigation`, and similar namespaces are no longer pruned as “unused”. Leave `locales.format` at the default `"auto"` or force it to `"nested"` if you never want dotted keys.
+6.  **Let suspicious keys fail fast instead of writing `key=value`:** Keys containing spaces are treated as suspicious and skipped during `sync --write` by default (`sync.suspiciousKeyPolicy: "skip"`). Fix the code to use structured keys or temporarily set the policy to `"allow"` if you must keep the legacy behavior; use `"error"` in CI to block regressions.
