@@ -10,6 +10,8 @@ import {
   type TranslatorLoadOptions,
   TranslatorLoadError,
 } from '@i18nsmith/translation';
+import pLimit from 'p-limit';
+import pRetry from 'p-retry';
 
 interface TranslateCommandOptions {
   config?: string;
@@ -164,8 +166,12 @@ function printPlanSummary(plan: TranslationPlan) {
   }
 
   plan.locales.forEach((localePlan) => {
+    const reuseCount = localePlan.tasks.filter((task) => task.reusedValue).length;
+    const reuseMessage = reuseCount > 0 ? chalk.gray(` (${reuseCount} reusable)`) : '';
     console.log(
-      `  • ${localePlan.locale}: ${localePlan.tasks.length} key${localePlan.tasks.length === 1 ? '' : 's'} (${localePlan.totalCharacters} chars)`
+      `  • ${localePlan.locale}: ${localePlan.tasks.length} key${
+        localePlan.tasks.length === 1 ? '' : 's'
+      } (${localePlan.totalCharacters} chars)${reuseMessage}`
     );
   });
 }
@@ -240,22 +246,37 @@ async function executeTranslations(input: {
 }): Promise<{ results: TranslateLocaleResult[]; stats: Awaited<ReturnType<TranslationService['flush']>> }> {
   const translator = await loadTranslator(input.provider.loaderOptions);
   const results: TranslateLocaleResult[] = [];
+  const limit = pLimit(input.provider.loaderOptions.concurrency ?? 4);
 
   try {
-    const batchSize = input.provider.loaderOptions.batchSize ?? 25;
-    for (const localePlan of input.plan.locales) {
-      const updates = await translateLocalePlan(translator, localePlan, input.plan.sourceLocale, batchSize);
-      const writeSummary = await input.translationService.writeTranslations(localePlan.locale, updates, {
-        overwrite: input.overwrite,
-        skipEmpty: input.skipEmpty,
-      });
-      results.push({
-        ...writeSummary,
-        characters: localePlan.totalCharacters,
-      });
-    }
+    const translationPromises = input.plan.locales.map((localePlan) =>
+      limit(async () => {
+        const updates = await translateLocalePlan(
+          translator,
+          localePlan,
+          input.plan.sourceLocale,
+          input.provider.loaderOptions.batchSize ?? 25
+        );
+        const writeSummary = await input.translationService.writeTranslations(localePlan.locale, updates, {
+          overwrite: input.overwrite,
+          skipEmpty: input.skipEmpty,
+        });
+        results.push({
+          ...writeSummary,
+          characters: localePlan.totalCharacters,
+        });
+      })
+    );
+
+    await Promise.all(translationPromises);
 
     const stats = await input.translationService.flush();
+    // Sort results to match the plan's locale order for consistent output
+    results.sort((a, b) => {
+      const aIndex = input.plan.locales.findIndex((p) => p.locale === a.locale);
+      const bIndex = input.plan.locales.findIndex((p) => p.locale === b.locale);
+      return aIndex - bIndex;
+    });
     return { results, stats };
   } finally {
     await translator.dispose?.();
@@ -270,16 +291,43 @@ async function translateLocalePlan(
 ) {
   const updates: { key: string; value: string }[] = [];
   for (const chunk of chunkTasks(localePlan.tasks, batchSize)) {
-    const texts = chunk.map((task) => task.sourceValue);
-    const translated = await translator.translate(texts, sourceLocale, localePlan.locale);
-    if (!Array.isArray(translated) || translated.length !== chunk.length) {
-      throw new Error(
-        `Translator returned ${translated.length} result(s) for ${chunk.length} input(s) while translating ${localePlan.locale}.`
-      );
+    const textsToTranslate = chunk.map((task) => task.sourceValue);
+    const translationMap = new Map<string, string>();
+
+    // Pre-fill with reused values
+    chunk.forEach((task) => {
+      if (task.reusedValue) {
+        translationMap.set(task.key, task.reusedValue.value);
+      }
+    });
+
+    const tasksRequiringTranslation = chunk.filter((task) => !task.reusedValue);
+    if (tasksRequiringTranslation.length > 0) {
+      const sourceTexts = tasksRequiringTranslation.map((task) => task.sourceValue);
+      const translated = await pRetry(() => translator.translate(sourceTexts, sourceLocale, localePlan.locale), {
+        retries: 3,
+        onFailedAttempt: (error) => {
+          console.log(
+            chalk.yellow(
+              `Attempt ${error.attemptNumber} failed translating ${localePlan.locale}. There are ${error.retriesLeft} retries left.`
+            )
+          );
+        },
+      });
+
+      if (!Array.isArray(translated) || translated.length !== sourceTexts.length) {
+        throw new Error(
+          `Translator returned ${translated.length} result(s) for ${sourceTexts.length} input(s) while translating ${localePlan.locale}.`
+        );
+      }
+
+      tasksRequiringTranslation.forEach((task, index) => {
+        translationMap.set(task.key, translated[index] ?? '');
+      });
     }
 
-    translated.forEach((value, index) => {
-      updates.push({ key: chunk[index].key, value: value ?? '' });
+    chunk.forEach((task) => {
+      updates.push({ key: task.key, value: translationMap.get(task.key) ?? '' });
     });
   }
 
