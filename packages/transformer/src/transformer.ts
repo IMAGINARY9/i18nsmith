@@ -1,16 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import {
-  JsxAttribute,
-  JsxExpression,
-  JsxText,
   Node,
   Project,
   SourceFile,
 } from 'ts-morph';
 import {
   buildLocaleDiffs,
-  DetailedScanSummary,
   I18nConfig,
   KeyGenerationContext,
   KeyGenerator,
@@ -168,7 +164,7 @@ export class Transformer {
     return {
       filesScanned: summary.filesScanned,
       filesChanged: Array.from(filesChanged.keys()),
-      candidates: enriched.map(({ raw, ...rest }) => rest),
+      candidates: enriched.map(({ raw: _raw, ...rest }) => rest),
       localeStats,
       diffs,
       skippedFiles,

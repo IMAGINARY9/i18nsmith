@@ -1,5 +1,4 @@
 import type {
-  CandidateKind,
   KeyGenerator,
   LocaleDiffEntry,
   LocaleFileStats,

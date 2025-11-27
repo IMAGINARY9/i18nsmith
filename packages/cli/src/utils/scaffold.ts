@@ -21,8 +21,8 @@ async function writeFileSafely(filePath: string, content: string, force?: boolea
     if (!force) {
       throw new Error(`File already exists at ${filePath}. Re-run with --force to overwrite.`);
     }
-  } catch (error: any) {
-    if (error?.code !== 'ENOENT') {
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'code' in error && error.code !== 'ENOENT') {
       throw error;
     }
   }
