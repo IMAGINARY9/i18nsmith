@@ -15,17 +15,31 @@ import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
 import { generateValueFromKey } from './value-generator.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
+import type {
+  TranslationReference,
+  DynamicKeyReason,
+  DynamicKeyWarning,
+  ReferenceCacheFile,
+} from './reference-extractor.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
-export interface TranslationReference {
-  key: string;
-  filePath: string;
-  position: {
-    line: number;
-    column: number;
-  };
+// Re-export from reference-extractor
+export type { TranslationReference, DynamicKeyReason, DynamicKeyWarning } from './reference-extractor.js';
+
+// Internal types for reference caching
+interface FileFingerprint {
+  mtimeMs: number;
+  size: number;
 }
+
+interface ReferenceCacheEntry {
+  fingerprint: FileFingerprint;
+  references: TranslationReference[];
+  dynamicKeyWarnings: DynamicKeyWarning[];
+}
+
+const REFERENCE_CACHE_VERSION = 2;
 
 export interface MissingKeyRecord {
   key: string;
@@ -80,18 +94,6 @@ export interface EmptyValueViolation {
   reason: EmptyValueViolationReason;
 }
 
-export type DynamicKeyReason = 'template' | 'binary' | 'expression';
-
-export interface DynamicKeyWarning {
-  filePath: string;
-  position: {
-    line: number;
-    column: number;
-  };
-  expression: string;
-  reason: DynamicKeyReason;
-}
-
 export interface SuspiciousKeyWarning {
   key: string;
   filePath: string;
@@ -107,29 +109,10 @@ export interface SyncValidationState {
   emptyValuePolicy: EmptyValuePolicy;
 }
 
-interface FileFingerprint {
-  mtimeMs: number;
-  size: number;
-}
-
-interface ReferenceCacheEntry {
-  fingerprint: FileFingerprint;
-  references: TranslationReference[];
-  dynamicKeyWarnings: DynamicKeyWarning[];
-}
-
-interface ReferenceCacheFile {
-  version: number;
-  translationIdentifier: string;
-  files: Record<string, ReferenceCacheEntry>;
-}
-
 interface TargetReferenceFilter {
   absolute: Set<string>;
   relative: Set<string>;
 }
-
-const REFERENCE_CACHE_VERSION = 1;
 
 export interface SyncerOptions {
   workspaceRoot?: string;
