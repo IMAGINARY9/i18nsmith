@@ -10,6 +10,7 @@ import {
   I18nConfig,
   KeyGenerationContext,
   KeyGenerator,
+  KeyValidator,
   LocaleStore,
   Scanner,
   ScannerNodeCandidate,
@@ -38,6 +39,7 @@ export class Transformer {
   private readonly workspaceRoot: string;
   private readonly project: Project;
   private readonly keyGenerator: KeyGenerator;
+  private readonly keyValidator: KeyValidator;
   private readonly localeStore: LocaleStore;
   private readonly defaultWrite: boolean;
   private readonly sourceLocale: string;
@@ -50,6 +52,7 @@ export class Transformer {
   this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
   const namespace = options.keyNamespace ?? this.config.keyGeneration?.namespace ?? 'common';
   this.keyGenerator = options.keyGenerator ?? new KeyGenerator({ namespace, hashLength: this.config.keyGeneration?.shortHashLen ?? 6 });
+  this.keyValidator = new KeyValidator(this.config.sync?.suspiciousKeyPolicy ?? 'skip');
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
   const localeStoreOptions = {
     format: config.locales?.format ?? 'auto',
@@ -226,6 +229,22 @@ export class Transformer {
       const generated = this.keyGenerator.generate(candidate.text, this.buildContext(candidate));
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;
+
+      // Pre-flight validation: check if generated key is suspicious
+      const validation = this.keyValidator.validate(generated.key, candidate.text);
+      if (!validation.valid) {
+        status = 'skipped';
+        reason = validation.suggestion ?? `Suspicious key: ${validation.reason}`;
+        result.push({
+          ...candidate,
+          suggestedKey: generated.key,
+          hash: generated.hash,
+          status,
+          reason,
+          raw: candidate,
+        });
+        continue;
+      }
 
       if (this.seenHashes.has(generated.hash)) {
         status = 'duplicate';

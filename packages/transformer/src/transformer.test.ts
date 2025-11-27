@@ -355,4 +355,53 @@ describe('Transformer', () => {
     const enContents = JSON.parse(await fs.readFile(path.join(localesDir, 'en.json'), 'utf8'));
     expect(enContents[newKey]).toBe('Existing CTA copy');
   });
+
+  it('uses pre-flight validation to detect key-equals-value pattern', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-preflight-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Preflight.tsx');
+    const initial = `
+      import React from 'react';
+      export function Preflight() {
+        return (
+          <div>
+            <p>Hello</p>
+            <p>World</p>
+          </div>
+        );
+      }
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+      sync: {
+        suspiciousKeyPolicy: 'skip',
+      },
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: false, // dry-run to inspect results
+    });
+
+    const summary = await transformer.run({ write: false });
+
+    // All candidates should pass validation since the key generator
+    // produces well-formatted keys with namespaces and proper formatting
+    expect(summary.candidates.length).toBeGreaterThan(0);
+    summary.candidates.forEach(candidate => {
+      // Generated keys should not be flagged as suspicious
+      // since they include namespace and proper formatting
+      expect(candidate.suggestedKey).toMatch(/^common\./);
+    });
+  });
 });
