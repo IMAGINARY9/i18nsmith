@@ -1,8 +1,44 @@
 # Refactoring Plan: Quality Improvements & Edge Case Coverage
 
 **Date:** 2025-11-27  
-**Status:** Proposed  
+**Status:** In Progress  
 **Priority:** High  
+**Last Updated:** Implementation in progress
+
+## Progress Summary
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Part 1: Immediate Small Fixes | ✅ Complete | Suspicious key detection enhanced |
+| Part 2: Syncer Decomposition | ✅ Complete | KeyValidator, ReferenceExtractor, PlaceholderValidator extracted |
+| Part 3: Test Coverage | 🔄 Partial | Some tests added |
+| Part 4: Transformer Improvements | ✅ Complete | Pre-flight validation added |
+| Part 5: Error Handling | ⏸️ Pending | - |
+| Part 6: Documentation | ⏸️ Pending | - |
+
+### Commits Made
+
+1. `refactor: extract KeyValidator class and add audit command`
+   - Extracted `KeyValidator` from syncer (~100 lines)
+   - Added `SuspiciousKeyReason` typed enum
+   - Created 23 KeyValidator tests
+   - Added `audit` CLI command
+
+2. `feat(transformer): add pre-flight key validation`
+   - Added KeyValidator to transformer
+   - Validate generated keys before transformation
+   - Keys failing validation are marked as 'skipped'
+
+3. `refactor: extract ReferenceExtractor from syncer`
+   - Added `ReferenceExtractor` class (~360 lines)
+   - Support for caching, dynamic key detection
+   - Created 5 ReferenceExtractor tests
+
+4. `feat(core): add PlaceholderValidator class`
+   - Added `PlaceholderValidator` with compare/validate methods
+   - Created 14 PlaceholderValidator tests
+
+---
 
 ## Executive Summary
 
@@ -10,7 +46,7 @@ Following Round 3 testing, several quality issues persist with "key-as-value" pa
 
 ---
 
-## Part 1: Immediate Small Fixes (Do Now)
+## Part 1: Immediate Small Fixes ✅ COMPLETE
 
 These are small, localized changes that can be implemented immediately.
 
@@ -20,32 +56,17 @@ Extended `isSuspiciousKey()` to detect:
 - Keys with sentence articles/prepositions (`The`, `To`, `A`, `For`, etc.)
 - PascalCase sentence-like patterns (4+ capitalized words)
 
-### 1.2 Suspicious Key Reason Reporting
-**Current State:** `isSuspiciousKey()` returns boolean only.  
-**Improvement:** Return specific reason for better debugging.
+### 1.2 ✅ Suspicious Key Reason Reporting (Completed)
+Extracted to `KeyValidator` class with typed `SuspiciousKeyReason`:
+- `'contains-spaces'`
+- `'single-word-no-namespace'`
+- `'trailing-punctuation'`
+- `'pascal-case-sentence'`
+- `'sentence-article'`
+- `'key-equals-value'`
 
-```typescript
-// syncer.ts - Change from:
-private isSuspiciousKey(key: string): boolean { ... }
-
-// To:
-private analyzeSuspiciousKey(key: string): { suspicious: boolean; reason?: string } {
-  if (key.includes(' ')) {
-    return { suspicious: true, reason: 'contains-spaces' };
-  }
-  if (!key.includes('.') && /^[A-Za-z]+$/.test(key)) {
-    return { suspicious: true, reason: 'single-word-no-namespace' };
-  }
-  if (/[:?!]$/.test(key)) {
-    return { suspicious: true, reason: 'trailing-punctuation' };
-  }
-  // ... etc
-  return { suspicious: false };
-}
-```
-
-### 1.3 Locale Audit Command
-Add `i18nsmith audit` to scan locale files for malformed keys without touching code.
+### 1.3 ✅ Locale Audit Command (Completed)
+Added `i18nsmith audit` CLI command to scan locale files:
 
 ```bash
 i18nsmith audit --locale en
@@ -58,21 +79,14 @@ i18nsmith audit --locale en
 
 ---
 
-## Part 2: Syncer Decomposition (Medium Effort)
+## Part 2: Syncer Decomposition ✅ COMPLETE
 
-The `syncer.ts` file at 1206 lines is too large and handles multiple concerns.
+The `syncer.ts` file at 1206 lines was too large and handled multiple concerns.
 
-### 2.1 Extract Key Validation Module
+### 2.1 ✅ Extract Key Validation Module (Completed)
 **File:** `packages/core/src/key-validator.ts`
 
 ```typescript
-export interface KeyValidationResult {
-  valid: boolean;
-  suspicious: boolean;
-  reason?: SuspiciousKeyReason;
-  suggestions?: string[];
-}
-
 export type SuspiciousKeyReason =
   | 'contains-spaces'
   | 'single-word-no-namespace'
@@ -84,21 +98,31 @@ export type SuspiciousKeyReason =
 export class KeyValidator {
   constructor(private readonly policy: SuspiciousKeyPolicy) {}
 
+  public analyze(key: string): KeyAnalysisResult { ... }
+  public analyzeWithValue(key: string, value?: string): KeyValueAnalysisResult { ... }
   public validate(key: string, value?: string): KeyValidationResult { ... }
-  public suggestFix(key: string): string | undefined { ... }
+  public suggestFix(key: string, reason?: SuspiciousKeyReason): string | undefined { ... }
   public isValidKeyFormat(key: string): boolean { ... }
+  public shouldSkip(key: string): boolean { ... }
 }
 ```
 
-### 2.2 Extract Reference Extractor
+### 2.2 ✅ Extract Reference Extractor (Completed)
 **File:** `packages/core/src/reference-extractor.ts`
 
-Move all AST-based reference extraction from `syncer.ts`:
-- `extractReferencesFromFile()`
-- `extractKeyFromCall()`
-- Reference caching logic
+Moved all AST-based reference extraction from `syncer.ts`:
+- `extractFromFile()` - Extract references from single file
+- `extractKeyFromCall()` - Analyze call expressions
+- Reference caching logic with fingerprinting
+- Dynamic key warning generation
 
-### 2.3 Extract Placeholder Validator
+### 2.3 ✅ Extract Placeholder Validator (Completed)
+**File:** `packages/core/src/placeholders.ts`
+
+Added `PlaceholderValidator` class to existing module:
+- `extract(value)` - Extract placeholders from value
+- `compare(source, target)` - Compare placeholders between values
+- `validate(source, target)` - Check if placeholders match
 **File:** `packages/core/src/placeholder-validator.ts`
 
 Move placeholder validation logic:
