@@ -3,6 +3,7 @@ export * from './scanner.js';
 export * from './key-generator.js';
 export * from './key-validator.js';
 export * from './locale-store.js';
+export * from './locale-validator.js';
 export * from './syncer.js';
 export * from './reference-extractor.js';
 export * from './placeholders.js';

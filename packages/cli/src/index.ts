@@ -12,6 +12,7 @@ import {
   KeyValidator,
   SUSPICIOUS_KEY_REASON_DESCRIPTIONS,
   LocaleStore,
+  LocaleValidator,
   SyncSummary,
   Syncer,
   KeyRenamer,
@@ -78,6 +79,9 @@ interface AuditCommandOptions {
   json?: boolean;
   report?: string;
   strict?: boolean;
+  duplicates?: boolean;
+  inconsistent?: boolean;
+  orphaned?: boolean;
 }
 
 const program = new Command();
@@ -166,19 +170,31 @@ program
   .option('--json', 'Print raw JSON results', false)
   .option('--report <path>', 'Write JSON report to a file')
   .option('--strict', 'Exit with error code if any issues found', false)
+  .option('--duplicates', 'Check for duplicate values (consolidation opportunities)', false)
+  .option('--inconsistent', 'Check for inconsistent key naming patterns', false)
+  .option('--orphaned', 'Check for orphaned namespaces with few keys', false)
   .action(async (options: AuditCommandOptions) => {
     console.log(chalk.blue('Auditing locale files...'));
     try {
       const config = await loadConfig(options.config);
       const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
       const localeStore = new LocaleStore(localesDir);
-      const validator = new KeyValidator(config.sync?.suspiciousKeyPolicy ?? 'skip');
+      const keyValidator = new KeyValidator(config.sync?.suspiciousKeyPolicy ?? 'skip');
+      const localeValidator = new LocaleValidator({
+        delimiter: config.locales?.delimiter ?? '.',
+      });
 
       // Determine which locales to audit
       let localesToAudit = options.locale ?? [];
       if (localesToAudit.length === 0) {
         localesToAudit = [config.sourceLanguage ?? 'en', ...(config.targetLanguages ?? [])];
       }
+
+      // Enable all quality checks if none specified
+      const runQualityChecks = options.duplicates || options.inconsistent || options.orphaned;
+      const checkDuplicates = options.duplicates || !runQualityChecks;
+      const checkInconsistent = options.inconsistent;
+      const checkOrphaned = options.orphaned;
 
       interface AuditIssue {
         key: string;
@@ -188,22 +204,42 @@ program
         suggestion?: string;
       }
 
+      interface QualityIssue {
+        type: 'duplicate-value' | 'inconsistent-key' | 'orphaned-namespace';
+        description: string;
+        keys?: string[];
+        suggestion?: string;
+      }
+
       interface LocaleAuditResult {
         locale: string;
         totalKeys: number;
         issues: AuditIssue[];
+        qualityIssues: QualityIssue[];
       }
 
       const results: LocaleAuditResult[] = [];
+      const allKeys = new Set<string>();
 
+      // First pass: collect all keys
+      for (const locale of localesToAudit) {
+        const data = await localeStore.get(locale);
+        for (const key of Object.keys(data)) {
+          allKeys.add(key);
+        }
+      }
+
+      // Second pass: run audits
       for (const locale of localesToAudit) {
         const data = await localeStore.get(locale);
         const keys = Object.keys(data);
         const issues: AuditIssue[] = [];
+        const qualityIssues: QualityIssue[] = [];
 
+        // Suspicious key detection
         for (const key of keys) {
           const value = data[key];
-          const analysis = validator.analyzeWithValue(key, value);
+          const analysis = keyValidator.analyzeWithValue(key, value);
 
           if (analysis.suspicious && analysis.reason) {
             issues.push({
@@ -211,7 +247,46 @@ program
               value: value.length > 50 ? `${value.slice(0, 47)}...` : value,
               reason: analysis.reason,
               description: SUSPICIOUS_KEY_REASON_DESCRIPTIONS[analysis.reason] ?? 'Unknown issue',
-              suggestion: validator.suggestFix(key, analysis.reason),
+              suggestion: keyValidator.suggestFix(key, analysis.reason),
+            });
+          }
+        }
+
+        // Quality checks
+        if (checkDuplicates) {
+          const duplicates = localeValidator.detectDuplicateValues(locale, data);
+          for (const dup of duplicates) {
+            qualityIssues.push({
+              type: 'duplicate-value',
+              description: `Value "${dup.value.slice(0, 40)}${dup.value.length > 40 ? '...' : ''}" used by ${dup.keys.length} keys`,
+              keys: dup.keys,
+              suggestion: 'Consider consolidating to a single key',
+            });
+          }
+        }
+
+        if (checkInconsistent && locale === localesToAudit[0]) {
+          // Only check inconsistent keys once (using all keys)
+          const inconsistent = localeValidator.detectInconsistentKeys(Array.from(allKeys));
+          for (const inc of inconsistent) {
+            qualityIssues.push({
+              type: 'inconsistent-key',
+              description: inc.pattern,
+              keys: inc.variants,
+              suggestion: inc.suggestion,
+            });
+          }
+        }
+
+        if (checkOrphaned && locale === localesToAudit[0]) {
+          // Only check orphaned namespaces once (using all keys)
+          const orphaned = localeValidator.detectOrphanedNamespaces(Array.from(allKeys));
+          for (const orph of orphaned) {
+            qualityIssues.push({
+              type: 'orphaned-namespace',
+              description: `Namespace "${orph.namespace}" has only ${orph.keyCount} key(s)`,
+              keys: orph.keys,
+              suggestion: 'Consider merging into a related namespace',
             });
           }
         }
@@ -220,42 +295,68 @@ program
           locale,
           totalKeys: keys.length,
           issues,
+          qualityIssues,
         });
       }
 
       const totalIssues = results.reduce((sum, r) => sum + r.issues.length, 0);
+      const totalQualityIssues = results.reduce((sum, r) => sum + r.qualityIssues.length, 0);
 
       if (options.report) {
         const outputPath = path.resolve(process.cwd(), options.report);
         await fs.mkdir(path.dirname(outputPath), { recursive: true });
-        await fs.writeFile(outputPath, JSON.stringify({ results, totalIssues }, null, 2));
+        await fs.writeFile(outputPath, JSON.stringify({ results, totalIssues, totalQualityIssues }, null, 2));
         console.log(chalk.green(`Audit report written to ${outputPath}`));
       }
 
       if (options.json) {
-        console.log(JSON.stringify({ results, totalIssues }, null, 2));
+        console.log(JSON.stringify({ results, totalIssues, totalQualityIssues }, null, 2));
       } else {
         // Pretty print results
         for (const result of results) {
-          if (result.issues.length === 0) {
+          const hasIssues = result.issues.length > 0 || result.qualityIssues.length > 0;
+          if (!hasIssues) {
             console.log(chalk.green(`✓ ${result.locale}.json: ${result.totalKeys} keys, no issues`));
           } else {
-            console.log(chalk.yellow(`⚠ ${result.locale}.json: ${result.totalKeys} keys, ${result.issues.length} issues`));
-            for (const issue of result.issues) {
-              console.log(chalk.dim(`  - "${issue.key}"`));
-              console.log(chalk.dim(`    ${issue.description}`));
-              if (issue.suggestion) {
-                console.log(chalk.dim(`    Suggestion: ${issue.suggestion}`));
+            console.log(chalk.yellow(`⚠ ${result.locale}.json: ${result.totalKeys} keys`));
+
+            // Suspicious keys
+            if (result.issues.length > 0) {
+              console.log(chalk.yellow(`  Suspicious keys: ${result.issues.length}`));
+              for (const issue of result.issues) {
+                console.log(chalk.dim(`    - "${issue.key}"`));
+                console.log(chalk.dim(`      ${issue.description}`));
+                if (issue.suggestion) {
+                  console.log(chalk.dim(`      Suggestion: ${issue.suggestion}`));
+                }
+              }
+            }
+
+            // Quality issues
+            if (result.qualityIssues.length > 0) {
+              console.log(chalk.cyan(`  Quality checks: ${result.qualityIssues.length}`));
+              for (const issue of result.qualityIssues) {
+                const typeLabel = issue.type === 'duplicate-value' ? '📋' :
+                                  issue.type === 'inconsistent-key' ? '🔀' : '📦';
+                console.log(chalk.dim(`    ${typeLabel} ${issue.description}`));
+                if (issue.suggestion) {
+                  console.log(chalk.dim(`       ${issue.suggestion}`));
+                }
               }
             }
           }
         }
 
         console.log();
-        if (totalIssues === 0) {
+        if (totalIssues === 0 && totalQualityIssues === 0) {
           console.log(chalk.green('✓ No issues found in locale files'));
         } else {
-          console.log(chalk.yellow(`Found ${totalIssues} issue(s) across ${results.filter(r => r.issues.length > 0).length} locale(s)`));
+          if (totalIssues > 0) {
+            console.log(chalk.yellow(`Found ${totalIssues} suspicious key(s)`));
+          }
+          if (totalQualityIssues > 0) {
+            console.log(chalk.cyan(`Found ${totalQualityIssues} quality issue(s)`));
+          }
         }
       }
 
