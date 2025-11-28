@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/translation" },
+    { "path": "packages/transformer" },
+    { "path": "packages/translator-mock" },
+    { "path": "packages/cli" }
+  ]
+}
