@@ -14,7 +14,6 @@ import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
-import { generateValueFromKey } from './value-generator.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
 import type {
   TranslationReference,
@@ -43,6 +42,15 @@ import {
   type SyncValidationState,
   buildActionableItems,
 } from './syncer/sync-reporter.js';
+import {
+  cloneLocaleData,
+  applyProjectedValue,
+  applyProjectedRemoval,
+  buildLocaleKeySets,
+  filterSelection,
+  buildSelectionSet,
+  buildDefaultSourceValue,
+} from './syncer/sync-utils.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -239,8 +247,8 @@ export class Syncer {
       assumedKeys: runtime.displayAssumedKeys,
     });
 
-    const projectedLocaleData = this.cloneLocaleData(localeData);
-    const localeKeySets = this.buildLocaleKeySets(localeData);
+    const projectedLocaleData = cloneLocaleData(localeData);
+    const localeKeySets = buildLocaleKeySets(localeData);
 
     const { missingKeys, missingKeysToApply } = this.processMissingKeys(
       scopedKeySet,
@@ -449,14 +457,14 @@ export class Syncer {
     const autoApplyCandidates = missingKeys.filter((record) =>
       this.shouldAutoApplyMissingKey(record, selectedMissingKeys)
     );
-    const missingKeysToApply = this.filterSelection(autoApplyCandidates, selectedMissingKeys);
+    const missingKeysToApply = filterSelection(autoApplyCandidates, selectedMissingKeys);
     for (const record of missingKeysToApply) {
-      const defaultValue = this.buildDefaultSourceValue(record.key);
-      this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
+      const defaultValue = buildDefaultSourceValue(record.key);
+      applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         const seedValue = this.config.sync?.seedValue ?? '';
         for (const locale of this.targetLocales) {
-          this.applyProjectedValue(projectedLocaleData, locale, record.key, seedValue);
+          applyProjectedValue(projectedLocaleData, locale, record.key, seedValue);
         }
       }
     }
@@ -502,7 +510,7 @@ export class Syncer {
 
     for (const record of unusedKeysToApply) {
       record.locales.forEach((locale) => {
-        this.applyProjectedRemoval(projectedLocaleData, locale, record.key);
+        applyProjectedRemoval(projectedLocaleData, locale, record.key);
       });
     }
 
@@ -701,17 +709,9 @@ export class Syncer {
     return result;
   }
 
-  private buildLocaleKeySets(localeData: Map<string, Record<string, string>>): Map<string, Set<string>> {
-    const map = new Map<string, Set<string>>();
-    for (const [locale, data] of localeData.entries()) {
-      map.set(locale, new Set(Object.keys(data)));
-    }
-    return map;
-  }
-
   private async applyMissingKeys(missingKeys: MissingKeyRecord[]) {
     for (const record of missingKeys) {
-      const defaultValue = this.buildDefaultSourceValue(record.key);
+      const defaultValue = buildDefaultSourceValue(record.key);
       await this.localeStore.upsert(this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         const seedValue = this.config.sync?.seedValue ?? '';
@@ -869,43 +869,6 @@ export class Syncer {
       }
     }
     return next;
-  }
-
-  private cloneLocaleData(localeData: Map<string, Record<string, string>>): Map<string, Record<string, string>> {
-    const projected = new Map<string, Record<string, string>>();
-    for (const [locale, data] of localeData.entries()) {
-      projected.set(locale, { ...data });
-    }
-    return projected;
-  }
-
-  private ensureProjectedLocale(
-    projected: Map<string, Record<string, string>>,
-    locale: string
-  ): Record<string, string> {
-    if (!projected.has(locale)) {
-      projected.set(locale, {});
-    }
-    return projected.get(locale)!;
-  }
-
-  private applyProjectedValue(
-    projected: Map<string, Record<string, string>>,
-    locale: string,
-    key: string,
-    value: string
-  ) {
-    const data = this.ensureProjectedLocale(projected, locale);
-    data[key] = value;
-  }
-
-  private applyProjectedRemoval(projected: Map<string, Record<string, string>>, locale: string, key: string) {
-    const data = this.ensureProjectedLocale(projected, locale);
-    delete data[key];
-  }
-
-  private buildDefaultSourceValue(key: string): string {
-    return generateValueFromKey(key) || key;
   }
 
   private collectPatternAssumedKeys(localeData: Map<string, Record<string, string>>): Set<string> {
