@@ -230,13 +230,16 @@ export class Transformer {
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;
 
+      // Extract only serializable fields from ScannerNodeCandidate (exclude node, sourceFile)
+      const { node: _node, sourceFile: _sourceFile, ...serializableCandidate } = candidate;
+
       // Pre-flight validation: check if generated key is suspicious
       const validation = this.keyValidator.validate(generated.key, candidate.text);
       if (!validation.valid) {
         status = 'skipped';
         reason = validation.suggestion ?? `Suspicious key: ${validation.reason}`;
         result.push({
-          ...candidate,
+          ...serializableCandidate,
           suggestedKey: generated.key,
           hash: generated.hash,
           status,
@@ -258,7 +261,7 @@ export class Transformer {
       }
 
       result.push({
-        ...candidate,
+        ...serializableCandidate,
         suggestedKey: generated.key,
         hash: generated.hash,
         status,

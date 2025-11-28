@@ -33,6 +33,7 @@ import { registerInit } from './commands/init.js';
 import { registerScaffoldAdapter } from './commands/scaffold-adapter.js';
 import { registerTranslate } from './commands/translate.js';
 import { registerPreflight } from './commands/preflight.js';
+import { registerDebugPatterns } from './commands/debug-patterns.js';
 import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils.js';
 import { getDiagnosisExitSignal } from './utils/diagnostics-exit.js';
 
@@ -146,6 +147,7 @@ registerInit(program);
 registerScaffoldAdapter(program);
 registerTranslate(program);
 registerPreflight(program);
+registerDebugPatterns(program);
 
 program
   .command('diagnose')
@@ -787,7 +789,12 @@ program
         console.log(chalk.yellow('Run again with --write to apply these changes.'));
       }
     } catch (error) {
-      console.error(chalk.red('Transform failed:'), (error as Error).message);
+      const errorMessage = (error as Error).message;
+      if (options.json) {
+        console.log(JSON.stringify({ ok: false, error: { message: errorMessage } }, null, 2));
+      } else {
+        console.error(chalk.red('Transform failed:'), errorMessage);
+      }
       process.exitCode = 1;
     }
   });
