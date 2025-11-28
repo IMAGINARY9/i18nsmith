@@ -73,7 +73,11 @@ export class TranslationService {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
     this.localeStore =
-      options.localeStore ?? new LocaleStore(localesDir, { format: config.locales?.format, delimiter: config.locales?.delimiter });
+      options.localeStore ?? new LocaleStore(localesDir, {
+        format: config.locales?.format,
+        delimiter: config.locales?.delimiter,
+        sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+      });
     this.sourceLocale = config.sourceLanguage ?? 'en';
     const configuredTargets = Array.from(new Set((config.targetLanguages ?? []).filter(Boolean)));
     this.targetLocales = configuredTargets.filter((locale) => locale !== this.sourceLocale);

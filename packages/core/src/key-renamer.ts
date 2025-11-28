@@ -76,6 +76,7 @@ export class KeyRenamer {
     const localeStoreOptions = {
       format: config.locales?.format ?? 'auto',
       delimiter: config.locales?.delimiter ?? '.',
+      sortKeys: config.locales?.sortKeys ?? 'alphabetical',
     };
     this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
     this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';

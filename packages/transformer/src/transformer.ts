@@ -58,6 +58,7 @@ export class Transformer {
   const localeStoreOptions = {
     format: config.locales?.format ?? 'auto',
     delimiter: config.locales?.delimiter ?? '.',
+    sortKeys: config.locales?.sortKeys ?? 'alphabetical',
   };
   this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
   this.defaultWrite = options.write ?? false;

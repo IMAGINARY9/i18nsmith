@@ -21,17 +21,27 @@ export interface LocaleFileStats {
 export interface LocaleStoreOptions {
   format?: 'flat' | 'nested' | 'auto';
   delimiter?: string;
+  /**
+   * Key sorting behavior when writing locale files.
+   * - 'alphabetical': Sort keys alphabetically (default, deterministic output)
+   * - 'preserve': Preserve existing key order, append new keys at end
+   * - 'insertion': Order keys by insertion order (new keys appended)
+   */
+  sortKeys?: 'alphabetical' | 'preserve' | 'insertion';
 }
 
 const DEFAULT_LOCALE_STORE_OPTIONS = {
   format: 'auto' as const,
   delimiter: '.',
+  sortKeys: 'alphabetical' as const,
 };
 
 interface LocaleCacheEntry {
   locale: string;
   path: string;
   data: Record<string, string>;
+  /** Original key order from when file was loaded (for preserve mode) */
+  originalKeyOrder: string[];
   dirty: boolean;
   added: Set<string>;
   updated: Set<string>;
@@ -44,10 +54,12 @@ export class LocaleStore {
 
   private readonly formatMode: 'flat' | 'nested' | 'auto';
   private readonly delimiter: string;
+  private readonly sortKeysMode: 'alphabetical' | 'preserve' | 'insertion';
 
   constructor(private readonly localesDir: string, options: LocaleStoreOptions = {}) {
     this.formatMode = options.format ?? DEFAULT_LOCALE_STORE_OPTIONS.format;
     this.delimiter = options.delimiter ?? DEFAULT_LOCALE_STORE_OPTIONS.delimiter;
+    this.sortKeysMode = options.sortKeys ?? DEFAULT_LOCALE_STORE_OPTIONS.sortKeys;
   }
 
   public getFilePath(locale: string): string {
@@ -138,7 +150,7 @@ export class LocaleStore {
       }
 
       await fs.mkdir(path.dirname(entry.path), { recursive: true });
-      const sortedData = this.sortKeys(entry.data);
+      const sortedData = this.sortKeysForEntry(entry.data, entry);
       const format = this.resolvePersistenceFormat(entry);
       const structured =
         format === 'flat'
@@ -193,7 +205,7 @@ export class LocaleStore {
     const summaries: LocaleFileStats[] = [];
 
     for (const entry of this.cache.values()) {
-      const sortedData = this.sortKeys(entry.data);
+      const sortedData = this.sortKeysForEntry(entry.data, entry);
       const structured =
         targetFormat === 'flat'
           ? sortedData
@@ -239,12 +251,16 @@ export class LocaleStore {
     return Array.from(this.cache.keys());
   }
 
-  private async loadLocaleData(filePath: string): Promise<{ data: Record<string, string>; format: LocalePersistenceFormat }> {
+  private async loadLocaleData(filePath: string): Promise<{
+    data: Record<string, string>;
+    format: LocalePersistenceFormat;
+    originalKeyOrder: string[];
+  }> {
     try {
       const contents = await fs.readFile(filePath, 'utf8');
       const parsed = JSON.parse(contents);
       if (!parsed || typeof parsed !== 'object') {
-        return { data: {}, format: this.resolveFormatPreference('flat') };
+        return { data: {}, format: this.resolveFormatPreference('flat'), originalKeyOrder: [] };
       }
 
       const detected = detectLocaleFormat(parsed);
@@ -253,14 +269,18 @@ export class LocaleStore {
           ? flattenLocaleTree(parsed, this.delimiter)
           : this.normalizeFlatRecord(parsed);
 
+      // Capture original key order for 'preserve' mode
+      const originalKeyOrder = Object.keys(data);
+
       return {
         data,
         format: this.resolveFormatPreference(detected),
+        originalKeyOrder,
       };
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code === 'ENOENT') {
-        return { data: {}, format: this.resolveFormatPreference('flat') };
+        return { data: {}, format: this.resolveFormatPreference('flat'), originalKeyOrder: [] };
       }
       throw error;
     }
@@ -321,12 +341,13 @@ export class LocaleStore {
     }
 
     const filePath = this.getFilePath(locale);
-    const { data, format } = await this.loadLocaleData(filePath);
+    const { data, format, originalKeyOrder } = await this.loadLocaleData(filePath);
 
     const entry: LocaleCacheEntry = {
       locale,
       path: filePath,
       data,
+      originalKeyOrder,
       dirty: false,
       added: new Set(),
       updated: new Set(),
@@ -338,13 +359,45 @@ export class LocaleStore {
     return entry;
   }
 
-  private sortKeys(data: Record<string, string>): Record<string, string> {
-    return Object.keys(data)
-      .sort((a, b) => a.localeCompare(b))
-      .reduce<Record<string, string>>((acc, key) => {
-        acc[key] = data[key];
-        return acc;
-      }, {});
+  /**
+   * Sort keys based on the configured sortKeys mode.
+   * - 'alphabetical': Sort keys alphabetically (deterministic)
+   * - 'preserve': Keep original order, append new keys at end
+   * - 'insertion': Use current object order (new keys appended)
+   */
+  private sortKeysForEntry(
+    data: Record<string, string>,
+    entry: LocaleCacheEntry
+  ): Record<string, string> {
+    const keys = Object.keys(data);
+
+    switch (this.sortKeysMode) {
+      case 'preserve': {
+        // Use original order for existing keys, append new keys at the end
+        const originalSet = new Set(entry.originalKeyOrder);
+        const orderedKeys = entry.originalKeyOrder.filter((k) => k in data);
+        const newKeys = keys.filter((k) => !originalSet.has(k)).sort((a, b) => a.localeCompare(b));
+        const finalOrder = [...orderedKeys, ...newKeys];
+        return finalOrder.reduce<Record<string, string>>((acc, key) => {
+          acc[key] = data[key];
+          return acc;
+        }, {});
+      }
+
+      case 'insertion':
+        // Just return as-is (object insertion order)
+        return { ...data };
+
+      case 'alphabetical':
+      default:
+        // Sort alphabetically
+        return keys
+          .sort((a, b) => a.localeCompare(b))
+          .reduce<Record<string, string>>((acc, key) => {
+            acc[key] = data[key];
+            return acc;
+          }, {});
+    }
   }
 
   private createTempPath(filePath: string): string {

@@ -193,7 +193,9 @@ program
     try {
       const config = await loadConfig(options.config);
       const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
-      const localeStore = new LocaleStore(localesDir);
+      const localeStore = new LocaleStore(localesDir, {
+        sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+      });
       const keyValidator = new KeyValidator(config.sync?.suspiciousKeyPolicy ?? 'skip');
       const localeValidator = new LocaleValidator({
         delimiter: config.locales?.delimiter ?? '.',
@@ -1225,7 +1227,9 @@ async function handleAutoRenameSuspicious(
 
   // Get existing keys from locale data to check for conflicts
   const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
-  const localeStore = new LocaleStore(localesDir);
+  const localeStore = new LocaleStore(localesDir, {
+    sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+  });
   const sourceLocale = config.sourceLanguage ?? 'en';
   const sourceData = await localeStore.get(sourceLocale);
   const existingKeys = new Set(Object.keys(sourceData));
@@ -1300,7 +1304,10 @@ async function handleRewriteShape(
   console.log(chalk.blue(`\n🔄 Rewriting locale files to ${targetFormat} format...`));
 
   const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
-  const localeStore = new LocaleStore(localesDir, { delimiter });
+  const localeStore = new LocaleStore(localesDir, {
+    delimiter,
+    sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+  });
 
   // Load all configured locales
   const sourceLocale = config.sourceLanguage ?? 'en';
