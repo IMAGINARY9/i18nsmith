@@ -176,6 +176,7 @@ export class Syncer {
     const localeStoreOptions = {
       format: config.locales?.format ?? 'auto',
       delimiter: config.locales?.delimiter ?? '.',
+      sortKeys: config.locales?.sortKeys ?? 'alphabetical',
     };
     this.localeStore = options.localeStore ?? new LocaleStore(localesDir, localeStoreOptions);
     const syncOptions = this.config.sync ?? {};

@@ -39,10 +39,16 @@ const normalizeLocaleDelimiter = (value: unknown): string => {
 const isSuspiciousKeyPolicy = (value: unknown): value is SuspiciousKeyPolicy =>
   value === 'allow' || value === 'skip' || value === 'error';
 
+type LocaleSortOrder = 'alphabetical' | 'preserve' | 'insertion';
+
 type RawLocalesConfig = {
   format?: unknown;
   delimiter?: unknown;
+  sortKeys?: unknown;
 };
+
+const isLocaleSortOrder = (value: unknown): value is LocaleSortOrder =>
+  value === 'alphabetical' || value === 'preserve' || value === 'insertion';
 
 const isPlaceholderFormat = (value: string): value is PlaceholderFormat =>
   (DEFAULT_PLACEHOLDER_FORMATS as string[]).includes(value);
@@ -279,6 +285,7 @@ function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
     : 6;
   const localeFormat = normalizeLocaleFormat(localesConfig?.format);
   const localeDelimiter = normalizeLocaleDelimiter(localesConfig?.delimiter);
+  const localeSortKeys = isLocaleSortOrder(localesConfig?.sortKeys) ? localesConfig.sortKeys : 'alphabetical';
 
   const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
 
@@ -298,6 +305,7 @@ function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
     locales: {
       format: localeFormat,
       delimiter: localeDelimiter,
+      sortKeys: localeSortKeys,
     },
     keyGeneration: {
       namespace: keyNamespace,
@@ -526,6 +534,13 @@ export interface DiagnosticsAdapterHintConfig {
 export interface LocalesConfig {
   format?: LocaleFormat;
   delimiter?: string;
+  /**
+   * Key sorting behavior when writing locale files.
+   * - 'alphabetical': Sort keys alphabetically (default, deterministic output)
+   * - 'preserve': Preserve existing key order, append new keys at end
+   * - 'insertion': Order keys by insertion order (new keys appended)
+   */
+  sortKeys?: 'alphabetical' | 'preserve' | 'insertion';
 }
 
 export type PlaceholderFormat = 'doubleCurly' | 'percentCurly' | 'percentSymbol';

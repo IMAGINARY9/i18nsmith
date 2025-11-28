@@ -215,4 +215,66 @@ describe('LocaleStore', () => {
       'auth.logout': 'Logout',
     });
   });
+
+  describe('sortKeys option', () => {
+    it('uses alphabetical ordering by default', async () => {
+      const file = path.join(tempDir, 'en.json');
+      await fs.writeFile(
+        file,
+        JSON.stringify({ zebra: 'Z', apple: 'A', mango: 'M' }, null, 2)
+      );
+
+      const store = new LocaleStore(tempDir);
+      await store.upsert('en', 'banana', 'B');
+      await store.flush();
+
+      const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+      expect(Object.keys(contents)).toEqual(['apple', 'banana', 'mango', 'zebra']);
+    });
+
+    it('preserves original key order with sortKeys: preserve', async () => {
+      const file = path.join(tempDir, 'en.json');
+      await fs.writeFile(
+        file,
+        JSON.stringify({ zebra: 'Z', apple: 'A', mango: 'M' }, null, 2)
+      );
+
+      const store = new LocaleStore(tempDir, { sortKeys: 'preserve' });
+      await store.upsert('en', 'banana', 'B');
+      await store.flush();
+
+      const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+      // Original order preserved, new key appended
+      expect(Object.keys(contents)).toEqual(['zebra', 'apple', 'mango', 'banana']);
+    });
+
+    it('uses insertion order with sortKeys: insertion', async () => {
+      const store = new LocaleStore(tempDir, { sortKeys: 'insertion' });
+      await store.upsert('en', 'zebra', 'Z');
+      await store.upsert('en', 'apple', 'A');
+      await store.upsert('en', 'mango', 'M');
+      await store.flush();
+
+      const file = path.join(tempDir, 'en.json');
+      const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+      expect(Object.keys(contents)).toEqual(['zebra', 'apple', 'mango']);
+    });
+
+    it('sorts new keys alphabetically when preserving original order', async () => {
+      const file = path.join(tempDir, 'en.json');
+      await fs.writeFile(
+        file,
+        JSON.stringify({ existing: 'value' }, null, 2)
+      );
+
+      const store = new LocaleStore(tempDir, { sortKeys: 'preserve' });
+      await store.upsert('en', 'zebra', 'Z');
+      await store.upsert('en', 'apple', 'A');
+      await store.flush();
+
+      const contents = JSON.parse(await fs.readFile(file, 'utf8'));
+      // Original order preserved, new keys sorted alphabetically and appended
+      expect(Object.keys(contents)).toEqual(['existing', 'apple', 'zebra']);
+    });
+  });
 });
