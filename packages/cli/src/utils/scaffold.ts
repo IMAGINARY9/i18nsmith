@@ -5,6 +5,13 @@ interface ScaffoldOptions {
   localesDir?: string;
   workspaceRoot?: string;
   force?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ScaffoldResult {
+  path: string;
+  content: string;
+  written: boolean;
 }
 
 function resolvePath(targetPath: string, workspaceRoot: string) {
@@ -15,7 +22,7 @@ async function ensureDir(dirPath: string) {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-async function writeFileSafely(filePath: string, content: string, force?: boolean) {
+async function writeFileSafely(filePath: string, content: string, force?: boolean, dryRun?: boolean): Promise<boolean> {
   try {
     await fs.stat(filePath);
     if (!force) {
@@ -27,7 +34,12 @@ async function writeFileSafely(filePath: string, content: string, force?: boolea
     }
   }
 
+  if (dryRun) {
+    return false;
+  }
+
   await fs.writeFile(filePath, content, 'utf8');
+  return true;
 }
 
 function relativeImportPath(fromDir: string, targetPath: string, dropExtension = true) {
@@ -47,12 +59,15 @@ export async function scaffoldTranslationContext(
   filePath: string,
   sourceLanguage: string,
   options: ScaffoldOptions = {}
-) {
+): Promise<ScaffoldResult> {
   const workspaceRoot = options.workspaceRoot ?? process.cwd();
   const localesDir = options.localesDir ?? 'locales';
   const absolutePath = resolvePath(filePath, workspaceRoot);
   const dir = path.dirname(absolutePath);
-  await ensureDir(dir);
+  
+  if (!options.dryRun) {
+    await ensureDir(dir);
+  }
 
   const localeFile = path.join(workspaceRoot, localesDir, `${sourceLanguage}.json`);
   let localeImportPath = path.relative(dir, localeFile).replace(/\\/g, '/');
@@ -100,8 +115,8 @@ export function useTranslation() {
 }
 `;
 
-  await writeFileSafely(absolutePath, content, options.force);
-  return absolutePath;
+  const written = await writeFileSafely(absolutePath, content, options.force, options.dryRun);
+  return { path: absolutePath, content, written };
 }
 
 export async function scaffoldI18next(
@@ -110,13 +125,15 @@ export async function scaffoldI18next(
   sourceLanguage: string,
   localesDir = 'locales',
   options: ScaffoldOptions = {}
-) {
+): Promise<{ i18nPath: string; providerPath: string; i18nResult: ScaffoldResult; providerResult: ScaffoldResult }> {
   const workspaceRoot = options.workspaceRoot ?? process.cwd();
   const absoluteI18nPath = resolvePath(i18nPath, workspaceRoot);
   const absoluteProviderPath = resolvePath(providerPath, workspaceRoot);
 
-  await ensureDir(path.dirname(absoluteI18nPath));
-  await ensureDir(path.dirname(absoluteProviderPath));
+  if (!options.dryRun) {
+    await ensureDir(path.dirname(absoluteI18nPath));
+    await ensureDir(path.dirname(absoluteProviderPath));
+  }
 
   const localeFile = path.join(workspaceRoot, localesDir, `${sourceLanguage}.json`);
   let localeImportPath = path.relative(path.dirname(absoluteI18nPath), localeFile).replace(/\\/g, '/');
@@ -170,7 +187,7 @@ export function initI18next() {
 export default i18next;
 `;
 
-  await writeFileSafely(absoluteI18nPath, i18nContent, options.force);
+  const i18nWritten = await writeFileSafely(absoluteI18nPath, i18nContent, options.force, options.dryRun);
 
   const providerImport = relativeImportPath(path.dirname(absoluteProviderPath), absoluteI18nPath, true);
 
@@ -212,10 +229,12 @@ export function I18nProvider({ children }: I18nProviderProps) {
 }
 `;
 
-  await writeFileSafely(absoluteProviderPath, providerContent, options.force);
+  const providerWritten = await writeFileSafely(absoluteProviderPath, providerContent, options.force, options.dryRun);
 
   return {
     i18nPath: absoluteI18nPath,
     providerPath: absoluteProviderPath,
+    i18nResult: { path: absoluteI18nPath, content: i18nContent, written: i18nWritten },
+    providerResult: { path: absoluteProviderPath, content: providerContent, written: providerWritten },
   };
 }

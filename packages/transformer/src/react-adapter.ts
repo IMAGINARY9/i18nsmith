@@ -21,7 +21,108 @@ export interface TranslationImportConfig {
   namedImport: string;
 }
 
+export interface DetectedImport {
+  moduleSpecifier: string;
+  namedImport: string;
+  isDefault: boolean;
+}
+
+/**
+ * Common translation hook names and their typical module sources.
+ * Used to detect existing translation setups in the file.
+ */
+const KNOWN_TRANSLATION_HOOKS = [
+  'useTranslation',
+  'useTranslations',
+  'useT',
+  't',
+];
+
+const KNOWN_TRANSLATION_MODULES = [
+  'react-i18next',
+  'next-intl',
+  'vue-i18n',
+  '@lingui/react',
+  'i18next',
+];
+
+/**
+ * Detects existing translation imports in a source file.
+ * Returns the first match found, prioritizing known modules.
+ */
+export function detectExistingTranslationImport(sourceFile: SourceFile): DetectedImport | null {
+  const importDeclarations = sourceFile.getImportDeclarations();
+
+  for (const importDecl of importDeclarations) {
+    const moduleSpecifier = importDecl.getModuleSpecifierValue();
+
+    // Check named imports for known translation hooks
+    for (const namedImport of importDecl.getNamedImports()) {
+      const name = namedImport.getName();
+      if (KNOWN_TRANSLATION_HOOKS.includes(name)) {
+        return {
+          moduleSpecifier,
+          namedImport: name,
+          isDefault: false,
+        };
+      }
+    }
+
+    // Check if it's a known translation module with default import
+    if (KNOWN_TRANSLATION_MODULES.some((mod) => moduleSpecifier.includes(mod))) {
+      const defaultImport = importDecl.getDefaultImport();
+      if (defaultImport) {
+        return {
+          moduleSpecifier,
+          namedImport: defaultImport.getText(),
+          isDefault: true,
+        };
+      }
+    }
+  }
+
+  // Also check for relative imports that might be custom translation contexts
+  for (const importDecl of importDeclarations) {
+    const moduleSpecifier = importDecl.getModuleSpecifierValue();
+
+    // Skip node_modules imports
+    if (!moduleSpecifier.startsWith('.') && !moduleSpecifier.startsWith('@/')) {
+      continue;
+    }
+
+    // Look for translation-related path names
+    const isTranslationPath =
+      moduleSpecifier.toLowerCase().includes('translation') ||
+      moduleSpecifier.toLowerCase().includes('i18n') ||
+      moduleSpecifier.toLowerCase().includes('locale') ||
+      moduleSpecifier.toLowerCase().includes('intl');
+
+    if (isTranslationPath) {
+      for (const namedImport of importDecl.getNamedImports()) {
+        const name = namedImport.getName();
+        if (KNOWN_TRANSLATION_HOOKS.includes(name)) {
+          return {
+            moduleSpecifier,
+            namedImport: name,
+            isDefault: false,
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export function ensureUseTranslationImport(sourceFile: SourceFile, adapter: TranslationImportConfig) {
+  // First check if there's already a translation import we should reuse
+  const existingTranslationImport = detectExistingTranslationImport(sourceFile);
+  
+  // If there's already an import for the same hook, don't add another
+  if (existingTranslationImport && existingTranslationImport.namedImport === adapter.namedImport) {
+    return;
+  }
+
   const existing = sourceFile.getImportDeclaration(
     (decl) => decl.getModuleSpecifierValue() === adapter.moduleSpecifier
   );
