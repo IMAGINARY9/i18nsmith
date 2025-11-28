@@ -1,0 +1,151 @@
+import fs from 'fs/promises';
+import path from 'path';
+import chalk from 'chalk';
+import type { Command } from 'commander';
+import { loadConfigWithMeta } from '@i18nsmith/core';
+import { Transformer } from '@i18nsmith/transformer';
+import type { TransformSummary } from '@i18nsmith/transformer';
+import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
+
+interface TransformOptions {
+  config?: string;
+  json?: boolean;
+  target?: string[];
+  report?: string;
+  write?: boolean;
+  check?: boolean;
+  diff?: boolean;
+  patchDir?: string;
+  migrateTextKeys?: boolean;
+}
+
+const collectTargetPatterns = (value: string | string[], previous: string[]) => {
+  const list = Array.isArray(value) ? value : [value];
+  const tokens = list
+    .flatMap((entry) => entry.split(','))
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return [...previous, ...tokens];
+};
+
+function printTransformSummary(summary: TransformSummary) {
+  console.log(
+    chalk.green(
+      `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'}; ` +
+        `${summary.candidates.length} candidate${summary.candidates.length === 1 ? '' : 's'} processed.`
+    )
+  );
+
+  const preview = summary.candidates.slice(0, 50).map((candidate) => ({
+    File: candidate.filePath,
+    Line: candidate.position.line,
+    Kind: candidate.kind,
+    Status: candidate.status,
+    Key: candidate.suggestedKey,
+    Preview:
+      candidate.text.length > 40
+        ? `${candidate.text.slice(0, 37)}...`
+        : candidate.text,
+  }));
+
+  console.table(preview);
+
+  if (summary.filesChanged.length) {
+    console.log(chalk.blue(`Files changed (${summary.filesChanged.length}):`));
+    summary.filesChanged.forEach((file) => console.log(`  • ${file}`));
+  }
+
+  if (summary.localeStats.length) {
+    console.log(chalk.blue('Locale updates:'));
+    summary.localeStats.forEach((stat) => {
+      console.log(
+        `  • ${stat.locale}: ${stat.added.length} added, ${stat.updated.length} updated, ${stat.removed.length} removed (total ${stat.totalKeys})`
+      );
+    });
+  }
+
+  if (summary.skippedFiles.length) {
+    console.log(chalk.yellow('Skipped items:'));
+    summary.skippedFiles.forEach((item) => console.log(`  • ${item.filePath}: ${item.reason}`));
+  }
+}
+
+export function registerTransform(program: Command) {
+  program
+    .command('transform')
+    .description('Scan project and apply i18n transformations')
+    .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
+    .option('--json', 'Print raw JSON results', false)
+    .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
+    .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+    .option('--check', 'Exit with error code if changes are needed', false)
+    .option('--diff', 'Display unified diffs for locale files that would change', false)
+    .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
+    .option('--target <pattern...>', 'Limit scanning to specific files or glob patterns', collectTargetPatterns, [])
+    .option('--migrate-text-keys', 'Migrate existing t("Text") calls to structured keys')
+    .action(async (options: TransformOptions) => {
+      const diffEnabled = Boolean(options.diff || options.patchDir);
+      console.log(
+        chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
+      );
+
+      try {
+        const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+        
+        // Inform user if config was found in a parent directory
+        const cwd = process.cwd();
+        if (projectRoot !== cwd) {
+          console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+          console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+        }
+        
+        const transformer = new Transformer(config, { workspaceRoot: projectRoot });
+        const summary = await transformer.run({
+          write: options.write,
+          targets: options.target,
+          diff: diffEnabled,
+          migrateTextKeys: options.migrateTextKeys,
+        });
+
+        if (options.report) {
+          const outputPath = path.resolve(process.cwd(), options.report);
+          await fs.mkdir(path.dirname(outputPath), { recursive: true });
+          await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+          console.log(chalk.green(`Transform report written to ${outputPath}`));
+        }
+
+        if (options.json) {
+          console.log(JSON.stringify(summary, null, 2));
+          return;
+        }
+
+        printTransformSummary(summary);
+
+        if (diffEnabled) {
+          printLocaleDiffs(summary.diffs);
+        }
+        if (options.patchDir) {
+          await writeLocaleDiffPatches(summary.diffs, options.patchDir);
+        }
+
+        if (options.check && summary.candidates.some((candidate) => candidate.status === 'pending')) {
+          console.error(chalk.red('\nCheck failed: Pending translations found. Run with --write to fix.'));
+          process.exitCode = 1;
+          return;
+        }
+
+        if (!options.write && summary.candidates.some((candidate) => candidate.status === 'pending')) {
+          console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
+          console.log(chalk.yellow('Run again with --write to apply these changes.'));
+        }
+      } catch (error) {
+        const errorMessage = (error as Error).message;
+        if (options.json) {
+          console.log(JSON.stringify({ ok: false, error: { message: errorMessage } }, null, 2));
+        } else {
+          console.error(chalk.red('Transform failed:'), errorMessage);
+        }
+        process.exitCode = 1;
+      }
+    });
+}
