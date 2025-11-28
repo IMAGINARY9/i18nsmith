@@ -225,6 +225,7 @@ Regardless of the path you choose, if you stick with `react-i18next` you still n
 
 - **Missing keys**: Calls like `t('dialog.ok')` that are absent from `en.json`.
 - **Suspicious keys are safe by default**: Keys containing spaces are flagged and skipped during auto-write so accidental "key-as-value" pairs can’t sneak into your locales. Override via `sync.suspiciousKeyPolicy` if you intentionally use free-form keys.
+- **Auto-normalize suspicious keys on demand**: Add `--auto-rename-suspicious` to print normalized proposals (using your chosen naming convention) and `--write` to apply them instantly across source files + locale JSON. Pass `--rename-map-file` to export the mapping (or let the CLI drop one under `.i18nsmith/auto-rename-map.json`).
 - **Unused keys**: Locale entries that are never referenced in your codebase.
 - **Placeholder validation**: Add `--validate-interpolations` (or set `sync.validateInterpolations`) to ensure placeholders such as `{{name}}`, `%{count}`, or `%s` appear in every translation for the key.
 - **Empty translation policies**: Use `--no-empty-values` (or set `sync.emptyValuePolicy: "fail"`) to treat empty strings, whitespace-only values, and TODO markers as drift.
@@ -259,6 +260,9 @@ i18nsmith sync --validate-interpolations --no-empty-values --check
 
 # Suppress warnings for known runtime-only keys
 i18nsmith sync --assume errors.404 errors.500
+
+# Normalize suspicious keys, apply changes, and export a rename map
+i18nsmith sync --auto-rename-suspicious --write --rename-map-file rename-map.txt
 ```
 
 ## Automated translations (`i18nsmith translate`)

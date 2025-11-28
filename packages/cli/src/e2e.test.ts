@@ -3,7 +3,7 @@
  * These tests run against pre-configured fixture projects to test real-world scenarios
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -83,6 +83,19 @@ function extractJson<T>(output: string): T {
   }
   return JSON.parse(jsonMatch[0]);
 }
+
+beforeAll(() => {
+  const cliRoot = path.resolve(__dirname, '..');
+  const result = spawnSync('pnpm', ['build'], {
+    cwd: cliRoot,
+    stdio: 'inherit',
+    env: { ...process.env },
+  });
+
+  if (result.status !== 0) {
+    throw new Error('Failed to build CLI before running E2E tests');
+  }
+});
 
 describe('E2E Fixture Tests', () => {
   describe('basic-react fixture', () => {
@@ -190,6 +203,39 @@ describe('E2E Fixture Tests', () => {
       // The suspicious keys in source files may still trigger warnings
       // but the locale files themselves should be clean
       expect(result.output).toContain('Scanned');
+    });
+
+    it('should auto-rename suspicious keys when --write is provided', async () => {
+      const result = runCli(
+        [
+          'sync',
+          '--auto-rename-suspicious',
+          '--write',
+          '--rename-map-file',
+          'auto-rename-map.txt',
+        ],
+        { cwd: fixtureDir }
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('Applying safe rename proposals');
+
+      const enLocalePath = path.join(fixtureDir, 'locales', 'en.json');
+      const frLocalePath = path.join(fixtureDir, 'locales', 'fr.json');
+      const enLocale = JSON.parse(await fs.readFile(enLocalePath, 'utf8'));
+      const frLocale = JSON.parse(await fs.readFile(frLocalePath, 'utf8'));
+
+      expect(enLocale).toHaveProperty('common.hello-world');
+      expect(enLocale).not.toHaveProperty('Hello World');
+      expect(frLocale).toHaveProperty('common.hello-world');
+
+      const sourceFile = await fs.readFile(path.join(fixtureDir, 'src', 'BadKeys.tsx'), 'utf8');
+      expect(sourceFile).toContain("t('common.hello-world')");
+      expect(sourceFile).not.toContain("t('Hello World')");
+
+      const mapPath = path.join(fixtureDir, 'auto-rename-map.txt');
+      const mapContents = await fs.readFile(mapPath, 'utf8');
+      expect(mapContents).toContain('"Hello World" = "common.hello-world"');
     });
   });
 
