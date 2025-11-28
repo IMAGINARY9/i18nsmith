@@ -1,0 +1,8 @@
+{
+  "common.welcome": "Willkommen in unserer App",
+  "common.goodbye": "Auf Wiedersehen",
+  "buttons.submit": "Absenden",
+  "buttons.cancel": "Abbrechen",
+  "messages.success": "Operation erfolgreich",
+  "messages.error": "Ein Fehler ist aufgetreten"
+}

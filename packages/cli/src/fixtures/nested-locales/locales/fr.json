@@ -1,0 +1,23 @@
+{
+  "common": {
+    "buttons": {
+      "submit": "Soumettre",
+      "cancel": "Annuler",
+      "save": "Sauvegarder"
+    },
+    "labels": {
+      "name": "Nom",
+      "email": "Courriel"
+    }
+  },
+  "pages": {
+    "home": {
+      "title": "Accueil",
+      "welcome": "Bon retour!"
+    },
+    "settings": {
+      "title": "Paramètres",
+      "description": "Configurez vos préférences"
+    }
+  }
+}
