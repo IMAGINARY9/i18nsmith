@@ -1,0 +1,9 @@
+{
+  "sourceLanguage": "en",
+  "targetLanguages": ["fr"],
+  "localesDir": "locales",
+  "include": ["src/**/*.tsx"],
+  "sync": {
+    "suspiciousKeyPolicy": "warn"
+  }
+}

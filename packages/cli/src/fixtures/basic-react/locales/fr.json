@@ -1,0 +1,8 @@
+{
+  "common.welcome": "Bienvenue dans notre application",
+  "common.goodbye": "Au revoir",
+  "buttons.submit": "Soumettre",
+  "buttons.cancel": "Annuler",
+  "messages.success": "Opération réussie",
+  "messages.error": "Une erreur est survenue"
+}

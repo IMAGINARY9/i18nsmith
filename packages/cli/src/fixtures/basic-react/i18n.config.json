@@ -1,0 +1,15 @@
+{
+  "sourceLanguage": "en",
+  "targetLanguages": ["fr", "de"],
+  "localesDir": "locales",
+  "include": ["src/**/*.tsx", "src/**/*.ts"],
+  "exclude": ["**/*.test.tsx", "**/*.test.ts"],
+  "translationAdapter": {
+    "module": "react-i18next",
+    "hookName": "useTranslation",
+    "translationIdentifier": "t"
+  },
+  "sync": {
+    "suspiciousKeyPolicy": "warn"
+  }
+}

@@ -1,8 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 
-export async function readPackageJson() {
-  const pkgPath = path.join(process.cwd(), 'package.json');
+export async function readPackageJson(cwd?: string) {
+  const pkgPath = path.join(cwd ?? process.cwd(), 'package.json');
   try {
     const content = await fs.readFile(pkgPath, 'utf8');
     return JSON.parse(content) as Record<string, unknown>;

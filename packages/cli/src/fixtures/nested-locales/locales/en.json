@@ -1,0 +1,23 @@
+{
+  "common": {
+    "buttons": {
+      "submit": "Submit",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
+    "labels": {
+      "name": "Name",
+      "email": "Email"
+    }
+  },
+  "pages": {
+    "home": {
+      "title": "Home",
+      "welcome": "Welcome back!"
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "Configure your preferences"
+    }
+  }
+}
