@@ -366,16 +366,18 @@ export function App() {
       expect(result.output).toContain('DRY RUN');
     });
 
-    it('should accept --json flag', async () => {
+    it('should output JSON with --json flag', async () => {
       await fs.writeFile(
         path.join(tmpDir, 'src', 'App.tsx'),
         `export function App() { return <div>Hello</div>; }`
       );
 
       const result = runCli(['transform', '--json'], { cwd: tmpDir });
-      // Transform command accepts --json flag (output may vary based on candidates found)
-      // The CLI accepts the flag without crashing
-      expect(result.output).toContain('transform');
+      const parsed = extractJson<{ filesScanned: number; candidates: unknown[] }>(result.stdout);
+
+      expect(parsed).toHaveProperty('filesScanned');
+      expect(parsed).toHaveProperty('candidates');
+      expect(Array.isArray(parsed.candidates)).toBe(true);
     });
   });
 
