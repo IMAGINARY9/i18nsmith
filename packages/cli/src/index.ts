@@ -1007,7 +1007,7 @@ program
 
       // Handle --auto-rename-suspicious
       if (options.autoRenameSuspicious && summary.suspiciousKeys.length > 0) {
-        await handleAutoRenameSuspicious(summary, options, config);
+        await handleAutoRenameSuspicious(summary, options, config, projectRoot);
       }
 
       // Handle --rewrite-shape
@@ -1221,7 +1221,8 @@ function printSyncSummary(summary: SyncSummary) {
 async function handleAutoRenameSuspicious(
   summary: SyncSummary,
   options: SyncCommandOptions,
-  config: Awaited<ReturnType<typeof loadConfig>>
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  projectRoot: string
 ) {
   console.log(chalk.blue('\n📝 Auto-rename suspicious keys analysis:'));
 
@@ -1273,7 +1274,9 @@ async function handleAutoRenameSuspicious(
   }
 
   // Write mapping file if requested
-  if (options.renameMapFile && Object.keys(report.renameMapping).length > 0) {
+  const hasMappings = Object.keys(report.renameMapping).length > 0;
+
+  if (options.renameMapFile && hasMappings) {
     const outputPath = path.resolve(process.cwd(), options.renameMapFile);
     const isJsonFormat = outputPath.endsWith('.json');
     const content = createRenameMappingFile(report.renameMapping, {
@@ -1285,12 +1288,34 @@ async function handleAutoRenameSuspicious(
     console.log(chalk.gray('    Apply with: npx i18nsmith rename-keys --map ' + options.renameMapFile + ' --write'));
   }
 
-  // If --write is set and there are safe proposals, offer to apply them
-  if (options.write && report.safeProposals.length > 0) {
-    console.log(chalk.yellow('\n  Note: Use --rename-map-file to export the mapping, then apply with rename-keys --map'));
-    console.log(chalk.gray('    This two-step process allows you to review and edit the mappings before applying.'));
-  } else if (Object.keys(report.renameMapping).length > 0 && !options.renameMapFile) {
+  if (options.write) {
+    if (report.safeProposals.length === 0) {
+      console.log(chalk.yellow('\n  No safe rename proposals to apply.'));
+    } else {
+      console.log(chalk.blue('\n✍️  Applying safe rename proposals (source + locales)...'));
+      const mappings = report.safeProposals.map((proposal) => ({
+        from: proposal.originalKey,
+        to: proposal.proposedKey,
+      }));
+
+      const renamer = new KeyRenamer(config, { workspaceRoot: projectRoot });
+      const applySummary = await renamer.renameBatch(mappings, { write: true, diff: Boolean(options.diff) });
+      printRenameBatchSummary(applySummary);
+
+      if (!options.renameMapFile && hasMappings) {
+        const defaultMapPath = path.resolve(projectRoot, '.i18nsmith', 'auto-rename-map.json');
+        await fs.mkdir(path.dirname(defaultMapPath), { recursive: true });
+        await fs.writeFile(defaultMapPath, JSON.stringify(report.renameMapping, null, 2));
+        console.log(
+          chalk.gray(
+            `\n  Saved rename mapping to ${path.relative(process.cwd(), defaultMapPath)} (set --rename-map-file to customize)`
+          )
+        );
+      }
+    }
+  } else if (hasMappings && !options.renameMapFile) {
     console.log(chalk.gray('\n  Use --rename-map-file <path> to export mappings for later application.'));
+    console.log(chalk.gray('  Run with --write to apply safe proposals automatically.'));
   }
 }
 
