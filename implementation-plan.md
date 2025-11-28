@@ -862,7 +862,8 @@ This phase addresses systemic issues discovered during three external testing se
 *   **Problem:** Exit code 11 observed but not documented.
 *   **Observation:** `check --json` returns exit code 11 when drift + warnings detected.
 *   **Proposed Fix:** Document all exit codes (0/1/2/11) in CLI help and testing plan.
-*   **Status:** ⏳ Backlog
+*   **Implementation:** Created centralized `exit-codes.ts` module with `SYNC_EXIT_CODES`, `CHECK_EXIT_CODES`, `DIAGNOSTICS_EXIT_CODES` constants and description maps.
+*   **Status:** ✅ Complete
 
 #### 4.6.3.2. Mock Translator Bundling
 *   **Problem:** Mock adapter not resolvable in target projects.
@@ -871,21 +872,23 @@ This phase addresses systemic issues discovered during three external testing se
     - Bundle mock adapter with CLI.
     - Support `--module-root` to load adapters from tool monorepo.
     - Provide clear installation instructions in error message.
-*   **Status:** ⏳ Backlog
+*   **Implementation:** Added `@i18nsmith/translator-mock` as CLI dependency. Improved error messages with installation hints.
+*   **Status:** ✅ Complete
 
 #### 4.6.3.3. False Dependency Warnings
 *   **Problem:** Warns about missing `react-i18next` when project uses `next-intl`.
 *   **Root Cause:** `checkDependencies()` in transformer only checks for react-i18next.
-*   **Proposed Fix:** Consult `runtimePackages` from diagnose output before warnings.
-*   **Status:** ⏳ Backlog
+*   **Proposed Fix:** Consult configured adapter before warnings; support multiple adapter types.
+*   **Implementation:** Added `ADAPTER_DEPENDENCIES` map supporting react-i18next, next-intl, vue-i18n, @lingui/react. Dependency check skipped for custom/unknown adapters.
+*   **Status:** ✅ Complete
 
 ### 4.6.4. Test Coverage Gaps Identified
 
 The following features were not explicitly tested and should be added to E2E fixtures:
 
-- [ ] `rename-keys` bulk operation with mapping file
-- [ ] `--invalidate-cache` flag verification
-- [ ] `--assume` flag for dynamic keys
+- [x] `rename-keys` bulk operation with mapping file
+- [x] `--invalidate-cache` flag verification
+- [x] `--assume` flag for dynamic keys
 - [ ] Provider dependency checks
 - [ ] Isolated E2E fixtures (tested on real project instead)
 
@@ -906,3 +909,8 @@ The following features were verified working correctly:
 - ✅ Fixed transform import detection to reuse existing imports.
 - ✅ Documented JSON reformatting behavior as expected (deterministic output).
 - ✅ Build passes, all 288 tests pass.
+
+**Progress notes (Phase 4.6.3 completion):**
+- ✅ Created centralized exit-codes.ts with documented constants.
+- ✅ Bundled translator-mock with CLI package.
+- ✅ Fixed adapter-specific dependency warnings.

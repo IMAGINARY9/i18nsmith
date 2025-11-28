@@ -213,8 +213,22 @@ export class Transformer {
     );
   }
 
+  /**
+   * Known adapter module -> required dependencies mapping.
+   * Only warn about dependencies for known adapters.
+   */
+  private static readonly ADAPTER_DEPENDENCIES: Record<string, string[]> = {
+    'react-i18next': ['react-i18next', 'i18next'],
+    'next-intl': ['next-intl'],
+    'vue-i18n': ['vue-i18n'],
+    '@lingui/react': ['@lingui/core', '@lingui/react'],
+  };
+
   private checkDependencies() {
-    if (this.translationAdapter.module !== 'react-i18next') {
+    const requiredDeps = Transformer.ADAPTER_DEPENDENCIES[this.translationAdapter.module];
+    
+    // Skip dependency check for unknown/custom adapters
+    if (!requiredDeps) {
       return;
     }
 
@@ -226,19 +240,14 @@ export class Transformer {
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      const missing: string[] = [];
-      if (!deps['react-i18next']) {
-        missing.push('react-i18next');
-      }
-      if (!deps['i18next']) {
-        missing.push('i18next');
-      }
+      const missing = requiredDeps.filter((dep) => !deps[dep]);
 
       if (missing.length) {
+        const installCmd = missing.join(' ');
         console.warn(
           `\n⚠️  Warning: ${missing.join(' & ')} missing from package.json.\n` +
-          '   The default adapter relies on them. Install both dependencies:\n' +
-          '   npm install react-i18next i18next --save\n'
+          `   The ${this.translationAdapter.module} adapter requires them. Install with:\n` +
+          `   npm install ${installCmd} --save\n`
         );
       }
     } catch (e) {

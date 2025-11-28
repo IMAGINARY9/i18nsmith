@@ -44,6 +44,9 @@ importers:
       '@i18nsmith/translation':
         specifier: workspace:*
         version: link:../translation
+      '@i18nsmith/translator-mock':
+        specifier: workspace:*
+        version: link:../translator-mock
       chalk:
         specifier: ^5.0.0
         version: 5.6.2

@@ -307,4 +307,127 @@ describe('E2E Fixture Tests', () => {
       expect(afterContent).toBe(originalContent);
     });
   });
+
+  describe('--assume flag for dynamic keys', () => {
+    let fixtureDir: string;
+
+    beforeEach(async () => {
+      fixtureDir = await setupFixture('basic-react');
+    });
+
+    afterEach(async () => {
+      await cleanupFixture(fixtureDir);
+    });
+
+    it('should accept assumed keys via --assume flag', async () => {
+      // Add keys to locale that exist but might be flagged as unused
+      const localeFile = path.join(fixtureDir, 'locales', 'en.json');
+      const locale = JSON.parse(await fs.readFile(localeFile, 'utf8'));
+      locale['dynamic.runtime.key'] = 'Dynamic value loaded at runtime';
+      await fs.writeFile(localeFile, JSON.stringify(locale, null, 2));
+
+      // Run sync without --assume - key should show as unused
+      const resultWithoutAssume = runCli(['sync', '--json'], { cwd: fixtureDir });
+      const parsedWithout = extractJson<{ unusedKeys: { key: string }[] }>(resultWithoutAssume.stdout);
+      expect(parsedWithout.unusedKeys.some(k => k.key === 'dynamic.runtime.key')).toBe(true);
+
+      // Run sync with --assume - key should NOT show as unused
+      const resultWithAssume = runCli(['sync', '--json', '--assume', 'dynamic.runtime.key'], { cwd: fixtureDir });
+      const parsedWith = extractJson<{ unusedKeys: { key: string }[]; assumedKeys: string[] }>(resultWithAssume.stdout);
+      expect(parsedWith.assumedKeys).toContain('dynamic.runtime.key');
+      expect(parsedWith.unusedKeys.some(k => k.key === 'dynamic.runtime.key')).toBe(false);
+    });
+
+    it('should accept multiple assumed keys', async () => {
+      // Add keys to locale
+      const localeFile = path.join(fixtureDir, 'locales', 'en.json');
+      const locale = JSON.parse(await fs.readFile(localeFile, 'utf8'));
+      locale['dynamic.key.one'] = 'First dynamic key';
+      locale['dynamic.key.two'] = 'Second dynamic key';
+      await fs.writeFile(localeFile, JSON.stringify(locale, null, 2));
+
+      // Run sync with multiple --assume values
+      const result = runCli(['sync', '--json', '--assume', 'dynamic.key.one,dynamic.key.two'], { cwd: fixtureDir });
+      const parsed = extractJson<{ assumedKeys: string[] }>(result.stdout);
+
+      expect(parsed.assumedKeys).toContain('dynamic.key.one');
+      expect(parsed.assumedKeys).toContain('dynamic.key.two');
+    });
+  });
+
+  describe('--invalidate-cache flag', () => {
+    let fixtureDir: string;
+
+    beforeEach(async () => {
+      fixtureDir = await setupFixture('basic-react');
+    });
+
+    afterEach(async () => {
+      await cleanupFixture(fixtureDir);
+    });
+
+    it('should accept --invalidate-cache flag on sync', () => {
+      const result = runCli(['sync', '--invalidate-cache'], { cwd: fixtureDir });
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('Scanned');
+    });
+
+    it('should accept --invalidate-cache flag on check', () => {
+      const result = runCli(['check', '--invalidate-cache'], { cwd: fixtureDir });
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('Locales directory');
+    });
+  });
+
+  describe('rename-keys bulk operation', () => {
+    let fixtureDir: string;
+
+    beforeEach(async () => {
+      fixtureDir = await setupFixture('basic-react');
+    });
+
+    afterEach(async () => {
+      await cleanupFixture(fixtureDir);
+    });
+
+    it('should perform bulk rename with mapping file', async () => {
+      // Create a mapping file
+      const mappingFile = path.join(fixtureDir, 'rename-map.json');
+      const mapping = {
+        'common.welcome': 'home.greeting',
+        'common.logout': 'auth.logout',
+      };
+      await fs.writeFile(mappingFile, JSON.stringify(mapping, null, 2));
+
+      // Run rename-keys with the mapping
+      const result = runCli(['rename-keys', '--map', 'rename-map.json'], { cwd: fixtureDir });
+
+      expect(result.output).toContain('DRY RUN');
+      // Should process the mappings (even if no actual references exist in fixture)
+      expect(result.output).toMatch(/Updated \d+ occurrence/i);
+    });
+
+    it('should accept array format mapping file', async () => {
+      // Create a mapping file with array format
+      const mappingFile = path.join(fixtureDir, 'rename-map.json');
+      const mapping = [
+        { from: 'old.key.one', to: 'new.key.one' },
+        { from: 'old.key.two', to: 'new.key.two' },
+      ];
+      await fs.writeFile(mappingFile, JSON.stringify(mapping, null, 2));
+
+      // Run rename-keys with the mapping
+      const result = runCli(['rename-keys', '--map', 'rename-map.json'], { cwd: fixtureDir });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('DRY RUN');
+    });
+
+    it('should error on missing mapping file', () => {
+      const result = runCli(['rename-keys', '--map', 'nonexistent.json'], { cwd: fixtureDir });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.output).toContain('not found');
+    });
+  });
 });
