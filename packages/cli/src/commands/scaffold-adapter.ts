@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { diagnoseWorkspace, loadConfig } from '@i18nsmith/core';
-import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
+import { scaffoldTranslationContext, scaffoldI18next, ScaffoldResult } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
 import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
 import { maybeInjectProvider } from '../utils/provider-injector.js';
@@ -112,12 +112,25 @@ export function registerScaffoldAdapter(program: Command) {
       }
 
       try {
+        const dryRun = Boolean(options.dryRun);
+
         if (answers.type === 'custom') {
-          const target = await scaffoldTranslationContext(answers.filePath, answers.sourceLanguage, {
+          const result = await scaffoldTranslationContext(answers.filePath, answers.sourceLanguage, {
             localesDir: answers.localesDir,
             force: answers.force,
+            dryRun,
           });
-          console.log(chalk.green(`Translation context scaffolded at ${target}`));
+
+          if (dryRun) {
+            console.log(chalk.blue('\n📋 DRY RUN - No files were modified\n'));
+            console.log(chalk.cyan(`Would create: ${result.path}`));
+            console.log(chalk.gray('─'.repeat(60)));
+            console.log(result.content);
+            console.log(chalk.gray('─'.repeat(60)));
+          } else {
+            console.log(chalk.green(`Translation context scaffolded at ${result.path}`));
+          }
+
           console.log(chalk.blue('\nUpdate your i18n.config.json:'));
           console.log(`{
   "translationAdapter": {
@@ -126,17 +139,29 @@ export function registerScaffoldAdapter(program: Command) {
   }
 }`);
         } else if (answers.type === 'react-i18next') {
-          const { i18nPath, providerPath } = await scaffoldI18next(
+          const { i18nPath, providerPath, i18nResult, providerResult } = await scaffoldI18next(
             answers.i18nPath,
             answers.providerPath,
             answers.sourceLanguage,
             answers.localesDir,
-            { force: answers.force }
+            { force: answers.force, dryRun }
           );
 
-          console.log(chalk.green('\nScaffolded react-i18next runtime:'));
-          console.log(chalk.green(`  • ${i18nPath}`));
-          console.log(chalk.green(`  • ${providerPath}`));
+          if (dryRun) {
+            console.log(chalk.blue('\n📋 DRY RUN - No files were modified\n'));
+            console.log(chalk.cyan(`Would create: ${i18nResult.path}`));
+            console.log(chalk.gray('─'.repeat(60)));
+            console.log(i18nResult.content);
+            console.log(chalk.gray('─'.repeat(60)));
+            console.log(chalk.cyan(`\nWould create: ${providerResult.path}`));
+            console.log(chalk.gray('─'.repeat(60)));
+            console.log(providerResult.content);
+            console.log(chalk.gray('─'.repeat(60)));
+          } else {
+            console.log(chalk.green('\nScaffolded react-i18next runtime:'));
+            console.log(chalk.green(`  • ${i18nPath}`));
+            console.log(chalk.green(`  • ${providerPath}`));
+          }
 
           const pkg = await readPackageJson();
           const missingDeps = ['react-i18next', 'i18next'].filter((dep) => !hasDependency(pkg, dep));
@@ -144,7 +169,10 @@ export function registerScaffoldAdapter(program: Command) {
             console.log(chalk.yellow('\nDependencies missing:'));
             missingDeps.forEach((dep) => console.log(chalk.yellow(`  • ${dep}`)));
 
-            if (options.installDeps) {
+            if (dryRun) {
+              console.log(chalk.blue('\nIn write mode, install them with:'));
+              console.log(chalk.cyan('  pnpm add react-i18next i18next'));
+            } else if (options.installDeps) {
               try {
                 const manager = await detectPackageManager();
                 console.log(chalk.blue(`\nInstalling dependencies with ${manager}...`));

@@ -813,3 +813,96 @@ This phase addresses systemic issues discovered during three external testing se
 - ✅ **7.3.1 Dry-run Default** (2025-11-28): All `--write` options default to `false`. Added clear "📋 DRY RUN - No files were modified" indicators across sync, transform, and rename commands.
 - ✅ **7.3.2 Confirmation Prompts** (2025-11-28): Added confirmation prompt before pruning ≥10 keys. Shows sample of keys to be removed. Use `-y` / `--yes` to skip prompt (for CI).
 - ⏳ Phase 7 initiated based on external testing failure analysis (2025-11-28).
+
+---
+
+## Phase 4.6: Post-Testing Improvements (Based on Comprehensive Test Report)
+**Objective:** Address issues discovered during comprehensive functional testing against a real production project (Next.js + next-intl, 289 files, 1,678 locale keys).
+
+**Test Report Reference:** `docs/testing/i18nsmith-complete-test-report.md`
+
+### 4.6.1. Critical Safety Fixes
+
+#### 4.6.1.1. scaffold-adapter --dry-run Safety ✅ FIXED
+*   **Problem:** `--dry-run` flag was ignored; files were written to disk despite the flag being set.
+*   **Impact:** CI/CD safety violation, potential unintended file overwrites.
+*   **Solution:**
+    - Updated `scaffold.ts` to accept `dryRun` option and return `ScaffoldResult` with `written` flag.
+    - Updated `scaffold-adapter.ts` to show preview content without writing when `--dry-run` is used.
+    - Skip dependency installation in dry-run mode.
+*   **Status:** ✅ Fixed (2025-11-28)
+
+### 4.6.2. Major Usability Improvements
+
+#### 4.6.2.1. Transform Import Detection ✅ FIXED
+*   **Problem:** Transform hardcoded `react-i18next` import regardless of project's actual runtime (e.g., `next-intl`).
+*   **Impact:** Creates duplicate/incorrect imports, requires manual cleanup.
+*   **Solution:**
+    - Added `detectExistingTranslationImport()` to `react-adapter.ts`.
+    - Detects existing translation imports in target files (useTranslation, useTranslations, useT, t).
+    - Recognizes known modules (react-i18next, next-intl, vue-i18n, @lingui/react).
+    - Detects custom translation contexts via path heuristics.
+    - Transformer now checks each file for existing imports and reuses them.
+*   **Status:** ✅ Fixed (2025-11-28)
+
+#### 4.6.2.2. JSON Reformatting Behavior (Documented)
+*   **Problem:** Adding 4 keys results in 3,585 lines changed (entire file reformatted).
+*   **Impact:** Noisy git diffs, harder to review changes.
+*   **Root Cause:** LocaleStore uses deterministic formatting:
+    - Keys are always sorted alphabetically.
+    - Uses consistent 2-space indentation.
+    - Ensures reproducible output across runs.
+*   **Current Behavior:** By design for consistency; enables reliable diffs between runs.
+*   **Future Enhancement:** Consider adding `--preserve-format` flag for minimal edits.
+*   **Status:** 📝 Documented (expected behavior)
+
+### 4.6.3. Minor Improvements (Backlog)
+
+#### 4.6.3.1. Exit Code Documentation
+*   **Problem:** Exit code 11 observed but not documented.
+*   **Observation:** `check --json` returns exit code 11 when drift + warnings detected.
+*   **Proposed Fix:** Document all exit codes (0/1/2/11) in CLI help and testing plan.
+*   **Status:** ⏳ Backlog
+
+#### 4.6.3.2. Mock Translator Bundling
+*   **Problem:** Mock adapter not resolvable in target projects.
+*   **Impact:** Translation write-path testing blocked without manual installation.
+*   **Proposed Solutions:**
+    - Bundle mock adapter with CLI.
+    - Support `--module-root` to load adapters from tool monorepo.
+    - Provide clear installation instructions in error message.
+*   **Status:** ⏳ Backlog
+
+#### 4.6.3.3. False Dependency Warnings
+*   **Problem:** Warns about missing `react-i18next` when project uses `next-intl`.
+*   **Root Cause:** `checkDependencies()` in transformer only checks for react-i18next.
+*   **Proposed Fix:** Consult `runtimePackages` from diagnose output before warnings.
+*   **Status:** ⏳ Backlog
+
+### 4.6.4. Test Coverage Gaps Identified
+
+The following features were not explicitly tested and should be added to E2E fixtures:
+
+- [ ] `rename-keys` bulk operation with mapping file
+- [ ] `--invalidate-cache` flag verification
+- [ ] `--assume` flag for dynamic keys
+- [ ] Provider dependency checks
+- [ ] Isolated E2E fixtures (tested on real project instead)
+
+### 4.6.5. Verified Functionality (Test Results)
+
+The following features were verified working correctly:
+
+- ✅ All core workflows: diagnose → scan → check → sync (dry/write/prune) → translate export/import
+- ✅ Transform --write: extracts hardcoded strings, transforms source code, adds keys to locale files
+- ✅ Safety rails: backups created automatically, prune requires confirmation, rollback restores state
+- ✅ Machine outputs: JSON/reports generated for all tested commands with well-formed schemas
+- ✅ Performance: 2x speed-up on warm cache runs (target met)
+- ✅ Unit tests: 192 tests passed across 17 test files (4.82s execution)
+- ✅ CLI integration: 78 tests passed (6.42s execution)
+
+**Progress notes (2025-11-28):**
+- ✅ Fixed scaffold-adapter --dry-run safety violation.
+- ✅ Fixed transform import detection to reuse existing imports.
+- ✅ Documented JSON reformatting behavior as expected (deterministic output).
+- ✅ Build passes, all 288 tests pass.

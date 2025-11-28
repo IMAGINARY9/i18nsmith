@@ -17,6 +17,7 @@ import {
   generateValueFromKey,
 } from '@i18nsmith/core';
 import {
+  detectExistingTranslationImport,
   ensureUseTranslationBinding,
   ensureUseTranslationImport,
   findNearestFunctionScope,
@@ -98,6 +99,9 @@ export class Transformer {
     const shouldProcess = write || generateDiffs;
 
     if (shouldProcess) {
+      // Track detected imports per file to avoid redundant detection
+      const fileImportCache = new Map<string, { module: string; hookName: string }>();
+
       for (const candidate of enriched) {
         if (candidate.status !== 'pending') {
           continue;
@@ -105,11 +109,31 @@ export class Transformer {
 
         try {
           const sourceFile = candidate.raw.sourceFile;
+          const filePath = candidate.filePath;
+
+          // Determine which adapter to use for this file
+          let adapterForFile = this.translationAdapter;
+
+          // Check if we've already detected an import for this file
+          if (!fileImportCache.has(filePath)) {
+            const detected = detectExistingTranslationImport(sourceFile);
+            if (detected) {
+              fileImportCache.set(filePath, {
+                module: detected.moduleSpecifier,
+                hookName: detected.namedImport,
+              });
+            }
+          }
+
+          const cachedAdapter = fileImportCache.get(filePath);
+          if (cachedAdapter) {
+            adapterForFile = cachedAdapter;
+          }
           
           if (write) {
             ensureUseTranslationImport(sourceFile, {
-              moduleSpecifier: this.translationAdapter.module,
-              namedImport: this.translationAdapter.hookName,
+              moduleSpecifier: adapterForFile.module,
+              namedImport: adapterForFile.hookName,
             });
           }
 
@@ -122,7 +146,7 @@ export class Transformer {
           }
 
           if (write) {
-            ensureUseTranslationBinding(scope, this.translationAdapter.hookName);
+            ensureUseTranslationBinding(scope, adapterForFile.hookName);
             this.applyCandidate(candidate);
             candidate.status = 'applied';
             filesChanged.set(candidate.filePath, sourceFile);
