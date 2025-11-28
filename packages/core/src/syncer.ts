@@ -22,25 +22,23 @@ import type {
   DynamicKeyWarning,
   ReferenceCacheFile,
 } from './reference-extractor.js';
+import {
+  type FileFingerprint,
+  type ReferenceCacheEntry,
+  loadReferenceCache,
+  saveReferenceCache,
+  clearReferenceCache,
+  computeFileFingerprint,
+  getCachedEntry,
+  REFERENCE_CACHE_VERSION,
+} from './syncer/reference-cache.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
 // Re-export from reference-extractor
 export type { TranslationReference, DynamicKeyReason, DynamicKeyWarning } from './reference-extractor.js';
-
-// Internal types for reference caching
-interface FileFingerprint {
-  mtimeMs: number;
-  size: number;
-}
-
-interface ReferenceCacheEntry {
-  fingerprint: FileFingerprint;
-  references: TranslationReference[];
-  dynamicKeyWarnings: DynamicKeyWarning[];
-}
-
-const REFERENCE_CACHE_VERSION = 2;
+// Re-export from reference-cache
+export type { FileFingerprint, ReferenceCacheEntry } from './syncer/reference-cache.js';
 
 export interface MissingKeyRecord {
   key: string;
@@ -213,7 +211,11 @@ export class Syncer {
     if (targetFilter) {
       filePaths = filePaths.filter((filePath) => targetFilter.absolute.has(filePath));
     }
-    const cacheState = await this.loadReferenceCache(runOptions.invalidateCache);
+    const cacheState = await loadReferenceCache(
+      this.referenceCachePath,
+      this.translationIdentifier,
+      runOptions.invalidateCache
+    );
     const nextCacheEntries: Record<string, ReferenceCacheEntry> = targetFilter
       ? { ...(cacheState?.files ?? {}) }
       : {};
@@ -343,7 +345,12 @@ export class Syncer {
           this.workspaceRoot
         )
       : [];
-    await this.saveReferenceCache(nextCacheEntries);
+    await saveReferenceCache(
+      this.referenceCachePath,
+      this.cacheDir,
+      this.translationIdentifier,
+      nextCacheEntries
+    );
 
     const actionableItems = this.buildActionableItems({
       missingKeys,
@@ -683,13 +690,13 @@ export class Syncer {
 
     for (const absolutePath of filePaths) {
       const relativePath = this.getRelativePath(absolutePath);
-      const fingerprint = await this.getFileFingerprint(absolutePath);
+      const fingerprint = await computeFileFingerprint(absolutePath);
 
       let fileReferences: TranslationReference[];
       let fileWarnings: DynamicKeyWarning[];
 
       const cachedEntry = canUseCache
-        ? this.getCachedEntry(cache!, relativePath, fingerprint)
+        ? getCachedEntry(cache!, relativePath, fingerprint)
         : undefined;
 
       if (cachedEntry) {
@@ -756,32 +763,6 @@ export class Syncer {
     return { references, dynamicKeyWarnings };
   }
 
-  private async getFileFingerprint(filePath: string): Promise<FileFingerprint> {
-    const stats = await fs.stat(filePath);
-    return {
-      mtimeMs: stats.mtimeMs,
-      size: stats.size,
-    };
-  }
-
-  private getCachedEntry(
-    cache: ReferenceCacheFile,
-    relativePath: string,
-    fingerprint: FileFingerprint
-  ): ReferenceCacheEntry | undefined {
-    const entry = cache.files[relativePath];
-    if (!entry) {
-      return undefined;
-    }
-    if (
-      entry.fingerprint.mtimeMs !== fingerprint.mtimeMs ||
-      entry.fingerprint.size !== fingerprint.size
-    ) {
-      return undefined;
-    }
-    return entry;
-  }
-
   private extractKeyFromCall(
     node: CallExpression
   ):
@@ -836,45 +817,6 @@ export class Syncer {
     }
 
     return result;
-  }
-
-  private async loadReferenceCache(invalidate?: boolean): Promise<ReferenceCacheFile | undefined> {
-    if (invalidate) {
-      await this.clearReferenceCache();
-      return undefined;
-    }
-
-    try {
-      const raw = await fs.readFile(this.referenceCachePath, 'utf8');
-      const parsed = JSON.parse(raw) as ReferenceCacheFile;
-      if (parsed.version !== REFERENCE_CACHE_VERSION) {
-        return undefined;
-      }
-      if (parsed.translationIdentifier !== this.translationIdentifier) {
-        return undefined;
-      }
-      if (!parsed.files || typeof parsed.files !== 'object') {
-        return undefined;
-      }
-      return parsed;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async saveReferenceCache(entries: Record<string, ReferenceCacheEntry>): Promise<void> {
-    const payload: ReferenceCacheFile = {
-      version: REFERENCE_CACHE_VERSION,
-      translationIdentifier: this.translationIdentifier,
-      files: entries,
-    };
-
-    await fs.mkdir(this.cacheDir, { recursive: true });
-    await fs.writeFile(this.referenceCachePath, JSON.stringify(payload), 'utf8');
-  }
-
-  private async clearReferenceCache(): Promise<void> {
-    await fs.rm(this.referenceCachePath, { force: true }).catch(() => {});
   }
 
   private buildLocaleKeySets(localeData: Map<string, Record<string, string>>): Map<string, Set<string>> {
