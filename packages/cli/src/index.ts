@@ -7,6 +7,7 @@ import inquirer from 'inquirer';
 import type { CheckboxQuestion } from 'inquirer';
 import {
   loadConfig,
+  loadConfigWithMeta,
   Scanner,
   ScanCandidate,
   KeyValidator,
@@ -23,6 +24,8 @@ import {
   CheckRunner,
   generateRenameProposals,
   createRenameMappingFile,
+  listBackups,
+  restoreBackup,
 } from '@i18nsmith/core';
 import type { CheckSummary, DiagnosisReport } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
@@ -69,6 +72,9 @@ interface RenameMapOptions extends ScanOptions {
 
 interface SyncCommandOptions extends ScanOptions {
   write?: boolean;
+  prune?: boolean;
+  backup?: boolean;
+  yes?: boolean;
   check?: boolean;
   strict?: boolean;
   validateInterpolations?: boolean;
@@ -402,7 +408,15 @@ program
   .action(async (options: CheckCommandOptions) => {
     console.log(chalk.blue('Running guided repository health check...'));
     try {
-      const config = await loadConfig(options.config);
+      const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+      
+      // Inform user if config was found in a parent directory
+      const cwd = process.cwd();
+      if (projectRoot !== cwd) {
+        console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+        console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+      }
+      
       // Merge --assume-globs with config
       if (options.assumeGlobs?.length) {
         config.sync = config.sync ?? {};
@@ -411,7 +425,7 @@ program
           ...options.assumeGlobs,
         ];
       }
-      const runner = new CheckRunner(config);
+      const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
       const summary = await runner.run({
         assumedKeys: options.assume,
         validateInterpolations: options.validateInterpolations,
@@ -479,14 +493,22 @@ program
     console.log(chalk.blue('Starting scan...'));
 
     try {
-      const config = await loadConfig(options.config);
+      const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+      
+      // Inform user if config was found in a parent directory
+      const cwd = process.cwd();
+      if (projectRoot !== cwd) {
+        console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+        console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+      }
+      
       if (options.include?.length) {
         config.include = options.include;
       }
       if (options.exclude?.length) {
         config.exclude = options.exclude;
       }
-      const scanner = new Scanner(config);
+      const scanner = new Scanner(config, { workspaceRoot: projectRoot });
       const summary = scanner.scan();
 
       if (options.report) {
@@ -714,8 +736,16 @@ program
     );
 
     try {
-      const config = await loadConfig(options.config);
-      const transformer = new Transformer(config);
+      const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+      
+      // Inform user if config was found in a parent directory
+      const cwd = process.cwd();
+      if (projectRoot !== cwd) {
+        console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+        console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+      }
+      
+      const transformer = new Transformer(config, { workspaceRoot: projectRoot });
       const summary = await transformer.run({
         write: options.write,
         targets: options.target,
@@ -751,6 +781,7 @@ program
       }
 
       if (!options.write && summary.candidates.some((candidate) => candidate.status === 'pending')) {
+        console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
         console.log(chalk.yellow('Run again with --write to apply these changes.'));
       }
     } catch (error) {
@@ -802,11 +833,14 @@ function printTransformSummary(summary: TransformSummary) {
 }
 program
   .command('sync')
-  .description('Detect missing locale keys and prune unused entries')
+  .description('Detect missing locale keys and optionally prune unused entries')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
   .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .option('--prune', 'Remove unused keys from locale files (requires --write)', false)
+  .option('--no-backup', 'Disable automatic backup when using --prune (backup is on by default with --prune)')
+  .option('-y, --yes', 'Skip confirmation prompts (for CI)', false)
   .option('--check', 'Exit with error code if drift detected', false)
   .option('--strict', 'Exit with error code if any suspicious patterns detected (CI mode)', false)
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
@@ -847,7 +881,15 @@ program
     );
 
     try {
-      const config = await loadConfig(options.config);
+      const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+      
+      // Inform user if config was found in a parent directory
+      const cwd = process.cwd();
+      if (projectRoot !== cwd) {
+        console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+        console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+      }
+      
       if (options.include?.length) {
         config.include = options.include;
       }
@@ -862,14 +904,62 @@ program
           ...options.assumeGlobs,
         ];
       }
-      const syncer = new Syncer(config);
+      const syncer = new Syncer(config, { workspaceRoot: projectRoot });
       if (interactive) {
         await runInteractiveSync(syncer, { ...options, diff: diffEnabled, invalidateCache });
         return;
       }
 
+      // If writing with prune, first do a dry-run to check scope
+      const PRUNE_CONFIRMATION_THRESHOLD = 10;
+      let confirmedPrune = options.prune;
+      
+      if (options.write && options.prune && !options.yes) {
+        // Quick dry-run to see how many keys would be pruned
+        const dryRunSummary = await syncer.run({
+          write: false,
+          prune: true,
+          validateInterpolations: options.validateInterpolations,
+          emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
+          assumedKeys: options.assume,
+          diff: false,
+          invalidateCache,
+          targets: options.target,
+        });
+
+        if (dryRunSummary.unusedKeys.length >= PRUNE_CONFIRMATION_THRESHOLD) {
+          console.log(chalk.yellow(`\n⚠️  About to remove ${dryRunSummary.unusedKeys.length} unused key(s) from locale files.\n`));
+          
+          // Show sample of keys to be removed
+          const sampleKeys = dryRunSummary.unusedKeys.slice(0, 10).map(k => k.key);
+          for (const key of sampleKeys) {
+            console.log(chalk.gray(`   - ${key}`));
+          }
+          if (dryRunSummary.unusedKeys.length > 10) {
+            console.log(chalk.gray(`   ... and ${dryRunSummary.unusedKeys.length - 10} more`));
+          }
+          console.log('');
+
+          const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
+            {
+              type: 'confirm',
+              name: 'confirmed',
+              message: `Remove these ${dryRunSummary.unusedKeys.length} unused keys?`,
+              default: false,
+            },
+          ]);
+
+          if (!confirmed) {
+            console.log(chalk.yellow('Prune cancelled. Running with --write only (add missing keys).'));
+            confirmedPrune = false;
+          }
+        }
+      }
+
       const summary = await syncer.run({
         write: options.write,
+        prune: confirmedPrune,
+        backup: options.backup,
         validateInterpolations: options.validateInterpolations,
         emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
         assumedKeys: options.assume,
@@ -877,6 +967,11 @@ program
         invalidateCache,
         targets: options.target,
       });
+
+      // Show backup info if created
+      if (summary.backup) {
+        console.log(chalk.blue(`\n📦 ${summary.backup.summary}`));
+      }
 
       if (options.report) {
         const outputPath = path.resolve(process.cwd(), options.report);
@@ -982,8 +1077,19 @@ program
         }
       }
 
-      if (!options.write && (summary.missingKeys.length || summary.unusedKeys.length)) {
-        console.log(chalk.yellow('Run again with --write to apply fixes.'));
+      if (!options.write) {
+        // Show prominent dry-run indicator
+        console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
+        if (summary.missingKeys.length && summary.unusedKeys.length) {
+          console.log(chalk.yellow('Run again with --write to add missing keys.'));
+          console.log(chalk.yellow('Run with --write --prune to also remove unused keys.'));
+        } else if (summary.missingKeys.length) {
+          console.log(chalk.yellow('Run again with --write to add missing keys.'));
+        } else if (summary.unusedKeys.length) {
+          console.log(chalk.yellow('Unused keys found. Run with --write --prune to remove them.'));
+        }
+      } else if (options.write && !options.prune && summary.unusedKeys.length) {
+        console.log(chalk.gray(`\n  Note: ${summary.unusedKeys.length} unused key(s) were not removed. Use --prune to remove them.`));
       }
     } catch (error) {
       console.error(chalk.red('Sync failed:'), (error as Error).message);
@@ -1309,6 +1415,97 @@ async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Backup Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+program
+  .command('backup-list')
+  .description('List available locale file backups')
+  .option('--backup-dir <path>', 'Custom backup directory (default: .i18nsmith-backup)')
+  .action(async (options: { backupDir?: string }) => {
+    try {
+      const workspaceRoot = process.cwd();
+      const backups = await listBackups(workspaceRoot, { backupDir: options.backupDir });
+
+      if (backups.length === 0) {
+        console.log(chalk.yellow('No backups found.'));
+        console.log(chalk.gray('Backups are created automatically when using --write --prune'));
+        return;
+      }
+
+      console.log(chalk.blue(`Found ${backups.length} backup(s):\n`));
+
+      for (const backup of backups) {
+        const date = new Date(backup.createdAt);
+        const formattedDate = date.toLocaleString();
+        console.log(`  ${chalk.cyan(backup.timestamp)}  ${formattedDate}  (${backup.fileCount} files)`);
+      }
+
+      console.log(chalk.gray(`\nRestore a backup with: i18nsmith backup-restore <timestamp>`));
+    } catch (err) {
+      console.error(chalk.red('Error listing backups:'), err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('backup-restore')
+  .description('Restore locale files from a previous backup')
+  .argument('<timestamp>', 'Backup timestamp (from backup-list) or "latest" for most recent')
+  .option('--backup-dir <path>', 'Custom backup directory (default: .i18nsmith-backup)')
+  .action(async (timestamp: string, options: { backupDir?: string }) => {
+    try {
+      const workspaceRoot = process.cwd();
+      const backups = await listBackups(workspaceRoot, { backupDir: options.backupDir });
+
+      if (backups.length === 0) {
+        console.error(chalk.red('No backups found.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      let targetBackup = timestamp === 'latest'
+        ? backups[0]
+        : backups.find((b) => b.timestamp === timestamp);
+
+      if (!targetBackup) {
+        console.error(chalk.red(`Backup not found: ${timestamp}`));
+        console.log(chalk.gray('Available backups:'));
+        for (const b of backups.slice(0, 5)) {
+          console.log(`  ${b.timestamp}`);
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      // Confirm restore
+      const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
+        {
+          type: 'confirm',
+          name: 'confirmed',
+          message: `Restore ${targetBackup.fileCount} locale files from backup ${targetBackup.timestamp}? This will overwrite current locale files.`,
+          default: false,
+        },
+      ]);
+
+      if (!confirmed) {
+        console.log(chalk.yellow('Restore cancelled.'));
+        return;
+      }
+
+      const result = await restoreBackup(targetBackup.path, workspaceRoot);
+
+      console.log(chalk.green(`\n✅ ${result.summary}`));
+      for (const file of result.restored) {
+        console.log(chalk.gray(`   Restored: ${file}`));
+      }
+    } catch (err) {
+      console.error(chalk.red('Error restoring backup:'), err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
+  });
+
 program
   .command('rename-key')
   .description('Rename translation keys across source files and locale JSON')
@@ -1341,6 +1538,7 @@ program
       printRenameSummary(summary);
 
       if (!options.write) {
+        console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
         console.log(chalk.yellow('Run again with --write to apply changes.'));
       }
     } catch (error) {
@@ -1393,6 +1591,7 @@ program
       }
 
       if (!options.write) {
+        console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
         console.log(chalk.yellow('Run again with --write to apply changes.'));
       }
     } catch (error) {

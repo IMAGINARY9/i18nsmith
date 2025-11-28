@@ -633,3 +633,138 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 - ✅ 6.4.2: Enhanced external runner with file preview, better config warnings, and next-steps guidance.
 - ✅ 6.4.3: Added `--report` to `scan` command for consistent reporting across all commands.
 - ✅ 6.4.4: `--invalidate-cache` already implemented for sync (P3.4 complete).
+
+---
+
+## Phase 7: Reliability & Safety (Based on External Testing Failures)
+
+This phase addresses systemic issues discovered during three external testing sessions that prevented real-world adoption. See `docs/post-testing-analysis-4.md` for detailed root cause analysis.
+
+### 7.1. Safety Guards
+
+#### 7.1.1. Backup Before Write
+*   **Problem:** Target locales were cleared during sync, causing data loss.
+*   **Solution:**
+    - Auto-create `.i18nsmith-backup/<timestamp>/` before any `--write` operation.
+    - Copy all locale files that will be modified.
+    - Add `safety.backupBeforeWrite` config option (default: true).
+    - Add `safety.backupRetention` to limit stored backups (default: 5).
+*   **Acceptance:** Running `sync --write` creates backup; can be disabled via config.
+
+#### 7.1.2. Explicit Prune Mode
+*   **Problem:** `sync --write` adds AND removes keys, surprising users.
+*   **Solution:**
+    - `sync --write` only adds missing keys.
+    - `sync --write --prune` removes unused keys (explicit opt-in).
+    - Print warning if unused keys exist but `--prune` not specified.
+*   **Acceptance:** Default sync never deletes; deletion requires explicit flag.
+
+#### 7.1.3. Dry-Run Mandate
+*   **Problem:** Users run `--write` without previewing changes.
+*   **Solution:**
+    - First-time `--write` in session prompts: "Run without --write first to preview. Continue? [y/N]"
+    - Skip prompt with `--yes` flag.
+    - Track session state to avoid repeated prompts.
+*   **Acceptance:** Interactive warning shown; `--yes` bypasses.
+
+### 7.2. Pre-Flight Validation
+
+#### 7.2.1. Config Validation
+*   **Problem:** Commands fail late with confusing errors.
+*   **Solution:** Before any operation, validate:
+    - Config file exists and is valid JSON
+    - `include` patterns match at least 1 file
+    - `localesDir` exists or can be created
+    - Write permissions on locale files (if `--write`)
+*   **Acceptance:** Clear error messages for each validation failure.
+
+#### 7.2.2. Dependency Check
+*   **Problem:** Transformed code fails to compile due to missing adapter library.
+*   **Solution:**
+    - Check package.json for adapter dependency (react-i18next, vue-i18n, etc.).
+    - Print warning with install command if missing.
+    - Add `--skip-dep-check` to bypass.
+*   **Acceptance:** Transform warns if adapter dependency missing.
+
+#### 7.2.3. Existing Setup Detection
+*   **Problem:** Tool overwrites existing i18n setup without warning.
+*   **Solution:**
+    - Detect existing locale files and i18n providers before `init`/`transform`.
+    - Show summary: "Detected: 3 locales (en, fr, de), react-i18next provider".
+    - Prompt for merge strategy or abort.
+*   **Acceptance:** `init` on existing project shows detection summary.
+
+### 7.3. Key Quality Improvements
+
+#### 7.3.1. Cleaner Default Key Format
+*   **Problem:** Keys like `common.auto.page.slug.abc12345` are verbose and ugly.
+*   **Solution:**
+    - Default format: `<filename>.<slug>` without prefix or hash.
+    - Add hash suffix only on collision: `<filename>.<slug>.<hash4>`.
+    - Config option: `keyGeneration.format` = `"minimal"` | `"hashed"` | `"namespaced"`.
+*   **Acceptance:** Generated keys are readable; no hash when unnecessary.
+
+#### 7.3.2. Text-as-Key Migration Command
+*   **Problem:** Existing `t("Long English text")` patterns not converted to semantic keys.
+*   **Solution:**
+    - `i18nsmith migrate-keys --strategy=semantic` command.
+    - Converts `"Save Changes"` → `"actions.saveChanges"`.
+    - Updates source files and all locale files atomically.
+    - Collision detection with interactive resolution.
+*   **Acceptance:** Bulk migration of text-as-keys to semantic keys.
+
+#### 7.3.3. Key Linting
+*   **Problem:** Bad keys slip into codebase (spaces, no namespace, too long).
+*   **Solution:**
+    - `i18nsmith lint-keys` command with configurable rules.
+    - Rules: `no-spaces`, `has-namespace`, `max-length`, `no-numbers-prefix`.
+    - CI-friendly exit codes.
+*   **Acceptance:** `lint-keys` catches and reports bad patterns.
+
+### 7.4. Scanner Completeness
+
+#### 7.4.1. Coverage Report
+*   **Problem:** Users don't know if all files were scanned.
+*   **Solution:**
+    - `i18nsmith scan --coverage` shows:
+      ```
+      Files matched:     289/312 (92%)
+      Files skipped:      23 (see --verbose)
+      Keys found:        1,245
+      Dynamic patterns:    47
+      ```
+    - Include skip reasons (syntax error, excluded, etc.).
+*   **Acceptance:** Coverage report shows completeness percentage.
+
+#### 7.4.2. Pattern Debugging
+*   **Problem:** Users can't figure out why files aren't matched.
+*   **Solution:**
+    - `i18nsmith debug-patterns` command.
+    - Shows each include/exclude pattern and what it matches.
+    - Highlights unmatched files with suggested pattern fixes.
+*   **Acceptance:** Pattern debugger helps fix glob issues.
+
+### 7.5. Error Recovery
+
+#### 7.5.1. Rollback Command
+*   **Problem:** No recovery path after accidental data loss.
+*   **Solution:**
+    - `i18nsmith rollback` restores from latest backup.
+    - `i18nsmith rollback --list` shows available backups.
+    - `i18nsmith rollback <timestamp>` restores specific backup.
+*   **Acceptance:** Rollback restores locale files from backup.
+
+#### 7.5.2. Diff Review Before Write
+*   **Problem:** Bulk changes applied without review.
+*   **Solution:**
+    - Enhance `sync --write --interactive` with per-change confirmation.
+    - Show diff for each file, ask Y/N/skip-all/apply-all.
+*   **Acceptance:** Interactive mode allows granular approval.
+
+**Progress notes:**
+- ✅ **7.1.2 Explicit Prune Mode** (2025-11-28): Added `--prune` flag to sync command. Key deletion now requires explicit `--write --prune`. Without `--prune`, sync only adds missing keys.
+- ✅ **7.1.1 Backup Before Write** (2025-11-28): Implemented auto-backup to `.i18nsmith-backup/<timestamp>/`. Backups created automatically before `--write --prune`. Added `backup-list` and `backup-restore` commands. `--no-backup` flag to disable.
+- ✅ **7.2.1 Config Upward Search** (2025-11-28): Added `loadConfigWithMeta()` that traverses up directories to find `i18n.config.json`. CLI commands now use project root from config location.
+- ✅ **7.3.1 Dry-run Default** (2025-11-28): All `--write` options default to `false`. Added clear "📋 DRY RUN - No files were modified" indicators across sync, transform, and rename commands.
+- ✅ **7.3.2 Confirmation Prompts** (2025-11-28): Added confirmation prompt before pruning ≥10 keys. Shows sample of keys to be removed. Use `-y` / `--yes` to skip prompt (for CI).
+- ⏳ Phase 7 initiated based on external testing failure analysis (2025-11-28).

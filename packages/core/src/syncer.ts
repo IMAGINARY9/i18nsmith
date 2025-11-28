@@ -9,6 +9,7 @@ import {
   DEFAULT_EMPTY_VALUE_MARKERS,
   SuspiciousKeyPolicy,
 } from './config.js';
+import { createBackup, BackupResult } from './backup.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { ActionableItem } from './actionable.js';
@@ -68,6 +69,7 @@ export interface SyncSummary {
   assumedKeys: string[];
   write: boolean;
   actionableItems: ActionableItem[];
+  backup?: BackupResult;
 }
 
 export interface SyncSelection {
@@ -123,6 +125,8 @@ export interface SyncerOptions {
 
 export interface SyncRunOptions {
   write?: boolean;
+  prune?: boolean;
+  backup?: boolean;
   validateInterpolations?: boolean;
   emptyValuePolicy?: EmptyValuePolicy;
   assumedKeys?: string[];
@@ -134,6 +138,8 @@ export interface SyncRunOptions {
 
 interface ResolvedSyncRunOptions {
   write: boolean;
+  prune: boolean;
+  backup: boolean;
   validateInterpolations: boolean;
   emptyValuePolicy: EmptyValuePolicy;
   assumedKeys: Set<string>;
@@ -254,7 +260,8 @@ export class Syncer {
       localeKeySets,
       projectedLocaleData,
       runtime.selectedUnusedKeys,
-      !targetFilter
+      !targetFilter,
+      runtime.prune
     );
 
     const placeholderIssues = runtime.validateInterpolations
@@ -300,7 +307,23 @@ export class Syncer {
     }
 
     let localeStats: LocaleFileStats[] = [];
+    let backupResult: BackupResult | undefined;
+
     if (write) {
+      // Create backup before any destructive write operations
+      if (runtime.backup) {
+        const localesDir = path.resolve(this.workspaceRoot, this.config.localesDir ?? 'locales');
+        const result = await createBackup(
+          localesDir,
+          this.workspaceRoot,
+          {},
+          runtime.prune ? 'sync --write --prune' : 'sync --write'
+        );
+        if (result) {
+          backupResult = result;
+        }
+      }
+
       await this.applyMissingKeys(missingKeysToApply);
       await this.applyUnusedKeys(unusedKeysToApply);
       localeStats = await this.localeStore.flush();
@@ -351,6 +374,7 @@ export class Syncer {
   assumedKeys: Array.from(runtime.displayAssumedKeys).sort(),
       write,
       actionableItems,
+      backup: backupResult,
     };
   }
 
@@ -439,7 +463,8 @@ export class Syncer {
     localeKeySets: Map<string, Set<string>>,
     projectedLocaleData: Map<string, Record<string, string>>,
     selectedUnusedKeys?: Set<string>,
-    enabled: boolean = true
+    enabled: boolean = true,
+    prune: boolean = false
   ) {
     let unusedKeys: UnusedKeyRecord[] = [];
     if (enabled) {
@@ -462,11 +487,13 @@ export class Syncer {
       }));
     }
 
+    // Only apply removal if prune is explicitly enabled
+    // selectedUnusedKeys is from interactive mode where user explicitly selected keys
     const unusedKeysToApply = selectedUnusedKeys
       ? this.filterSelection(unusedKeys, selectedUnusedKeys)
-      : this.config.sync?.retainLocales
-      ? []
-      : unusedKeys;
+      : prune
+      ? unusedKeys
+      : [];
 
     for (const record of unusedKeysToApply) {
       record.locales.forEach((locale) => {
@@ -1015,8 +1042,16 @@ export class Syncer {
     const selectedMissingKeys = this.buildSelectionSet(runOptions.selection?.missing);
     const selectedUnusedKeys = this.buildSelectionSet(runOptions.selection?.unused);
 
+    // prune defaults to false for safety - unused keys are only removed with explicit --prune flag
+    const prune = runOptions.prune ?? false;
+
+    // backup defaults to true when writing destructive changes (write+prune)
+    const backup = runOptions.backup ?? (write && prune);
+
     return {
       write,
+      prune,
+      backup,
       validateInterpolations,
       emptyValuePolicy,
       assumedKeys,

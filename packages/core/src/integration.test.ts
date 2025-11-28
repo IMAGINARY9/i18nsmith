@@ -194,7 +194,7 @@ export default function RootLayout({ children }) {
       };
 
       const syncer = new Syncer(config, { workspaceRoot: tempDir });
-      await syncer.run({ write: true });
+      await syncer.run({ write: true, prune: true });
 
       const content = await fs.readFile(path.join(localesDir, 'en.json'), 'utf8');
       const data = JSON.parse(content);

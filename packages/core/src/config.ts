@@ -156,6 +156,8 @@ const ensureStringArray = (value: unknown): string[] => {
 async function findUp(filename: string, cwd: string): Promise<string | null> {
   let currentDir = cwd;
   let parentDir = path.dirname(currentDir);
+  const maxDepth = 10; // Prevent infinite loops
+  let depth = 0;
 
   do {
     const filePath = path.join(currentDir, filename);
@@ -171,26 +173,43 @@ async function findUp(filename: string, cwd: string): Promise<string | null> {
       return null;
     }
     currentDir = parentDir;
-  } while (currentDir !== parentDir);
+    depth++;
+  } while (currentDir !== parentDir && depth < maxDepth);
 
   return null;
 }
 
-export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nConfig> {
+export interface LoadConfigResult {
+  config: I18nConfig;
+  configPath: string;
+  projectRoot: string;
+}
+
+/**
+ * Load config file with upward directory traversal.
+ * @param configPath - Path to config file (relative or absolute)
+ * @param options - Load options
+ * @returns Config object and metadata about where it was found
+ */
+export async function loadConfigWithMeta(
+  configPath = 'i18n.config.json',
+  options?: { cwd?: string }
+): Promise<LoadConfigResult> {
+  const cwd = options?.cwd ?? process.cwd();
   let resolvedPath: string;
 
   if (path.isAbsolute(configPath)) {
     resolvedPath = configPath;
   } else {
     // Try to resolve relative to CWD first
-    const cwdPath = path.resolve(process.cwd(), configPath);
+    const cwdPath = path.resolve(cwd, configPath);
     try {
       await fs.access(cwdPath);
       resolvedPath = cwdPath;
     } catch {
       // If not found in CWD, and it looks like a default/simple filename, try finding up the tree
       if (!configPath.includes(path.sep) || configPath === 'i18n.config.json') {
-        const found = await findUp(configPath, process.cwd());
+        const found = await findUp(configPath, cwd);
         resolvedPath = found ?? cwdPath;
       } else {
         resolvedPath = cwdPath;
@@ -198,27 +217,17 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     }
   }
 
-  let fileContents: string;
+  const config = await loadConfigFromPath(resolvedPath);
+  const projectRoot = path.dirname(resolvedPath);
 
-  try {
-    fileContents = await fs.readFile(resolvedPath, 'utf-8');
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT') {
-      throw new Error(`Config file not found at ${resolvedPath}. Run "i18nsmith init" to create one.`);
-    }
-    throw new Error(`Unable to read config file at ${resolvedPath}: ${err.message}`);
-  }
+  return {
+    config,
+    configPath: resolvedPath,
+    projectRoot,
+  };
+}
 
-  let parsed: Partial<I18nConfig>;
-  try {
-    parsed = JSON.parse(fileContents);
-  } catch (error) {
-    throw new Error(
-      `Config file at ${resolvedPath} contains invalid JSON: ${(error as Error).message}`
-    );
-  }
-
+function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
   const translationConfig = normalizeTranslationConfig(parsed.translation);
 
   const adapter =
@@ -274,8 +283,6 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
 
   const normalized: I18nConfig = {
-    // Default to schema version 1 if not explicitly set. Future versions can
-    // branch on this value for migrations while staying backwards compatible.
     version: (parsed.version ?? 1) as 1,
     sourceLanguage: parsed.sourceLanguage ?? 'en',
     targetLanguages: ensureStringArray(parsed.targetLanguages) ?? [],
@@ -283,7 +290,7 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
     include: ensureArray(parsed.include, DEFAULT_INCLUDE),
     exclude: ensureArray(parsed.exclude, DEFAULT_EXCLUDE),
     minTextLength: typeof parsed.minTextLength === 'number' && parsed.minTextLength >= 0 ? parsed.minTextLength : 1,
-  translation: translationConfig,
+    translation: translationConfig,
     translationAdapter: {
       module: adapterModule,
       hookName: adapterHook,
@@ -312,6 +319,36 @@ export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nC
   };
 
   return normalized;
+}
+
+async function loadConfigFromPath(resolvedPath: string): Promise<I18nConfig> {
+  let fileContents: string;
+
+  try {
+    fileContents = await fs.readFile(resolvedPath, 'utf-8');
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') {
+      throw new Error(`Config file not found at ${resolvedPath}. Run "i18nsmith init" to create one.`);
+    }
+    throw new Error(`Unable to read config file at ${resolvedPath}: ${err.message}`);
+  }
+
+  let parsed: Partial<I18nConfig>;
+  try {
+    parsed = JSON.parse(fileContents);
+  } catch (error) {
+    throw new Error(
+      `Config file at ${resolvedPath} contains invalid JSON: ${(error as Error).message}`
+    );
+  }
+
+  return normalizeConfig(parsed);
+}
+
+export async function loadConfig(configPath = 'i18n.config.json'): Promise<I18nConfig> {
+  const result = await loadConfigWithMeta(configPath);
+  return result.config;
 }
 
 function normalizeDiagnosticsConfig(input: unknown): DiagnosticsConfig | undefined {

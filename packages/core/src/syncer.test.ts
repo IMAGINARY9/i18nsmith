@@ -98,7 +98,7 @@ export default Component;
     await writeFixtures();
     const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
 
-    const summary = await syncer.run({ write: true });
+    const summary = await syncer.run({ write: true, prune: true });
 
     expect(summary.localeStats).not.toHaveLength(0);
 
@@ -114,6 +114,24 @@ export default Component;
       'existing.key': 'Existente',
       'new.key': '',
     });
+  });
+
+  it('preserves unused keys when prune is not set', async () => {
+    await writeFixtures();
+    const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
+
+    // Run with write: true but without prune: true
+    const summary = await syncer.run({ write: true });
+
+    // Should still report unused keys
+    expect(summary.unusedKeys.some((u) => u.key === 'unused.key')).toBe(true);
+
+    // But should NOT remove them from locale files
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).toHaveProperty('unused.key');
+
+    // Should still add new keys
+    expect(enContents).toHaveProperty('new.key');
   });
 
   it('skips auto-writing suspicious keys by default', async () => {
