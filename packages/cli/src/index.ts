@@ -21,6 +21,8 @@ import {
   KeyRenameMapping,
   diagnoseWorkspace,
   CheckRunner,
+  generateRenameProposals,
+  createRenameMappingFile,
 } from '@i18nsmith/core';
 import type { CheckSummary, DiagnosisReport } from '@i18nsmith/core';
 import { TransformSummary, Transformer } from '@i18nsmith/transformer';
@@ -36,6 +38,8 @@ interface ScanOptions {
   target?: string[];
   report?: string;
   listFiles?: boolean;
+  include?: string[];
+  exclude?: string[];
 }
 
 interface DiagnoseCommandOptions {
@@ -49,6 +53,7 @@ interface CheckCommandOptions extends ScanOptions {
   report?: string;
   failOn?: 'none' | 'conflicts' | 'warnings';
   assume?: string[];
+  assumeGlobs?: string[];
   validateInterpolations?: boolean;
   emptyValues?: boolean;
   diff?: boolean;
@@ -59,6 +64,7 @@ interface CheckCommandOptions extends ScanOptions {
 interface RenameMapOptions extends ScanOptions {
   map: string;
   write?: boolean;
+  diff?: boolean;
 }
 
 interface SyncCommandOptions extends ScanOptions {
@@ -68,10 +74,16 @@ interface SyncCommandOptions extends ScanOptions {
   validateInterpolations?: boolean;
   emptyValues?: boolean;
   assume?: string[];
+  assumeGlobs?: string[];
   interactive?: boolean;
   diff?: boolean;
   patchDir?: string;
   invalidateCache?: boolean;
+  autoRenameSuspicious?: boolean;
+  renameMapFile?: string;
+  namingConvention?: 'kebab-case' | 'camelCase' | 'snake_case';
+  rewriteShape?: 'flat' | 'nested';
+  shapeDelimiter?: string;
 }
 
 interface AuditCommandOptions {
@@ -380,6 +392,7 @@ program
   .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--fail-on <level>', 'Failure threshold: none | conflicts | warnings', 'conflicts')
   .option('--assume <keys...>', 'List of runtime keys to assume (comma-separated)', collectAssumedKeys, [])
+  .option('--assume-globs <patterns...>', 'Glob patterns for dynamic key namespaces (e.g., errors.*, navigation.**)', collectTargetPatterns, [])
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
   .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
   .option('--diff', 'Include locale diff previews for missing/unused key fixes', false)
@@ -390,6 +403,14 @@ program
     console.log(chalk.blue('Running guided repository health check...'));
     try {
       const config = await loadConfig(options.config);
+      // Merge --assume-globs with config
+      if (options.assumeGlobs?.length) {
+        config.sync = config.sync ?? {};
+        config.sync.dynamicKeyGlobs = [
+          ...(config.sync.dynamicKeyGlobs ?? []),
+          ...options.assumeGlobs,
+        ];
+      }
       const runner = new CheckRunner(config);
       const summary = await runner.run({
         assumedKeys: options.assume,
@@ -450,14 +471,30 @@ program
   .description('Scan project for strings to translate')
   .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
   .option('--json', 'Print raw JSON results', false)
+  .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--list-files', 'List the files that were scanned', false)
+  .option('--include <patterns...>', 'Override include globs from config (comma or space separated)', collectTargetPatterns, [])
+  .option('--exclude <patterns...>', 'Override exclude globs from config (comma or space separated)', collectTargetPatterns, [])
   .action(async (options: ScanOptions) => {
     console.log(chalk.blue('Starting scan...'));
 
     try {
       const config = await loadConfig(options.config);
+      if (options.include?.length) {
+        config.include = options.include;
+      }
+      if (options.exclude?.length) {
+        config.exclude = options.exclude;
+      }
       const scanner = new Scanner(config);
       const summary = scanner.scan();
+
+      if (options.report) {
+        const outputPath = path.resolve(process.cwd(), options.report);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+        console.log(chalk.green(`Scan report written to ${outputPath}`));
+      }
 
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -775,11 +812,19 @@ program
   .option('--validate-interpolations', 'Validate interpolation placeholders across locales', false)
   .option('--no-empty-values', 'Treat empty or placeholder locale values as failures')
   .option('--assume <keys...>', 'List of runtime keys to assume present (comma-separated)', collectAssumedKeys, [])
+  .option('--assume-globs <patterns...>', 'Glob patterns for dynamic key namespaces (e.g., errors.*, navigation.**)', collectTargetPatterns, [])
   .option('--interactive', 'Interactively approve locale mutations before writing', false)
   .option('--diff', 'Display unified diffs for locale files that would change', false)
   .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
   .option('--invalidate-cache', 'Ignore cached sync analysis and rescan all source files', false)
   .option('--target <pattern...>', 'Limit translation reference scanning to specific files or glob patterns', collectTargetPatterns, [])
+  .option('--include <patterns...>', 'Override include globs from config (comma or space separated)', collectTargetPatterns, [])
+  .option('--exclude <patterns...>', 'Override exclude globs from config (comma or space separated)', collectTargetPatterns, [])
+  .option('--auto-rename-suspicious', 'Propose normalized names for suspicious keys', false)
+  .option('--rename-map-file <path>', 'Write rename proposals to a mapping file (JSON or commented format)')
+  .option('--naming-convention <convention>', 'Naming convention for auto-rename (kebab-case, camelCase, snake_case)', 'kebab-case')
+  .option('--rewrite-shape <format>', 'Rewrite all locale files to flat or nested format')
+  .option('--shape-delimiter <char>', 'Delimiter for key nesting (default: ".")', '.')
   .action(async (options: SyncCommandOptions) => {
     const interactive = Boolean(options.interactive);
     const diffEnabled = Boolean(options.diff || options.patchDir);
@@ -803,6 +848,20 @@ program
 
     try {
       const config = await loadConfig(options.config);
+      if (options.include?.length) {
+        config.include = options.include;
+      }
+      if (options.exclude?.length) {
+        config.exclude = options.exclude;
+      }
+      // Merge --assume-globs with config
+      if (options.assumeGlobs?.length) {
+        config.sync = config.sync ?? {};
+        config.sync.dynamicKeyGlobs = [
+          ...(config.sync.dynamicKeyGlobs ?? []),
+          ...options.assumeGlobs,
+        ];
+      }
       const syncer = new Syncer(config);
       if (interactive) {
         await runInteractiveSync(syncer, { ...options, diff: diffEnabled, invalidateCache });
@@ -837,6 +896,16 @@ program
       }
       if (options.patchDir) {
         await writeLocaleDiffPatches(summary.diffs, options.patchDir);
+      }
+
+      // Handle --auto-rename-suspicious
+      if (options.autoRenameSuspicious && summary.suspiciousKeys.length > 0) {
+        await handleAutoRenameSuspicious(summary, options, config);
+      }
+
+      // Handle --rewrite-shape
+      if (options.rewriteShape && (options.rewriteShape === 'flat' || options.rewriteShape === 'nested')) {
+        await handleRewriteShape(options, config);
       }
 
       const shouldFailPlaceholders = summary.validation.interpolations && summary.placeholderIssues.length > 0;
@@ -1031,6 +1100,115 @@ function printSyncSummary(summary: SyncSummary) {
   }
 }
 
+async function handleAutoRenameSuspicious(
+  summary: SyncSummary,
+  options: SyncCommandOptions,
+  config: Awaited<ReturnType<typeof loadConfig>>
+) {
+  console.log(chalk.blue('\n📝 Auto-rename suspicious keys analysis:'));
+
+  // Get existing keys from locale data to check for conflicts
+  const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
+  const localeStore = new LocaleStore(localesDir);
+  const sourceLocale = config.sourceLanguage ?? 'en';
+  const sourceData = await localeStore.get(sourceLocale);
+  const existingKeys = new Set(Object.keys(sourceData));
+
+  // Generate rename proposals
+  const namingConvention = options.namingConvention ?? 'kebab-case';
+  const report = generateRenameProposals(summary.suspiciousKeys, {
+    existingKeys,
+    namingConvention,
+  });
+
+  // Print summary
+  console.log(`  Found ${report.totalSuspicious} suspicious key(s)`);
+
+  if (report.safeProposals.length > 0) {
+    console.log(chalk.green(`\n  ✓ Safe rename proposals (${report.safeProposals.length}):`));
+    const toShow = report.safeProposals.slice(0, 10);
+    for (const proposal of toShow) {
+      console.log(chalk.gray(`    "${proposal.originalKey}" → "${proposal.proposedKey}"`));
+      console.log(chalk.gray(`      (${proposal.reason}) in ${proposal.filePath}:${proposal.position.line}`));
+    }
+    if (report.safeProposals.length > 10) {
+      console.log(chalk.gray(`    ...and ${report.safeProposals.length - 10} more`));
+    }
+  }
+
+  if (report.conflictProposals.length > 0) {
+    console.log(chalk.yellow(`\n  ⚠️  Conflicting proposals (${report.conflictProposals.length}):`));
+    const toShow = report.conflictProposals.slice(0, 5);
+    for (const proposal of toShow) {
+      console.log(chalk.yellow(`    "${proposal.originalKey}" → "${proposal.proposedKey}"`));
+      console.log(chalk.gray(`      Conflicts with: ${proposal.conflictsWith}`));
+    }
+    if (report.conflictProposals.length > 5) {
+      console.log(chalk.gray(`    ...and ${report.conflictProposals.length - 5} more`));
+    }
+  }
+
+  if (report.skippedKeys.length > 0) {
+    console.log(chalk.gray(`\n  Skipped ${report.skippedKeys.length} key(s) (already normalized or no change needed)`));
+  }
+
+  // Write mapping file if requested
+  if (options.renameMapFile && Object.keys(report.renameMapping).length > 0) {
+    const outputPath = path.resolve(process.cwd(), options.renameMapFile);
+    const isJsonFormat = outputPath.endsWith('.json');
+    const content = createRenameMappingFile(report.renameMapping, {
+      includeComments: !isJsonFormat,
+    });
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, content, 'utf8');
+    console.log(chalk.green(`\n  ✓ Rename mapping written to ${outputPath}`));
+    console.log(chalk.gray('    Apply with: npx i18nsmith rename-keys --map ' + options.renameMapFile + ' --write'));
+  }
+
+  // If --write is set and there are safe proposals, offer to apply them
+  if (options.write && report.safeProposals.length > 0) {
+    console.log(chalk.yellow('\n  Note: Use --rename-map-file to export the mapping, then apply with rename-keys --map'));
+    console.log(chalk.gray('    This two-step process allows you to review and edit the mappings before applying.'));
+  } else if (Object.keys(report.renameMapping).length > 0 && !options.renameMapFile) {
+    console.log(chalk.gray('\n  Use --rename-map-file <path> to export mappings for later application.'));
+  }
+}
+
+async function handleRewriteShape(
+  options: SyncCommandOptions,
+  config: Awaited<ReturnType<typeof loadConfig>>
+) {
+  const targetFormat = options.rewriteShape as 'flat' | 'nested';
+  const delimiter = options.shapeDelimiter ?? '.';
+
+  console.log(chalk.blue(`\n🔄 Rewriting locale files to ${targetFormat} format...`));
+
+  const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
+  const localeStore = new LocaleStore(localesDir, { delimiter });
+
+  // Load all configured locales
+  const sourceLocale = config.sourceLanguage ?? 'en';
+  const targetLocales = config.targetLanguages ?? [];
+  const allLocales = [sourceLocale, ...targetLocales];
+
+  for (const locale of allLocales) {
+    await localeStore.get(locale); // Load into cache
+  }
+
+  // Rewrite all locales to the target format
+  const stats = await localeStore.rewriteShape(targetFormat, { delimiter });
+
+  if (stats.length === 0) {
+    console.log(chalk.yellow('  No locale files found to rewrite.'));
+    return;
+  }
+
+  console.log(chalk.green(`  ✓ Rewrote ${stats.length} locale file(s) to ${targetFormat} format:`));
+  for (const stat of stats) {
+    console.log(chalk.gray(`    • ${stat.locale}: ${stat.totalKeys} keys`));
+  }
+}
+
 async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
   const diffEnabled = Boolean(options.diff || options.patchDir);
   const invalidateCache = Boolean(options.invalidateCache);
@@ -1179,6 +1357,7 @@ program
   .option('--json', 'Print raw JSON results', false)
   .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
   .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+  .option('--diff', 'Display unified diffs for files that would change', false)
   .action(async (options: RenameMapOptions) => {
     console.log(
       chalk.blue(options.write ? 'Renaming translation keys from map...' : 'Planning batch rename (dry-run)...')
@@ -1188,7 +1367,7 @@ program
       const config = await loadConfig(options.config);
       const mappings = await loadRenameMappings(options.map);
       const renamer = new KeyRenamer(config);
-      const summary = await renamer.renameBatch(mappings, { write: options.write });
+      const summary = await renamer.renameBatch(mappings, { write: options.write, diff: options.diff });
 
       if (options.report) {
         const outputPath = path.resolve(process.cwd(), options.report);
@@ -1203,6 +1382,15 @@ program
       }
 
       printRenameBatchSummary(summary);
+
+      // Print source file diffs if requested
+      if (options.diff && summary.diffs.length > 0) {
+        console.log(chalk.blue('\nSource file changes:'));
+        for (const diff of summary.diffs) {
+          console.log(chalk.cyan(`\n--- ${diff.relativePath} (${diff.changes} change${diff.changes === 1 ? '' : 's'}) ---`));
+          console.log(diff.diff);
+        }
+      }
 
       if (!options.write) {
         console.log(chalk.yellow('Run again with --write to apply changes.'));

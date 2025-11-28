@@ -31,10 +31,19 @@ interface TranslateCommandOptions {
   estimate?: boolean;
   skipEmpty?: boolean;
   yes?: boolean;
+  strictPlaceholders?: boolean;
 }
 
 interface TranslateLocaleResult extends TranslationWriteSummary {
   characters: number;
+  placeholderIssues: PlaceholderIssue[];
+}
+
+interface PlaceholderIssue {
+  key: string;
+  locale: string;
+  type: 'missing' | 'extra';
+  placeholders: string[];
 }
 
 interface TranslateSummary {
@@ -59,7 +68,8 @@ export function registerTranslate(program: Command) {
     .option('--force', 'Retranslate keys even if a locale already has a value', false)
     .option('--estimate', 'Attempt to estimate cost when running in dry-run mode', false)
     .option('--no-skip-empty', 'Allow writing empty translator results (default skips them)')
-  .option('-y, --yes', 'Skip interactive confirmation when applying translations', false)
+    .option('-y, --yes', 'Skip interactive confirmation when applying translations', false)
+    .option('--strict-placeholders', 'Fail if translated output has placeholder mismatches (for CI)', false)
     .action(async (options: TranslateCommandOptions) => {
       console.log(
         chalk.blue(options.write ? 'Translating locale files...' : 'Planning translations (dry-run)...')
@@ -118,6 +128,7 @@ export function registerTranslate(program: Command) {
         }
 
         const skipEmpty = options.skipEmpty !== false;
+        const strictPlaceholders = options.strictPlaceholders ?? false;
         const localeResults = await executeTranslations({
           plan,
           translationService,
@@ -125,10 +136,34 @@ export function registerTranslate(program: Command) {
           overwrite: options.force ?? false,
           skipEmpty,
           placeholderValidator,
+          strictPlaceholders,
         });
 
         summary.locales = localeResults.results;
         summary.localeStats = localeResults.stats;
+
+        // Check for placeholder issues in strict mode
+        const allPlaceholderIssues = localeResults.results.flatMap((r) => r.placeholderIssues);
+        if (strictPlaceholders && allPlaceholderIssues.length > 0) {
+          console.error(
+            chalk.red(
+              `\n✗ ${allPlaceholderIssues.length} placeholder issue(s) detected in translated output:`
+            )
+          );
+          allPlaceholderIssues.slice(0, 10).forEach((issue) => {
+            console.error(
+              chalk.red(
+                `  • ${issue.key} (${issue.locale}): ${issue.type} placeholder${
+                  issue.placeholders.length === 1 ? '' : 's'
+                } ${issue.placeholders.join(', ')}`
+              )
+            );
+          });
+          if (allPlaceholderIssues.length > 10) {
+            console.error(chalk.red(`  ... and ${allPlaceholderIssues.length - 10} more issues`));
+          }
+          process.exitCode = 1;
+        }
 
         await emitTranslateOutput(summary, options);
       } catch (error) {
@@ -215,18 +250,39 @@ function printExecutionSummary(results: TranslateLocaleResult[]) {
 }
 
 async function maybePrintEstimate(plan: TranslationPlan, provider: ProviderSettings) {
+  console.log(chalk.blue('\n📊 Cost Estimation:'));
+  console.log(chalk.gray(`  Provider: ${provider.name}`));
+  console.log(chalk.gray(`  Total characters: ${plan.totalCharacters.toLocaleString()}`));
+  console.log(chalk.gray(`  Locales: ${plan.locales.length}`));
+
   try {
     const translator = await loadTranslator(provider.loaderOptions);
     if (typeof translator.estimateCost === 'function') {
       const estimate = await translator.estimateCost(plan.totalCharacters, { localeCount: plan.locales.length });
-      console.log(chalk.gray(`Estimated cost: ${estimate}`));
+      const formattedCost = typeof estimate === 'number'
+        ? `$${estimate.toFixed(4)}`
+        : String(estimate);
+      console.log(chalk.green(`  Estimated cost: ${formattedCost}`));
     } else {
-      console.log(chalk.gray('Provider does not expose cost estimation.'));
+      console.log(chalk.yellow('  Provider does not expose cost estimation.'));
+      printGenericEstimate(plan);
     }
     await translator.dispose?.();
   } catch (error) {
-    console.log(chalk.yellow(`Unable to estimate translation cost: ${(error as Error).message}`));
+    console.log(chalk.yellow(`  Unable to estimate via provider: ${(error as Error).message}`));
+    printGenericEstimate(plan);
   }
+}
+
+function printGenericEstimate(plan: TranslationPlan) {
+  // Generic estimation based on common cloud provider rates (rough average)
+  // Google/AWS/Azure typically charge ~$20 per million characters
+  const ratePerMillion = 20;
+  const charsByLocale = plan.totalCharacters;
+  const totalChars = charsByLocale * plan.locales.length;
+  const estimated = (totalChars / 1_000_000) * ratePerMillion;
+  console.log(chalk.gray(`  Generic estimate (at ~$20/M chars): $${estimated.toFixed(4)}`));
+  console.log(chalk.gray('  (Actual costs vary by provider and tier)'));
 }
 
 interface ProviderSettings {
@@ -280,6 +336,7 @@ async function executeTranslations(input: {
   overwrite: boolean;
   skipEmpty: boolean;
   placeholderValidator: PlaceholderValidator;
+  strictPlaceholders: boolean;
 }): Promise<{ results: TranslateLocaleResult[]; stats: Awaited<ReturnType<TranslationService['flush']>> }> {
   const translator = await loadTranslator(input.provider.loaderOptions);
   const results: TranslateLocaleResult[] = [];
@@ -288,12 +345,13 @@ async function executeTranslations(input: {
   try {
     const translationPromises = input.plan.locales.map((localePlan) =>
       limit(async () => {
-        const updates = await translateLocalePlan(
+        const { updates, placeholderIssues } = await translateLocalePlan(
           translator,
           localePlan,
           input.plan.sourceLocale,
           input.provider.loaderOptions.batchSize ?? 25,
-          input.placeholderValidator
+          input.placeholderValidator,
+          input.strictPlaceholders
         );
         const writeSummary = await input.translationService.writeTranslations(localePlan.locale, updates, {
           overwrite: input.overwrite,
@@ -302,6 +360,7 @@ async function executeTranslations(input: {
         results.push({
           ...writeSummary,
           characters: localePlan.totalCharacters,
+          placeholderIssues,
         });
       })
     );
@@ -326,9 +385,11 @@ async function translateLocalePlan(
   localePlan: TranslationLocalePlan,
   sourceLocale: string,
   batchSize: number,
-  placeholderValidator: PlaceholderValidator
-) {
+  placeholderValidator: PlaceholderValidator,
+  strictPlaceholders: boolean
+): Promise<{ updates: { key: string; value: string }[]; placeholderIssues: PlaceholderIssue[] }> {
   const updates: { key: string; value: string }[] = [];
+  const placeholderIssues: PlaceholderIssue[] = [];
   for (const chunk of chunkTasks(localePlan.tasks, batchSize)) {
     const translationMap = new Map<string, string>();
 
@@ -364,25 +425,41 @@ async function translateLocalePlan(
         const comparison = placeholderValidator.compare(task.sourceValue, candidate ?? '');
 
         if (task.placeholders.length && comparison.missing.length) {
-          console.log(
-            chalk.yellow(
-              `Translator output for ${task.key} (${localePlan.locale}) is missing placeholder${
-                comparison.missing.length === 1 ? '' : 's'
-              }: ${comparison.missing.join(', ')}. Falling back to source text.`
-            )
-          );
+          placeholderIssues.push({
+            key: task.key,
+            locale: localePlan.locale,
+            type: 'missing',
+            placeholders: comparison.missing,
+          });
+          if (!strictPlaceholders) {
+            console.log(
+              chalk.yellow(
+                `Translator output for ${task.key} (${localePlan.locale}) is missing placeholder${
+                  comparison.missing.length === 1 ? '' : 's'
+                }: ${comparison.missing.join(', ')}. Falling back to source text.`
+              )
+            );
+          }
           translationMap.set(task.key, task.sourceValue);
           return;
         }
 
         if (comparison.extra.length) {
-          console.log(
-            chalk.yellow(
-              `Translator output for ${task.key} (${localePlan.locale}) introduced unexpected placeholder${
-                comparison.extra.length === 1 ? '' : 's'
-              }: ${comparison.extra.join(', ')}`
-            )
-          );
+          placeholderIssues.push({
+            key: task.key,
+            locale: localePlan.locale,
+            type: 'extra',
+            placeholders: comparison.extra,
+          });
+          if (!strictPlaceholders) {
+            console.log(
+              chalk.yellow(
+                `Translator output for ${task.key} (${localePlan.locale}) introduced unexpected placeholder${
+                  comparison.extra.length === 1 ? '' : 's'
+                }: ${comparison.extra.join(', ')}`
+              )
+            );
+          }
         }
 
         translationMap.set(task.key, candidate ?? '');
@@ -394,7 +471,7 @@ async function translateLocalePlan(
     });
   }
 
-  return updates;
+  return { updates, placeholderIssues };
 }
 
 function chunkTasks<T>(items: T[], size: number): T[][] {

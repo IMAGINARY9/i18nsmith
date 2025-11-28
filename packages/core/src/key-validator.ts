@@ -15,6 +15,17 @@ export type SuspiciousKeyReason =
   | 'sentence-article'
   | 'key-equals-value';
 
+export type KeyNamingConvention = 'kebab-case' | 'camelCase' | 'snake_case';
+
+export interface KeyNormalizationOptions {
+  /** Default namespace for orphan keys */
+  defaultNamespace?: string;
+  /** Naming convention for the key part */
+  namingConvention?: KeyNamingConvention;
+  /** Maximum number of words to include */
+  maxWords?: number;
+}
+
 export interface KeyAnalysisResult {
   suspicious: boolean;
   reason?: SuspiciousKeyReason;
@@ -170,19 +181,28 @@ export class KeyValidator {
 
     switch (reason) {
       case 'contains-spaces':
-        return this.suggestKeyFromText(key);
+      case 'pascal-case-sentence':
+      case 'sentence-article':
+      case 'key-equals-value':
+        return normalizeToKey(key);
       case 'single-word-no-namespace':
         return `common.${key.toLowerCase()}`;
       case 'trailing-punctuation':
         return key.replace(/[:?!]+$/, '');
-      case 'pascal-case-sentence':
-      case 'sentence-article':
-        return this.suggestKeyFromText(key);
-      case 'key-equals-value':
-        return this.suggestKeyFromText(key);
       default:
         return undefined;
     }
+  }
+
+  /**
+   * Generate a normalized key from suspicious input.
+   * This is the public API for the auto-rename feature.
+   */
+  public generateNormalizedKey(
+    key: string,
+    options: KeyNormalizationOptions = {}
+  ): string {
+    return normalizeToKey(key, options);
   }
 
   /**
@@ -251,4 +271,104 @@ export class KeyValidator {
  */
 export function createKeyValidator(policy: SuspiciousKeyPolicy = 'skip'): KeyValidator {
   return new KeyValidator(policy);
+}
+
+/**
+ * Normalize a raw text or suspicious key into a proper i18n key.
+ * Extracted for standalone use (e.g., auto-rename feature).
+ */
+export function normalizeToKey(
+  input: string,
+  options: KeyNormalizationOptions = {}
+): string {
+  const {
+    defaultNamespace = 'common',
+    namingConvention = 'kebab-case',
+    maxWords = 4,
+  } = options;
+
+  // Step 1: Check if input already has a namespace
+  let namespace = defaultNamespace;
+  let keyText = input;
+
+  if (input.includes('.')) {
+    const lastDotIndex = input.lastIndexOf('.');
+    const potentialNamespace = input.substring(0, lastDotIndex);
+    const potentialKey = input.substring(lastDotIndex + 1);
+
+    // Validate namespace is clean (no spaces or punctuation)
+    if (/^[a-zA-Z0-9._-]+$/.test(potentialNamespace) && potentialKey.length > 0) {
+      namespace = potentialNamespace;
+      keyText = potentialKey;
+    }
+  }
+
+  // Step 2: Extract raw words from the key part
+  // Handle PascalCase, camelCase, spaces, punctuation
+  const words = extractWords(keyText);
+
+  if (words.length === 0) {
+    return `${namespace}.unknown`;
+  }
+
+  // Step 3: Limit words to maxWords
+  const limitedWords = words.slice(0, maxWords);
+
+  // Step 4: Apply naming convention
+  let keyPart: string;
+  switch (namingConvention) {
+    case 'camelCase':
+      keyPart = limitedWords
+        .map((w, i) => (i === 0 ? w.toLowerCase() : capitalize(w)))
+        .join('');
+      break;
+    case 'snake_case':
+      keyPart = limitedWords.map((w) => w.toLowerCase()).join('_');
+      break;
+    case 'kebab-case':
+    default:
+      keyPart = limitedWords.map((w) => w.toLowerCase()).join('-');
+      break;
+  }
+
+  return `${namespace}.${keyPart}`;
+}
+
+/**
+ * Extract words from a string handling various formats:
+ * - Spaces: "Hello World" -> ["hello", "world"]
+ * - PascalCase: "HelloWorld" -> ["hello", "world"]
+ * - camelCase: "helloWorld" -> ["hello", "world"]
+ * - Mixed: "Hello World!" -> ["hello", "world"]
+ */
+function extractWords(input: string): string[] {
+  // Remove punctuation and normalize
+  const cleaned = input
+    .replace(/[:?!,.;'"]+/g, ' ')
+    .trim();
+
+  // Split on spaces first
+  const spaceSplit = cleaned.split(/\s+/).filter(Boolean);
+
+  // For each space-separated token, split on case boundaries
+  const words: string[] = [];
+  for (const token of spaceSplit) {
+    // Split PascalCase/camelCase
+    const caseSplit = token
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .split(/\s+/)
+      .filter(Boolean);
+
+    words.push(...caseSplit);
+  }
+
+  return words
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length > 0);
+}
+
+function capitalize(word: string): string {
+  if (!word) return '';
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
 }

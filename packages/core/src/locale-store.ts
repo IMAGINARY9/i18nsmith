@@ -181,6 +181,60 @@ export class LocaleStore {
     return summaries;
   }
 
+  /**
+   * Rewrite all cached locales to a specific shape format.
+   * This forces all locale files to use the same format (flat or nested).
+   */
+  public async rewriteShape(
+    targetFormat: 'flat' | 'nested',
+    options: { delimiter?: string } = {}
+  ): Promise<LocaleFileStats[]> {
+    const delimiter = options.delimiter ?? this.delimiter;
+    const summaries: LocaleFileStats[] = [];
+
+    for (const entry of this.cache.values()) {
+      const sortedData = this.sortKeys(entry.data);
+      const structured =
+        targetFormat === 'flat'
+          ? sortedData
+          : sortNestedObject(expandLocaleTree(sortedData, delimiter));
+
+      await fs.mkdir(path.dirname(entry.path), { recursive: true });
+      const serialized = JSON.stringify(structured, null, 2);
+      const tempPath = this.createTempPath(entry.path);
+      await fs.writeFile(tempPath, `${serialized}\n`, 'utf8');
+
+      try {
+        await fs.rename(tempPath, entry.path);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EEXIST' || err.code === 'EPERM') {
+          await fs.rm(entry.path, { force: true }).catch(() => {});
+          await fs.rename(tempPath, entry.path);
+        } else {
+          throw error;
+        }
+      } finally {
+        await fs.rm(tempPath, { force: true }).catch(() => {});
+      }
+
+      // Update the entry's format for future operations
+      entry.format = targetFormat;
+      entry.dirty = false;
+
+      summaries.push({
+        locale: entry.locale,
+        path: entry.path,
+        totalKeys: Object.keys(sortedData).length,
+        added: [],
+        updated: [],
+        removed: [],
+      });
+    }
+
+    return summaries;
+  }
+
   public getLocalesInMemory(): string[] {
     return Array.from(this.cache.keys());
   }

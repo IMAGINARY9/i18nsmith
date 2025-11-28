@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KeyValidator, SuspiciousKeyReason, SUSPICIOUS_KEY_REASON_DESCRIPTIONS } from './key-validator.js';
+import { KeyValidator, SuspiciousKeyReason, SUSPICIOUS_KEY_REASON_DESCRIPTIONS, normalizeToKey } from './key-validator.js';
 
 describe('KeyValidator', () => {
   describe('analyze', () => {
@@ -190,5 +190,59 @@ describe('KeyValidator', () => {
         expect(typeof SUSPICIOUS_KEY_REASON_DESCRIPTIONS[reason]).toBe('string');
       }
     });
+  });
+});
+
+describe('normalizeToKey', () => {
+  it('normalizes space-separated text to kebab-case with namespace', () => {
+    expect(normalizeToKey('When to Use')).toBe('common.when-to-use');
+    expect(normalizeToKey('Hello World')).toBe('common.hello-world');
+  });
+
+  it('normalizes PascalCase to kebab-case', () => {
+    expect(normalizeToKey('WhenToUseCategorizedView')).toBe('common.when-to-use-categorized');
+    expect(normalizeToKey('HelloWorld')).toBe('common.hello-world');
+  });
+
+  it('normalizes camelCase to kebab-case', () => {
+    expect(normalizeToKey('submitButton')).toBe('common.submit-button');
+    expect(normalizeToKey('userProfileSettings')).toBe('common.user-profile-settings');
+  });
+
+  it('removes punctuation', () => {
+    expect(normalizeToKey('Are you sure?')).toBe('common.are-you-sure');
+    expect(normalizeToKey('Warning!')).toBe('common.warning');
+    expect(normalizeToKey('Hello, World')).toBe('common.hello-world');
+  });
+
+  it('limits words to maxWords option', () => {
+    expect(normalizeToKey('One Two Three Four Five Six', { maxWords: 3 })).toBe('common.one-two-three');
+    expect(normalizeToKey('One Two Three Four Five Six', { maxWords: 5 })).toBe('common.one-two-three-four-five');
+  });
+
+  it('uses custom namespace', () => {
+    expect(normalizeToKey('Submit Button', { defaultNamespace: 'buttons' })).toBe('buttons.submit-button');
+    expect(normalizeToKey('Error Message', { defaultNamespace: 'errors' })).toBe('errors.error-message');
+  });
+
+  it('preserves valid namespace from input', () => {
+    expect(normalizeToKey('nav.TheQuickBrownFox')).toBe('nav.the-quick-brown-fox');
+    expect(normalizeToKey('auth.IsLoggedIn')).toBe('auth.is-logged-in');
+  });
+
+  it('supports camelCase naming convention', () => {
+    expect(normalizeToKey('Submit Button', { namingConvention: 'camelCase' })).toBe('common.submitButton');
+    expect(normalizeToKey('Are You Sure', { namingConvention: 'camelCase' })).toBe('common.areYouSure');
+  });
+
+  it('supports snake_case naming convention', () => {
+    expect(normalizeToKey('Submit Button', { namingConvention: 'snake_case' })).toBe('common.submit_button');
+    expect(normalizeToKey('Are You Sure', { namingConvention: 'snake_case' })).toBe('common.are_you_sure');
+  });
+
+  it('handles edge cases', () => {
+    expect(normalizeToKey('')).toBe('common.unknown');
+    expect(normalizeToKey('   ')).toBe('common.unknown');
+    expect(normalizeToKey('!!!')).toBe('common.unknown');
   });
 });

@@ -6,6 +6,7 @@ const DEFAULT_INCLUDE = [
   'src/**/*.{ts,tsx,js,jsx}',
   'app/**/*.{ts,tsx,js,jsx}',
   'pages/**/*.{ts,tsx,js,jsx}',
+  'components/**/*.{ts,tsx,js,jsx}',
 ];
 const DEFAULT_EXCLUDE = ['node_modules/**', '.next/**', 'dist/**'];
 const DEFAULT_PLACEHOLDER_FORMATS: PlaceholderFormat[] = ['doubleCurly', 'percentCurly', 'percentSymbol'];

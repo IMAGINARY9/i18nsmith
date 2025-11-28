@@ -7,6 +7,36 @@ import { diagnoseWorkspace, I18nConfig, TranslationConfig } from '@i18nsmith/cor
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
 
+/**
+ * Parse a comma-separated list of glob patterns, respecting brace expansions.
+ * Brace-expanded globs like `src/**\/*.{ts,tsx}` are kept as a single token.
+ */
+export function parseGlobList(value: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let braceDepth = 0;
+
+  for (const char of value) {
+    if (char === '{') {
+      braceDepth++;
+      current += char;
+    } else if (char === '}') {
+      braceDepth = Math.max(0, braceDepth - 1);
+      current += char;
+    } else if (char === ',' && braceDepth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) result.push(trimmed);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) result.push(trimmed);
+  return result;
+}
+
 interface InitCommandOptions {
   merge?: boolean;
 }
@@ -64,7 +94,7 @@ export function registerInit(program: Command) {
           type: 'input',
           name: 'include',
           message: 'Which files should be scanned? (comma separated glob patterns)',
-          default: 'src/**/*.{ts,tsx,js,jsx}',
+          default: 'src/**/*.{ts,tsx,js,jsx}, app/**/*.{ts,tsx,js,jsx}, pages/**/*.{ts,tsx,js,jsx}, components/**/*.{ts,tsx,js,jsx}',
         },
         {
           type: 'input',
@@ -180,12 +210,6 @@ export function registerInit(program: Command) {
         },
       ]);
 
-      const parseList = (value: string) =>
-        value
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean);
-
       const adapterModule =
         answers.adapterPreset === 'custom'
           ? answers.customAdapterModule?.trim()
@@ -207,10 +231,10 @@ export function registerInit(program: Command) {
       const config: I18nConfig = {
         version: 1 as const,
         sourceLanguage: answers.sourceLanguage,
-        targetLanguages: parseList(answers.targetLanguages),
+        targetLanguages: parseGlobList(answers.targetLanguages),
         localesDir: answers.localesDir,
-        include: parseList(answers.include),
-        exclude: parseList(answers.exclude),
+        include: parseGlobList(answers.include),
+        exclude: parseGlobList(answers.exclude),
         minTextLength: parseInt(answers.minTextLength, 10),
         translation: translationConfig,
         translationAdapter: {

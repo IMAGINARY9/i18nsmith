@@ -514,3 +514,122 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
     *   Implement AST caching (content-addressable store) to make `scan`/`sync` instant for large monorepos.
 *   **Locale Splitting:**
     *   Support splitting translations into multiple files (namespaces) per locale (e.g., `common.json`, `auth.json`) for lazy-loading in large apps.
+
+---
+
+## Phase 6: Real-World Onboarding Fixes (External Testing Feedback)
+**Objective:** Address adoption blockers identified during external project testing. Prioritized by impact.
+
+### 6.1. P0 — Critical Onboarding Blockers
+
+#### 6.1.1. Fix Init Glob Parsing
+*   **Problem:** The `init` wizard splits brace-expanded globs (e.g., `src/**/*.{ts,tsx,js,jsx}`) into malformed tokens, causing the scanner to match 0 files.
+*   **Solution:**
+    - Treat brace-expanded globs as atomic tokens; do not split on commas inside braces.
+    - Validate patterns and show a preview of matched files before writing config.
+*   **Acceptance:** `init --merge` accepts `src/**/*.{ts,tsx,js,jsx}` as a single entry.
+
+#### 6.1.2. CLI Include/Exclude Overrides
+*   **Problem:** Users must edit config to test different patterns; no one-off CLI support.
+*   **Solution:** Add `--include` and `--exclude` flags to `scan`, `sync`, `transform` commands.
+*   **Acceptance:** `scan --include "components/**/*.tsx"` works without config changes.
+
+#### 6.1.3. Zero-Match Warning
+*   **Problem:** When include patterns match 0 files, commands silently proceed, confusing users.
+*   **Solution:** `diagnose`/`check` warn explicitly when patterns match 0 files and suggest fixes.
+*   **Acceptance:** `check` outputs actionable warning with suggested patterns.
+
+#### 6.1.4. Broaden Default Include Globs
+*   **Problem:** Default patterns miss common Next.js structures (`app/`, `pages/`, `components/`).
+*   **Solution:** Expand defaults to include `app/**/*.{ts,tsx,js,jsx}`, `pages/**/*.{ts,tsx,js,jsx}`, `components/**/*.{ts,tsx,js,jsx}`.
+*   **Acceptance:** Fresh `init` in Next.js project matches relevant files.
+
+### 6.2. P1 — Key Refactoring & Detection
+
+#### 6.2.1. Suspicious Key Auto-Rename
+*   **Problem:** Sentence-like or space-containing keys are flagged but no low-friction path to normalize them.
+*   **Solution:**
+    - `sync --auto-rename-suspicious`: propose normalized key names, print changes, apply with `--write`.
+    - Persist a mapping JSON for audit and batch renames.
+*   **Acceptance:** `sync --auto-rename-suspicious --write` normalizes keys and produces rename map.
+
+#### 6.2.2. Batch Rename Diffs
+*   **Problem:** `rename-keys --map` lacks visibility into changes before applying.
+*   **Solution:** Add `--diff` and `--report` to surface unified diffs and conflicts across locales.
+*   **Acceptance:** `rename-keys --map map.json --diff` shows preview without writing.
+
+#### 6.2.3. Dynamic Key Globs UX
+*   **Problem:** Template-literal keys (e.g., ``t(`errors.${code}`)``) generate false unused warnings.
+*   **Solution:**
+    - Improve AST scanning to surface template-literal usage in reports.
+    - Allow `sync.dynamicKeyGlobs` to suppress warnings for runtime namespaces.
+    - Add `--assume-globs` CLI flag.
+*   **Acceptance:** Dynamic keys in declared namespaces don't trigger unused warnings.
+
+### 6.3. P2 — Locale Management & Translation UX
+
+#### 6.3.1. Locale Shape Normalization
+*   **Problem:** Mixed shapes (dotted keys + nested JSON) cause inconsistent writes.
+*   **Solution:** `sync --rewrite-shape nested|flat --delimiter "."` to rewrite locales deterministically.
+*   **Acceptance:** `sync --rewrite-shape nested` rewrites locales; subsequent `sync --check` reports no drift.
+
+#### 6.3.2. Interactive Sync
+*   **Problem:** Teams want to confirm changes before applying across locales.
+*   **Solution:** `sync --interactive`: dry-run, present changes, allow toggle, apply atomically with patch export.
+*   **Acceptance:** Interactive flow supports selection and atomic writes.
+
+#### 6.3.3. Translate Strict Placeholder Validation
+*   **Problem:** Placeholder mismatches in translated output can cause runtime errors.
+*   **Solution:**
+    - Default to strict validation; fallback to source text on mismatch.
+    - Add `--strict-placeholders` to fail CI on mismatches.
+*   **Acceptance:** `translate --strict-placeholders` fails CI when placeholders are missing.
+
+#### 6.3.4. Translate Cost Estimation
+*   **Problem:** No clear cost/impact estimate before translation.
+*   **Solution:** Enhance dry-run with per-locale counts, total characters, estimated cost. Add `--estimate` flag.
+*   **Acceptance:** `translate --estimate` prints cost when adapter supports it.
+
+### 6.4. P3 — Polish & Integration
+
+#### 6.4.1. Provider Detection Improvements
+*   **Problem:** Custom adapters and Next.js shells sometimes not detected.
+*   **Solution:**
+    - Extend detection for `app/providers.tsx`, `src/app/layout.tsx`, `<I18nProvider>` wrappers.
+    - `check` suggests exact file and insertion point when adapter exists but provider not wired.
+*   **Acceptance:** Provider detection finds common Next.js patterns.
+
+#### 6.4.2. External Project Runner Polish
+*   **Problem:** `pnpm external:transform` lacks feedback and convenience.
+*   **Solution:** Detect missing config, offer `init`, show matched files, persist patches for review.
+*   **Acceptance:** External runner provides actionable guidance.
+
+#### 6.4.3. Normalized Reporting & Patch Export
+*   **Problem:** Inconsistent `--json`/`--report` across commands.
+*   **Solution:**
+    - Normalize flags across `init`, `diagnose`, `check`, `scan`, `sync`, `transform`, `translate`.
+    - Support `--patch-dir` for `sync` and `transform`.
+*   **Acceptance:** All commands support consistent `--json` and `--report` with stable schemas.
+
+#### 6.4.4. Cache Invalidation
+*   **Problem:** Stale caches reduce accuracy after config or branch changes.
+*   **Solution:** Add `--invalidate-cache` to `scan` and `sync` for clean runs.
+*   **Acceptance:** `sync --invalidate-cache` forces fresh AST parsing.
+
+**Progress notes:**
+- ⏳ Phase 6 initiated based on external testing feedback (2025-11-28).
+- ✅ 6.1.1: Fixed `init` glob parsing with `parseGlobList()` that respects braces; exported for testing.
+- ✅ 6.1.2: Added `--include` and `--exclude` flags to `scan` and `sync` commands.
+- ✅ 6.1.3: Added `diagnostics-zero-source-files` actionable warning when patterns match 0 files.
+- ✅ 6.1.4: Broadened default include globs to `src/`, `app/`, `pages/`, `components/`.
+- ✅ 6.2.1: Implemented `--auto-rename-suspicious` with `normalizeToKey()`, `generateRenameProposals()`, and `--rename-map-file` for mapping export.
+- ✅ 6.2.2: Added `--diff` to `rename-keys --map` with `createUnifiedDiff()` and `SourceFileDiffEntry`.
+- ✅ 6.2.3: Added `--assume-globs` to `sync` and `check` commands; merged with `config.sync.dynamicKeyGlobs`.
+- ✅ 6.3.1: Added `rewriteShape()` to LocaleStore with `--rewrite-shape` and `--shape-delimiter` in sync command.
+- ✅ 6.3.2: Interactive sync already implemented with checkbox selection (P2.2 complete).
+- ✅ 6.3.3: Added `--strict-placeholders` to translate command for CI-mode failure on placeholder mismatch; tracks `placeholderIssues` per locale.
+- ✅ 6.3.4: Enhanced `--estimate` with detailed formatting, provider info, generic fallback cost estimation.
+- ✅ 6.4.1: Extended provider detection to include `app/layout.tsx`, `src/app/layout.tsx`; added `detectExistingProvider()` and common i18n provider patterns (IntlProvider, NextIntlClientProvider, I18nextProvider, etc.).
+- ✅ 6.4.2: Enhanced external runner with file preview, better config warnings, and next-steps guidance.
+- ✅ 6.4.3: Added `--report` to `scan` command for consistent reporting across all commands.
+- ✅ 6.4.4: `--invalidate-cache` already implemented for sync (P3.4 complete).

@@ -14,3 +14,4 @@ export * from './check-runner.js';
 export * from './diff-utils.js';
 export * from './value-generator.js';
 export * from './translation-service.js';
+export * from './suspicious-key-renamer.js';

@@ -3,6 +3,7 @@ import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
+import { createUnifiedDiff, SourceFileDiffEntry } from './diff-utils.js';
 
 export interface KeyRenamerOptions {
   workspaceRoot?: string;
@@ -13,6 +14,7 @@ export interface KeyRenamerOptions {
 
 export interface KeyRenameOptions {
   write?: boolean;
+  diff?: boolean;
 }
 
 export interface KeyRenameMapping {
@@ -37,6 +39,7 @@ export interface KeyRenameSummary {
   missingLocales: string[];
   write: boolean;
   actionableItems: ActionableItem[];
+  diffs: SourceFileDiffEntry[];
 }
 
 export interface KeyRenameMappingSummary {
@@ -55,6 +58,7 @@ export interface KeyRenameBatchSummary {
   mappingSummaries: KeyRenameMappingSummary[];
   write: boolean;
   actionableItems: ActionableItem[];
+  diffs: SourceFileDiffEntry[];
 }
 
 export class KeyRenamer {
@@ -96,6 +100,7 @@ export class KeyRenamer {
       missingLocales: mappingSummary?.missingLocales ?? [],
       write: batchResult.write,
       actionableItems: batchResult.actionableItems,
+      diffs: batchResult.diffs,
     };
   }
 
@@ -109,9 +114,13 @@ export class KeyRenamer {
     }
 
     const write = options.write ?? false;
+    const generateDiffs = options.diff ?? false;
     const files = this.loadFiles();
     const filesToSave = new Map<string, SourceFile>();
     const mappingBySource = new Map<string, KeyRenameMapping>();
+
+    // Store original content for diff generation
+    const originalContents = new Map<string, string>();
 
     for (const mapping of mappings) {
       if (mappingBySource.has(mapping.from)) {
@@ -121,9 +130,11 @@ export class KeyRenamer {
     }
 
     const occurrencesByKey = new Map<string, number>();
+    const filesToModify = new Set<SourceFile>();
 
+    // First pass: identify files to modify and count occurrences
     for (const file of files) {
-      let fileTouched = false;
+      let hasMatch = false;
       file.forEachDescendant((node) => {
         if (!Node.isCallExpression(node)) {
           return;
@@ -143,14 +154,54 @@ export class KeyRenamer {
         }
 
         occurrencesByKey.set(literal, (occurrencesByKey.get(literal) ?? 0) + 1);
-        if (write) {
-          arg.setLiteralValue(mapping.to);
-          fileTouched = true;
-        }
+        hasMatch = true;
       });
 
-      if (fileTouched) {
+      if (hasMatch) {
+        filesToModify.add(file);
+        // Capture original content for diffs
+        if (generateDiffs || write) {
+          originalContents.set(file.getFilePath(), file.getFullText());
+        }
+      }
+    }
+
+    // Second pass: apply modifications (only if writing or generating diffs)
+    if (write || generateDiffs) {
+      for (const file of filesToModify) {
+        file.forEachDescendant((node) => {
+          if (!Node.isCallExpression(node)) {
+            return;
+          }
+          const callee = node.getExpression();
+          if (!Node.isIdentifier(callee) || callee.getText() !== this.translationIdentifier) {
+            return;
+          }
+          const [arg] = node.getArguments();
+          if (!arg || !Node.isStringLiteral(arg)) {
+            return;
+          }
+          const literal = arg.getLiteralText();
+          const mapping = mappingBySource.get(literal);
+          if (mapping) {
+            arg.setLiteralValue(mapping.to);
+          }
+        });
+
         filesToSave.set(file.getFilePath(), file);
+      }
+    }
+
+    // Generate diffs before saving
+    const diffs: SourceFileDiffEntry[] = [];
+    if (generateDiffs) {
+      for (const [filePath, file] of filesToSave) {
+        const original = originalContents.get(filePath) ?? '';
+        const modified = file.getFullText();
+        const diff = createUnifiedDiff(filePath, original, modified, this.workspaceRoot);
+        if (diff) {
+          diffs.push(diff);
+        }
       }
     }
 
@@ -208,6 +259,7 @@ export class KeyRenamer {
       mappingSummaries,
       write,
       actionableItems,
+      diffs,
     };
   }
 
