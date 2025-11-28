@@ -92,6 +92,8 @@ interface SyncCommandOptions extends ScanOptions {
   namingConvention?: 'kebab-case' | 'camelCase' | 'snake_case';
   rewriteShape?: 'flat' | 'nested';
   shapeDelimiter?: string;
+  seedTargetLocales?: boolean;
+  seedValue?: string;
 }
 
 interface AuditCommandOptions {
@@ -868,6 +870,8 @@ program
   .option('--naming-convention <convention>', 'Naming convention for auto-rename (kebab-case, camelCase, snake_case)', 'kebab-case')
   .option('--rewrite-shape <format>', 'Rewrite all locale files to flat or nested format')
   .option('--shape-delimiter <char>', 'Delimiter for key nesting (default: ".")', '.')
+  .option('--seed-target-locales', 'Add missing keys to target locale files with empty or placeholder values', false)
+  .option('--seed-value <value>', 'Value to use when seeding target locales (default: empty string)', '')
   .action(async (options: SyncCommandOptions) => {
     const interactive = Boolean(options.interactive);
     const diffEnabled = Boolean(options.diff || options.patchDir);
@@ -912,6 +916,14 @@ program
           ...(config.sync.dynamicKeyGlobs ?? []),
           ...options.assumeGlobs,
         ];
+      }
+      // Apply --seed-target-locales and --seed-value flags
+      if (options.seedTargetLocales) {
+        config.seedTargetLocales = true;
+      }
+      if (options.seedValue !== undefined && options.seedValue !== '') {
+        config.sync = config.sync ?? {};
+        config.sync.seedValue = options.seedValue;
       }
       const syncer = new Syncer(config, { workspaceRoot: projectRoot });
       if (interactive) {

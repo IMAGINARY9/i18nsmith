@@ -326,6 +326,10 @@ export class Syncer {
 
       await this.applyMissingKeys(missingKeysToApply);
       await this.applyUnusedKeys(unusedKeysToApply);
+      // Seed keys from source to target locales if configured
+      if (this.config.seedTargetLocales) {
+        await this.seedSourceToTargets(localeData);
+      }
       localeStats = await this.localeStore.flush();
     }
 
@@ -450,8 +454,9 @@ export class Syncer {
       const defaultValue = this.buildDefaultSourceValue(record.key);
       this.applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
+        const seedValue = this.config.sync?.seedValue ?? '';
         for (const locale of this.targetLocales) {
-          this.applyProjectedValue(projectedLocaleData, locale, record.key, '');
+          this.applyProjectedValue(projectedLocaleData, locale, record.key, seedValue);
         }
       }
     }
@@ -884,8 +889,9 @@ export class Syncer {
       const defaultValue = this.buildDefaultSourceValue(record.key);
       await this.localeStore.upsert(this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
+        const seedValue = this.config.sync?.seedValue ?? '';
         for (const locale of this.targetLocales) {
-          await this.localeStore.upsert(locale, record.key, '');
+          await this.localeStore.upsert(locale, record.key, seedValue);
         }
       }
     }
@@ -895,6 +901,25 @@ export class Syncer {
     for (const record of unusedKeys) {
       for (const locale of record.locales) {
         await this.localeStore.remove(locale, record.key);
+      }
+    }
+  }
+
+  /**
+   * Seeds keys from source locale to target locales if they are missing.
+   * This ensures target locales have the same structure as the source.
+   */
+  private async seedSourceToTargets(localeData: Map<string, Record<string, string>>) {
+    const seedValue = this.config.sync?.seedValue ?? '';
+    const sourceData = localeData.get(this.sourceLocale) ?? {};
+    const sourceKeys = Object.keys(sourceData);
+
+    for (const locale of this.targetLocales) {
+      const targetData = localeData.get(locale) ?? {};
+      for (const key of sourceKeys) {
+        if (!(key in targetData)) {
+          await this.localeStore.upsert(locale, key, seedValue);
+        }
       }
     }
   }
