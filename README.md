@@ -366,3 +366,27 @@ i18nsmith rename-keys --map rename-map.json --write
 ```
 
 The batch command reuses the same safety rails as `rename-key`: duplicate destinations are surfaced per-locale, missing source locales are highlighted, and `--write` performs all mutations in a single pass so updates stay in sync across code and locales.
+
+## Translation Workflows (Manual → External → Automated)
+
+We recommend a tiered approach to translating strings so teams can adopt i18n without handing over sensitive API keys or paying for machine translation prematurely.
+
+- Manual (seed & edit):
+	- Use `i18nsmith sync --write --seed-target-locales` to create missing keys in target locale files with empty values or a configurable placeholder (see `sync.seedValue` in `i18n.config.json`). This lets translators edit JSON or use editor patches without dealing with key names.
+
+- External (CSV handoff):
+	- Export missing keys to a CSV translators can work with: `i18nsmith translate --export missing.csv --locales fr de`
+	- CSV format: `key,sourceLocale,sourceValue,targetLocale,translatedValue`
+	- After translators fill `translatedValue`, import back with: `i18nsmith translate --import filled.csv --write` which validates placeholders and merges by key.
+
+- Automated (pluggable adapters):
+	- Configure a provider in `i18n.config.json` (e.g., `translation.provider: "deepl"`) and estimate costs with `i18nsmith translate --estimate` before applying translation via `i18nsmith translate --write`.
+	- Use the `mock` adapter for UI/pseudo-localization tests without external APIs: `i18nsmith translate --provider mock --write`.
+
+Where to put docs
+ - The full guide and recipes live in `docs/recipes/translation-workflows.md` in this repo. It contains CSV examples, placeholder validation notes, and recommended CLI sequences for each workflow tier.
+
+Why this helps
+ - Reduces risk by providing an offline handoff path for non-technical translators.
+ - Lets teams preview and estimate translation costs before spending on paid providers.
+ - Ensures placeholder safety and deterministic locale writes across all workflows.

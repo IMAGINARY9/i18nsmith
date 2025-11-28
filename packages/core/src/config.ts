@@ -314,6 +314,7 @@ function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
       dynamicKeyGlobs,
       retainLocales: typeof syncConfig.retainLocales === 'boolean' ? syncConfig.retainLocales : true,
       suspiciousKeyPolicy,
+      seedValue: typeof syncConfig.seedValue === 'string' ? syncConfig.seedValue : '',
     },
     diagnostics: diagnosticsConfig,
   };
@@ -501,6 +502,11 @@ export interface SyncConfig {
   dynamicKeyGlobs?: string[];
   retainLocales?: boolean;
   suspiciousKeyPolicy?: SuspiciousKeyPolicy;
+  /**
+   * Value to use when seeding target locales with missing keys.
+   * Defaults to "" (empty string). Set to "[TODO]" for visible markers.
+   */
+  seedValue?: string;
 }
 
 export interface DiagnosticsConfig {
