@@ -2,8 +2,11 @@
   "name": "i18nsmith-monorepo",
   "private": true,
   "scripts": {
-    "build": "pnpm --filter \"@i18nsmith/*\" build",
-    "pretest": "pnpm -w -r build",
+    "build": "tsc -b tsconfig.build.json",
+    "build:packages": "pnpm --filter \"@i18nsmith/*\" build",
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
+    "rebuild": "pnpm clean && pnpm build",
+    "pretest": "pnpm build",
     "test": "pnpm --filter \"@i18nsmith/*\" test",
     "check:packages": "node ./scripts/check-package-resolution.mjs",
     "lint": "eslint 'packages/*/src/**/*.{ts,tsx}' --max-warnings 0",
