@@ -101,6 +101,7 @@ export async function diagnoseWorkspace(config: I18nConfig, options: DiagnoseOpt
   const providerFiles = await detectProviderFiles(workspaceRoot, config);
   const adapterFiles = await detectAdapterFiles(workspaceRoot, config);
   const translationUsage = await detectTranslationUsage(workspaceRoot, config);
+  const matchedSourceFiles = await countMatchedSourceFiles(workspaceRoot, config);
 
   const { actionableItems, conflicts, recommendations } = buildActionableInsights({
     localeFiles,
@@ -109,6 +110,7 @@ export async function diagnoseWorkspace(config: I18nConfig, options: DiagnoseOpt
     providerFiles,
     translationUsage,
     adapterFiles,
+    matchedSourceFiles,
   });
 
   return {
@@ -132,6 +134,7 @@ interface InsightBuilderInput {
   providerFiles: ProviderInsight[];
   translationUsage: TranslationUsageInsight;
   adapterFiles: AdapterDetection[];
+  matchedSourceFiles: number;
 }
 
 function buildActionableInsights(input: InsightBuilderInput) {
@@ -213,6 +216,19 @@ function buildActionableInsights(input: InsightBuilderInput) {
       severity: 'info',
       message: `Detected ${input.translationUsage.identifierOccurrences} calls to ${input.translationUsage.translationIdentifier} but no hook usage.`,
     });
+  }
+
+  if (input.matchedSourceFiles === 0) {
+    const includePatterns = input.config.include?.join(', ') ?? 'src/**/*.{ts,tsx,js,jsx}';
+    actionableItems.push({
+      kind: 'diagnostics-zero-source-files',
+      severity: 'error',
+      message: `Include patterns matched 0 source files. Current patterns: ${includePatterns}`,
+      details: { include: input.config.include },
+    });
+    recommendations.push(
+      'Try broader patterns like "src/**/*.{ts,tsx,js,jsx}, app/**/*.{ts,tsx,js,jsx}" or use --include to override.'
+    );
   }
 
   return { actionableItems, conflicts, recommendations };
@@ -412,6 +428,25 @@ function countLocaleKeys(value: unknown): number {
     return Object.values(value).reduce((acc, item) => acc + countLocaleKeys(item), 0);
   }
   return 0;
+}
+
+async function countMatchedSourceFiles(workspaceRoot: string, config: I18nConfig): Promise<number> {
+  const includePatterns = config.include?.length
+    ? config.include
+    : DEFAULT_INCLUDE;
+  const ignorePatterns = config.exclude?.length
+    ? config.exclude
+    : ['node_modules/**', '.next/**', 'dist/**'];
+
+  const files = await fg(includePatterns, {
+    cwd: workspaceRoot,
+    ignore: ignorePatterns,
+    onlyFiles: true,
+    unique: true,
+    suppressErrors: true,
+  }).catch(() => [] as string[]);
+
+  return files.length;
 }
 
 function escapeRegex(value: string): string {

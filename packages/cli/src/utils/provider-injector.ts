@@ -16,9 +16,16 @@ import {
 export type ProviderInjectionResult =
   | { status: 'injected'; file: string; diff?: string }
   | { status: 'preview'; file: string; diff: string }
-  | { status: 'skipped'; file: string }
+  | { status: 'skipped'; file: string; existingProvider?: string }
   | { status: 'failed'; file: string; reason: string }
   | { status: 'not-found' };
+
+export interface ProviderDetectionResult {
+  found: boolean;
+  file?: string;
+  provider?: string;
+  candidates: string[];
+}
 
 export interface ProviderInjectionOptions {
   providerComponentPath: string;
@@ -27,6 +34,7 @@ export interface ProviderInjectionOptions {
 }
 
 const DEFAULT_PROVIDER_CANDIDATES = [
+  // Next.js App Router patterns
   'app/providers.tsx',
   'app/providers.ts',
   'app/providers.jsx',
@@ -35,7 +43,100 @@ const DEFAULT_PROVIDER_CANDIDATES = [
   'src/app/providers.ts',
   'src/app/providers.jsx',
   'src/app/providers.js',
+  // Next.js layout files (common provider host)
+  'app/layout.tsx',
+  'app/layout.ts',
+  'app/layout.jsx',
+  'app/layout.js',
+  'src/app/layout.tsx',
+  'src/app/layout.ts',
+  'src/app/layout.jsx',
+  'src/app/layout.js',
+  // Generic provider wrappers
+  'src/providers.tsx',
+  'src/providers.ts',
+  'src/providers.jsx',
+  'src/providers.js',
 ];
+
+const KNOWN_I18N_PROVIDERS = [
+  'I18nProvider',
+  'IntlProvider', // react-intl
+  'NextIntlClientProvider', // next-intl
+  'NextIntlProvider', // next-intl (older)
+  'I18nextProvider', // react-i18next
+  'TranslationProvider', // common custom name
+  'LocaleProvider', // common custom name
+  'LanguageProvider', // common custom name
+];
+
+/**
+ * Detect if any provider file exists and whether an i18n provider is already wired.
+ */
+export async function detectExistingProvider(
+  candidates: string[] = DEFAULT_PROVIDER_CANDIDATES
+): Promise<ProviderDetectionResult> {
+  const workspaceRoot = process.cwd();
+  const existingFiles: string[] = [];
+
+  for (const candidate of candidates) {
+    const absoluteCandidate = path.resolve(workspaceRoot, candidate);
+    if (await fileExists(absoluteCandidate)) {
+      existingFiles.push(candidate);
+    }
+  }
+
+  if (existingFiles.length === 0) {
+    return { found: false, candidates: [] };
+  }
+
+  // Check each existing file for an i18n provider
+  for (const file of existingFiles) {
+    const absolutePath = path.resolve(workspaceRoot, file);
+    const contents = await fs.readFile(absolutePath, 'utf8');
+
+    const project = new Project({
+      useInMemoryFileSystem: false,
+      skipAddingFilesFromTsConfig: true,
+    });
+
+    const sourceFile = project.createSourceFile(absolutePath, contents, { overwrite: true });
+    const detectedProvider = getDetectedProvider(sourceFile);
+
+    if (detectedProvider) {
+      return {
+        found: true,
+        file,
+        provider: detectedProvider,
+        candidates: existingFiles,
+      };
+    }
+  }
+
+  // Files exist but no provider detected
+  return { found: false, candidates: existingFiles };
+}
+
+/**
+ * Returns the name of the detected i18n provider, or undefined if none found.
+ */
+function getDetectedProvider(sourceFile: SourceFile): string | undefined {
+  for (const pattern of KNOWN_I18N_PROVIDERS) {
+    const hasPattern =
+      sourceFile
+        .getDescendantsOfKind(SyntaxKind.JsxOpeningElement)
+        .some((element: JsxOpeningElement) => getTagName(element) === pattern) ||
+      sourceFile
+        .getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+        .some((element: JsxSelfClosingElement) => getTagName(element) === pattern);
+
+    if (hasPattern) {
+      return pattern;
+    }
+  }
+
+  return undefined;
+}
 
 export async function maybeInjectProvider(
   options: ProviderInjectionOptions
@@ -90,8 +191,9 @@ async function injectIntoCandidate({
 
   const sourceFile = project.createSourceFile(candidateAbsolutePath, originalContents, { overwrite: true });
 
-  if (usesI18nProvider(sourceFile)) {
-    return { status: 'skipped', file: candidateRelativePath };
+  const existingProvider = getDetectedProvider(sourceFile);
+  if (existingProvider) {
+    return { status: 'skipped', file: candidateRelativePath, existingProvider };
   }
 
   const childrenExpressions = findChildrenExpressions(sourceFile);
@@ -138,17 +240,6 @@ async function injectIntoCandidate({
 
   await fs.writeFile(candidateAbsolutePath, updatedContents, 'utf8');
   return { status: 'injected', file: candidateRelativePath, diff };
-}
-
-function usesI18nProvider(sourceFile: SourceFile) {
-  return (
-    sourceFile
-      .getDescendantsOfKind(SyntaxKind.JsxOpeningElement)
-      .some((element: JsxOpeningElement) => getTagName(element) === 'I18nProvider') ||
-    sourceFile
-      .getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
-      .some((element: JsxSelfClosingElement) => getTagName(element) === 'I18nProvider')
-  );
 }
 
 function getTagName(element: JsxOpeningElement | JsxSelfClosingElement) {

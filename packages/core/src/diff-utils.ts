@@ -10,6 +10,13 @@ export interface LocaleDiffEntry {
   removed: string[];
 }
 
+export interface SourceFileDiffEntry {
+  path: string;
+  relativePath: string;
+  diff: string;
+  changes: number;
+}
+
 export interface LocaleDiffPreview {
   locale: string;
   add: string[];
@@ -135,4 +142,58 @@ function computeDiffStats(
     updated: updated.sort(),
     removed: removed.sort(),
   };
+}
+
+/**
+ * Create a unified diff for a source file change.
+ */
+export function createUnifiedDiff(
+  filePath: string,
+  originalContent: string,
+  newContent: string,
+  workspaceRoot: string
+): SourceFileDiffEntry | null {
+  if (originalContent === newContent) {
+    return null;
+  }
+
+  const relativePath = path.relative(workspaceRoot, filePath) || filePath;
+  const diff = createPatch(relativePath, originalContent, newContent);
+
+  // Count the number of changes (lines starting with + or - that aren't headers)
+  const lines = diff.split('\n');
+  let changes = 0;
+  for (const line of lines) {
+    if ((line.startsWith('+') || line.startsWith('-')) && 
+        !line.startsWith('+++') && 
+        !line.startsWith('---')) {
+      changes++;
+    }
+  }
+
+  return {
+    path: filePath,
+    relativePath,
+    diff,
+    changes,
+  };
+}
+
+/**
+ * Build diffs for multiple source files.
+ */
+export function buildSourceFileDiffs(
+  fileChanges: Array<{ path: string; original: string; modified: string }>,
+  workspaceRoot: string
+): SourceFileDiffEntry[] {
+  const diffs: SourceFileDiffEntry[] = [];
+
+  for (const change of fileChanges) {
+    const diff = createUnifiedDiff(change.path, change.original, change.modified, workspaceRoot);
+    if (diff) {
+      diffs.push(diff);
+    }
+  }
+
+  return diffs;
 }
