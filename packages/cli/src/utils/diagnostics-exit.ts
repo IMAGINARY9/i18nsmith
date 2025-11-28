@@ -1,24 +1,23 @@
 import type { DiagnoseConflict, DiagnosisReport } from '@i18nsmith/core';
+import { DIAGNOSTICS_EXIT_CODES, DIAGNOSTICS_EXIT_DESCRIPTIONS } from './exit-codes.js';
 
 export interface DiagnosisExitSignal {
   code: number;
   reason: string;
 }
 
-const DEFAULT_CONFLICT_CODE = 5;
-
 const CONFLICT_EXIT_SIGNALS: Record<string, DiagnosisExitSignal> = {
   'missing-source-locale': {
-    code: 2,
-    reason: 'Missing source locale file',
+    code: DIAGNOSTICS_EXIT_CODES.MISSING_SOURCE_LOCALE,
+    reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.MISSING_SOURCE_LOCALE],
   },
   'invalid-locale-json': {
-    code: 3,
-    reason: 'Locale JSON could not be parsed',
+    code: DIAGNOSTICS_EXIT_CODES.INVALID_LOCALE_JSON,
+    reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.INVALID_LOCALE_JSON],
   },
   'unsafe-provider-clash': {
-    code: 4,
-    reason: 'Potential provider or adapter clash detected',
+    code: DIAGNOSTICS_EXIT_CODES.UNSAFE_PROVIDER_CLASH,
+    reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.UNSAFE_PROVIDER_CLASH],
   },
 };
 
@@ -43,7 +42,7 @@ export function selectExitSignal(conflicts: DiagnoseConflict[]): DiagnosisExitSi
     }
 
     const fallbackSignal: DiagnosisExitSignal = {
-      code: DEFAULT_CONFLICT_CODE,
+      code: DIAGNOSTICS_EXIT_CODES.GENERAL_CONFLICT,
       reason: conflict.message,
     };
 
@@ -57,5 +56,8 @@ export function selectExitSignal(conflicts: DiagnoseConflict[]): DiagnosisExitSi
 
 export function describeDiagnosisExitCodes(): Array<{ code: number; reason: string }> {
   const entries = Object.values(CONFLICT_EXIT_SIGNALS).sort((a, b) => a.code - b.code);
-  return entries.concat({ code: DEFAULT_CONFLICT_CODE, reason: 'General diagnostics conflict' });
+  return entries.concat({
+    code: DIAGNOSTICS_EXIT_CODES.GENERAL_CONFLICT,
+    reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.GENERAL_CONFLICT],
+  });
 }

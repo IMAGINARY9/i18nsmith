@@ -36,6 +36,7 @@ import { registerPreflight } from './commands/preflight.js';
 import { registerDebugPatterns } from './commands/debug-patterns.js';
 import { printLocaleDiffs, writeLocaleDiffPatches } from './utils/diff-utils.js';
 import { getDiagnosisExitSignal } from './utils/diagnostics-exit.js';
+import { SYNC_EXIT_CODES, CHECK_EXIT_CODES } from './utils/exit-codes.js';
 
 interface ScanOptions {
   config?: string;
@@ -108,18 +109,6 @@ interface AuditCommandOptions {
 }
 
 const program = new Command();
-
-const SYNC_EXIT_CODES = {
-  DRIFT: 1,
-  PLACEHOLDER_MISMATCH: 2,
-  EMPTY_VALUES: 3,
-  SUSPICIOUS_KEYS: 4,
-} as const;
-
-const CHECK_EXIT_CODES = {
-  WARNINGS: 10,
-  CONFLICTS: 11,
-} as const;
 
 const collectAssumedKeys = (value: string, previous: string[]) => {
   const tokens = value

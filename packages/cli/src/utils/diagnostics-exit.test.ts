@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DiagnoseConflict } from '@i18nsmith/core';
 import { selectExitSignal } from './diagnostics-exit';
+import { DIAGNOSTICS_EXIT_CODES, DIAGNOSTICS_EXIT_DESCRIPTIONS } from './exit-codes';
 
 describe('selectExitSignal', () => {
   it('returns null when there are no conflicts', () => {
@@ -13,7 +14,10 @@ describe('selectExitSignal', () => {
     ];
 
     const result = selectExitSignal(conflicts);
-    expect(result).toEqual({ code: 2, reason: 'Missing source locale file' });
+    expect(result).toEqual({
+      code: DIAGNOSTICS_EXIT_CODES.MISSING_SOURCE_LOCALE,
+      reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.MISSING_SOURCE_LOCALE],
+    });
   });
 
   it('prefers higher severity codes when multiple conflicts exist', () => {
@@ -23,7 +27,10 @@ describe('selectExitSignal', () => {
     ];
 
     const result = selectExitSignal(conflicts);
-    expect(result).toEqual({ code: 3, reason: 'Locale JSON could not be parsed' });
+    expect(result).toEqual({
+      code: DIAGNOSTICS_EXIT_CODES.INVALID_LOCALE_JSON,
+      reason: DIAGNOSTICS_EXIT_DESCRIPTIONS[DIAGNOSTICS_EXIT_CODES.INVALID_LOCALE_JSON],
+    });
   });
 
   it('falls back to a general conflict exit code for unknown kinds', () => {
@@ -32,6 +39,9 @@ describe('selectExitSignal', () => {
     ];
 
     const result = selectExitSignal(conflicts);
-    expect(result).toEqual({ code: 5, reason: 'Something unexpected happened' });
+    expect(result).toEqual({
+      code: DIAGNOSTICS_EXIT_CODES.GENERAL_CONFLICT,
+      reason: 'Something unexpected happened',
+    });
   });
 });
