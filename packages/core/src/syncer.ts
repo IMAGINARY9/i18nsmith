@@ -32,6 +32,13 @@ import {
   getCachedEntry,
   REFERENCE_CACHE_VERSION,
 } from './syncer/reference-cache.js';
+import {
+  type PlaceholderIssue,
+  type EmptyValueViolation,
+  type EmptyValueViolationReason,
+  collectPlaceholderIssues,
+  collectEmptyValueViolations,
+} from './syncer/sync-validator.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -39,6 +46,8 @@ export { SuspiciousKeyReason } from './key-validator.js';
 export type { TranslationReference, DynamicKeyReason, DynamicKeyWarning } from './reference-extractor.js';
 // Re-export from reference-cache
 export type { FileFingerprint, ReferenceCacheEntry } from './syncer/reference-cache.js';
+// Re-export from sync-validator
+export type { PlaceholderIssue, EmptyValueViolation, EmptyValueViolationReason } from './syncer/sync-validator.js';
 
 export interface MissingKeyRecord {
   key: string;
@@ -73,25 +82,6 @@ export interface SyncSummary {
 export interface SyncSelection {
   missing?: string[];
   unused?: string[];
-}
-
-export interface PlaceholderIssue {
-  key: string;
-  locale: string;
-  missing: string[];
-  extra: string[];
-  references: TranslationReference[];
-  sourceValue?: string;
-  targetValue?: string;
-}
-
-export type EmptyValueViolationReason = 'empty' | 'whitespace' | 'placeholder' | 'null';
-
-export interface EmptyValueViolation {
-  key: string;
-  locale: string;
-  value: string | null;
-  reason: EmptyValueViolationReason;
 }
 
 export interface SuspiciousKeyWarning {
@@ -268,9 +258,9 @@ export class Syncer {
     );
 
     const placeholderIssues = runtime.validateInterpolations
-      ? this.collectPlaceholderIssues(localeData, scopedReferencesByKey)
+      ? collectPlaceholderIssues(localeData, scopedReferencesByKey, this.sourceLocale, this.targetLocales, this.placeholderPatterns)
       : [];
-    const emptyValueViolations = this.collectEmptyValueViolations(localeData);
+    const emptyValueViolations = collectEmptyValueViolations(localeData, this.targetLocales, this.emptyValueMarkers);
 
     // Collect suspicious keys from code references
     const suspiciousKeys: SuspiciousKeyWarning[] = [];
@@ -889,105 +879,6 @@ export class Syncer {
         : path.join(this.workspaceRoot, rawPattern);
       return isNegated ? `!${absolute}` : absolute;
     });
-  }
-
-  private collectPlaceholderIssues(
-    localeData: Map<string, Record<string, string>>,
-    referencesByKey: Map<string, TranslationReference[]>
-  ): PlaceholderIssue[] {
-    const issues: PlaceholderIssue[] = [];
-    const sourceData = localeData.get(this.sourceLocale) ?? {};
-
-    for (const [key, sourceValue] of Object.entries(sourceData)) {
-      const sourcePlaceholders = this.extractPlaceholdersFromValue(sourceValue);
-      const sourceSet = sourcePlaceholders;
-
-      for (const locale of this.targetLocales) {
-        const targetValue = localeData.get(locale)?.[key];
-        if (typeof targetValue === 'undefined') {
-          continue;
-        }
-
-        const targetSet = this.extractPlaceholdersFromValue(targetValue);
-        const missing = Array.from(sourceSet).filter((token) => !targetSet.has(token));
-        const extra = Array.from(targetSet).filter((token) => !sourceSet.has(token));
-
-        if (!missing.length && !extra.length) {
-          continue;
-        }
-
-        issues.push({
-          key,
-          locale,
-          missing,
-          extra,
-          references: referencesByKey.get(key) ?? [],
-          sourceValue,
-          targetValue,
-        });
-      }
-    }
-
-    return issues;
-  }
-
-  private collectEmptyValueViolations(localeData: Map<string, Record<string, string>>): EmptyValueViolation[] {
-    const violations: EmptyValueViolation[] = [];
-
-    for (const locale of this.targetLocales) {
-      const data = localeData.get(locale);
-      if (!data) {
-        continue;
-      }
-
-      for (const [key, value] of Object.entries(data)) {
-        const reason = this.getEmptyValueReason(value);
-        if (!reason) {
-          continue;
-        }
-
-        violations.push({
-          key,
-          locale,
-          value: typeof value === 'string' ? value : null,
-          reason,
-        });
-      }
-    }
-
-    return violations;
-  }
-
-  private getEmptyValueReason(value: unknown): EmptyValueViolationReason | null {
-    if (value === null || typeof value === 'undefined') {
-      return 'null';
-    }
-
-    if (typeof value !== 'string') {
-      return null;
-    }
-
-    if (value.length === 0) {
-      return 'empty';
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed.length) {
-      return 'whitespace';
-    }
-
-    if (this.emptyValueMarkers.has(trimmed.toLowerCase())) {
-      return 'placeholder';
-    }
-
-    return null;
-  }
-
-  private extractPlaceholdersFromValue(value: unknown): Set<string> {
-    if (typeof value !== 'string') {
-      return new Set();
-    }
-    return new Set(extractPlaceholders(value, this.placeholderPatterns));
   }
 
   private resolveRuntimeOptions(runOptions: SyncRunOptions): ResolvedSyncRunOptions {
