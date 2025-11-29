@@ -508,7 +508,7 @@ export class Syncer {
     // Only apply removal if prune is explicitly enabled
     // selectedUnusedKeys is from interactive mode where user explicitly selected keys
     const unusedKeysToApply = selectedUnusedKeys
-      ? this.filterSelection(unusedKeys, selectedUnusedKeys)
+      ? filterSelection(unusedKeys, selectedUnusedKeys)
       : prune
       ? unusedKeys
       : [];
@@ -829,13 +829,6 @@ export class Syncer {
       expression,
       reason,
     };
-  }
-
-  private filterSelection<T extends { key: string }>(items: T[], selection?: Set<string>): T[] {
-    if (!selection) {
-      return items;
-    }
-    return items.filter((item) => selection.has(item.key));
   }
 
   private filterReferencesByKey(
