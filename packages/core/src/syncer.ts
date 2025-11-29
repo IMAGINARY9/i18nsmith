@@ -51,6 +51,11 @@ import {
   buildSelectionSet,
   buildDefaultSourceValue,
 } from './syncer/sync-utils.js';
+import {
+  compileGlob,
+  matchesAnyGlob,
+  collectPatternMatchedKeys,
+} from './syncer/pattern-matcher.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -198,7 +203,7 @@ export class Syncer {
     this.dynamicKeyGlobMatchers = globPatterns
       .map((pattern) => pattern.trim())
       .filter(Boolean)
-      .map((pattern) => this.compileGlob(pattern));
+      .map((pattern) => compileGlob(pattern));
     this.cacheDir = path.join(this.workspaceRoot, '.i18nsmith', 'cache');
     this.referenceCachePath = path.join(this.cacheDir, 'sync-references.json');
   }
@@ -790,8 +795,8 @@ export class Syncer {
       }
     }
 
-    const selectedMissingKeys = this.buildSelectionSet(runOptions.selection?.missing);
-    const selectedUnusedKeys = this.buildSelectionSet(runOptions.selection?.unused);
+    const selectedMissingKeys = buildSelectionSet(runOptions.selection?.missing);
+    const selectedUnusedKeys = buildSelectionSet(runOptions.selection?.unused);
 
     // prune defaults to false for safety - unused keys are only removed with explicit --prune flag
     const prune = runOptions.prune ?? false;
@@ -857,39 +862,12 @@ export class Syncer {
     return scoped;
   }
 
-  private buildSelectionSet(keys?: string[]): Set<string> | undefined {
-    if (!keys) {
-      return undefined;
-    }
-    const next = new Set<string>();
-    for (const key of keys) {
-      const normalized = key?.trim();
-      if (normalized) {
-        next.add(normalized);
-      }
-    }
-    return next;
-  }
-
   private collectPatternAssumedKeys(localeData: Map<string, Record<string, string>>): Set<string> {
-    const assumed = new Set<string>();
-    if (!this.dynamicKeyGlobMatchers.length) {
-      return assumed;
-    }
-
-    for (const data of localeData.values()) {
-      for (const key of Object.keys(data)) {
-        if (this.matchesDynamicKeyGlobs(key)) {
-          assumed.add(key);
-        }
-      }
-    }
-
-    return assumed;
+    return collectPatternMatchedKeys(localeData, this.dynamicKeyGlobMatchers);
   }
 
   private matchesDynamicKeyGlobs(key: string): boolean {
-    return this.dynamicKeyGlobMatchers.some((matcher) => matcher.test(key));
+    return matchesAnyGlob(key, this.dynamicKeyGlobMatchers);
   }
 
   private shouldAutoApplyMissingKey(record: MissingKeyRecord, selectedMissingKeys?: Set<string>): boolean {
@@ -902,34 +880,5 @@ export class Syncer {
     }
 
     return selectedMissingKeys?.has(record.key) ?? false;
-  }
-
-  private compileGlob(pattern: string): RegExp {
-    let regex = '';
-    for (let i = 0; i < pattern.length; i += 1) {
-      const char = pattern[i];
-      if (char === '*') {
-        if (pattern[i + 1] === '*') {
-          regex += '.*';
-          i += 1;
-        } else {
-          regex += '[^.]*';
-        }
-        continue;
-      }
-
-      if (char === '?') {
-        regex += '.';
-        continue;
-      }
-
-      regex += this.escapeRegexChar(char);
-    }
-
-    return new RegExp(`^${regex}$`);
-  }
-
-  private escapeRegexChar(char: string): string {
-    return char.replace(/[-[\]/{}()+?.\\^$|]/g, '\\$&');
   }
 }
