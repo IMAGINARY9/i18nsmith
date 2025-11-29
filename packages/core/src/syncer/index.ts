@@ -32,3 +32,23 @@ export {
   type BuildActionableItemsInput,
   buildActionableItems,
 } from './sync-reporter.js';
+
+// Locale data utilities
+export {
+  cloneLocaleData,
+  applyProjectedValue,
+  applyProjectedRemoval,
+  buildLocaleKeySets,
+  filterSelection,
+  buildSelectionSet,
+  buildDefaultSourceValue,
+} from './sync-utils.js';
+
+// Pattern matching utilities
+export {
+  compileGlob,
+  compileGlobPatterns,
+  matchesAnyGlob,
+  collectPatternMatchedKeys,
+  escapeRegexChar,
+} from './pattern-matcher.js';
