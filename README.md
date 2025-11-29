@@ -394,3 +394,64 @@ Why this helps
  - Reduces risk by providing an offline handoff path for non-technical translators.
  - Lets teams preview and estimate translation costs before spending on paid providers.
  - Ensures placeholder safety and deterministic locale writes across all workflows.
+
+## Locale quality auditing
+
+Need to scan your locale files for suspicious patterns or quality issues? Use `i18nsmith audit`:
+
+```bash
+# Audit all locale files
+i18nsmith audit
+
+# Audit a specific locale
+i18nsmith audit --locale en
+
+# Show JSON output
+i18nsmith audit --json
+```
+
+The audit command detects:
+- **Suspicious keys**: Keys containing spaces, trailing punctuation, or sentence-like patterns
+- **Key-equals-value patterns**: Where the key name matches the translation value
+- **Duplicate values**: Multiple keys with identical translations (potential consolidation)
+- **Orphaned namespaces**: Namespaces with very few keys (candidates for reorganization)
+- **Key inconsistencies**: Similar but inconsistent key patterns across locales
+
+Audit results include actionable suggestions for fixing detected issues.
+
+## Backup & restore
+
+i18nsmith automatically backs up locale files before destructive operations (sync, rename, translate with `--write`). Manage backups with:
+
+```bash
+# List all available backups
+i18nsmith backup-list
+
+# Restore from a specific backup
+i18nsmith backup-restore <timestamp>
+
+# Skip backup creation during sync/translate
+i18nsmith sync --write --no-backup
+```
+
+Backups are stored in `node_modules/.cache/i18nsmith/backups/` by default and are timestamped for easy identification.
+
+---
+
+## Developer Documentation
+
+### Architecture & Module Structure
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for detailed package structure and refactoring history.
+
+**Module-Level Documentation:**
+- **Config Module:** [`packages/core/src/config/README.md`](./packages/core/src/config/README.md) — Configuration types, loading, and normalization
+- **Syncer Module:** [`packages/core/src/syncer/README.md`](./packages/core/src/syncer/README.md) — Locale synchronization and validation
+- **Translate Command:** [`packages/cli/src/commands/translate/README.md`](./packages/cli/src/commands/translate/README.md) — Translation command implementation
+
+### Additional Documentation
+
+- **Refactoring History:** [`docs/REFACTORING_PLAN.md`](./docs/REFACTORING_PLAN.md) — Quality improvements and edge case coverage
+- **Troubleshooting:** [`docs/troubleshooting.md`](./docs/troubleshooting.md) — Common issues and solutions
+- **Best Practices:** [`docs/best-practices.md`](./docs/best-practices.md) — Key naming conventions and CI/CD integration
+- **Translation Workflows:** [`docs/recipes/translation-workflows.md`](./docs/recipes/translation-workflows.md) — CSV handoff and manual translation patterns

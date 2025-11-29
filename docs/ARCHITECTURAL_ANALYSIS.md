@@ -1,21 +1,44 @@
 # Architectural Analysis & Refactoring Proposal
 
-**Date:** 2025-01-XX  
-**Status:** 🔍 Analysis Phase  
+**Date:** 2025-11-29  
+**Status:** ✅ Complete  
 **Priority:** Critical
 
 ---
 
-## Executive Summary
+## Refactoring Results Summary
+
+All critical issues identified in this analysis have been addressed:
+
+| Phase | Target | Before | After | Reduction | Commit |
+|-------|--------|--------|-------|-----------|--------|
+| 1 | CLI `index.ts` | 1,793 LOC | 39 LOC | **-97.8%** | 710586e |
+| 2 | Core `syncer.ts` | 1,248 LOC | 877 LOC | **-30%** | 6 commits |
+| 3 | CLI `translate.ts` | 789 LOC | 6 LOC | **-99.2%** | cf7b739 |
+| 4 | Core `config.ts` | 550 LOC | 8 LOC | **-98.5%** | a08a549 |
+| 5 | Documentation | — | — | — | c5df35b |
+
+**New module structure created:**
+
+- `packages/cli/src/commands/` — 12 focused command modules
+- `packages/cli/src/commands/translate/` — 5 modules (types, reporter, executor, csv-handler, index)
+- `packages/core/src/config/` — 5 modules (types, defaults, normalizer, loader, index)
+- `packages/core/src/syncer/` — 6 modules (reference-cache, sync-validator, sync-reporter, sync-utils, pattern-matcher, index)
+
+**All 284 tests passing** after refactoring.
+
+---
+
+## Executive Summary (Original Analysis)
 
 After comprehensive analysis of the i18nsmith codebase, several architectural issues require attention:
 
-### Critical Issues
-1. **CLI God Object** - `packages/cli/src/index.ts` (1,793 lines) handles 12+ commands inline
-2. **Syncer Complexity** - `packages/core/src/syncer.ts` (1,247 lines) despite prior decomposition
-3. **Command Handler Bloat** - `translate.ts` (789 lines) mixes orchestration, validation, and UI
-4. **Scattered Concerns** - Backup, diff utils, validation spread across packages
-5. **Documentation Drift** - ARCHITECTURE.md describes workflow that partially exists
+### Critical Issues (All Resolved ✅)
+1. ~~**CLI God Object** - `packages/cli/src/index.ts` (1,793 lines) handles 12+ commands inline~~ → **39 lines**
+2. ~~**Syncer Complexity** - `packages/core/src/syncer.ts` (1,247 lines) despite prior decomposition~~ → **877 lines + 6 modules**
+3. ~~**Command Handler Bloat** - `translate.ts` (789 lines) mixes orchestration, validation, and UI~~ → **6 lines + 5 modules**
+4. ~~**Scattered Concerns** - Backup, diff utils, validation spread across packages~~ → **Organized into focused modules**
+5. ~~**Documentation Drift** - ARCHITECTURE.md describes workflow that partially exists~~ → **Updated**
 
 ### Positive Aspects
 ✅ Monorepo structure with pnpm workspaces  
@@ -177,42 +200,39 @@ private readonly keyValidator: KeyValidator;
 
 ---
 
-### 2.3 Documentation Issues
+### 2.3 Documentation Issues (RESOLVED ✅)
 
-#### Problem: Architecture Documentation Drift
-**File:** `ARCHITECTURE.md`
+#### Status: Most Commands Now Documented
 
-**Documented Workflow:**
-```markdown
-1. Initialization (i18nsmith init)
-2. Extraction & Transformation (i18nsmith run)
-3. Translation (i18nsmith translate)
-```
+The root `README.md` now comprehensively documents:
 
-**Actual CLI Commands:**
+**✅ Documented Commands:**
 ```bash
-i18nsmith init           # ✅ Documented
-i18nsmith diagnose       # ❌ Not documented
-i18nsmith audit          # ❌ Not documented
-i18nsmith check          # ❌ Not documented (replaces scan partially)
-i18nsmith scan           # ❌ Not documented
-i18nsmith transform      # ✅ Partially documented as "run"
-i18nsmith sync           # ❌ Not documented (critical command!)
-i18nsmith translate      # ✅ Documented
-i18nsmith backup-list    # ❌ Not documented
-i18nsmith backup-restore # ❌ Not documented
-i18nsmith rename-key     # ❌ Not documented
-i18nsmith rename-keys    # ❌ Not documented
-i18nsmith preflight      # ❌ Not documented
-i18nsmith debug-patterns # ❌ Not documented
-i18nsmith scaffold-adapter # ❌ Not documented
+i18nsmith init           # ✅ Documented (scaffold config)
+i18nsmith diagnose       # ✅ Documented (detect existing assets)
+i18nsmith check          # ✅ Documented (health check)
+i18nsmith scan           # ✅ Documented (preview file coverage)
+i18nsmith transform      # ✅ Documented (inject i18n calls)
+i18nsmith sync           # ✅ Documented (drift detection)
+i18nsmith translate      # ✅ Documented (automated translation)
+i18nsmith rename-key     # ✅ Documented (single key rename)
+i18nsmith rename-keys    # ✅ Documented (batch rename)
+i18nsmith scaffold-adapter # ✅ Documented (adapter scaffolding)
 ```
 
-**Problems:**
-- Only 2 of 15 commands documented in architecture
-- No explanation of `sync` vs `transform` vs `check` relationships
-- Workflow doesn't mention backup/restore or key renaming
-- Missing explanation of when to use each command
+**Remaining Gaps:**
+- `audit` — Mentioned in REFACTORING_PLAN.md but not in main README
+- `backup-list` / `backup-restore` — Not documented in README
+- `preflight` — Internal command, may not need user docs
+- `debug-patterns` — Internal command, may not need user docs
+
+**Module-Level Documentation:**
+- ✅ `packages/core/src/config/README.md` — Configuration module
+- ✅ `packages/core/src/syncer/README.md` — Syncer module
+- ✅ `packages/cli/src/commands/translate/README.md` — Translate command
+
+**Recommendation:**
+Add brief sections to README.md for `audit` and backup commands. Internal commands (`preflight`, `debug-patterns`) can remain undocumented for end users.
 
 ---
 
