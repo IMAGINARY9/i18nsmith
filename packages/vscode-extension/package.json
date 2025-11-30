@@ -41,6 +41,14 @@
       {
         "command": "i18nsmith.refreshDiagnostics",
         "title": "i18nsmith: Refresh Diagnostics"
+      },
+      {
+        "command": "i18nsmith.addPlaceholder",
+        "title": "i18nsmith: Add Placeholder Key"
+      },
+      {
+        "command": "i18nsmith.extractKey",
+        "title": "i18nsmith: Extract Selection as Translation Key"
       }
     ],
     "configuration": {

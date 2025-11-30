@@ -4,8 +4,11 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - a
 
 ## Features
 
-- **Inline Diagnostics**: See i18n issues directly in your editor
-- **CodeLens Actions**: Quick actions to run i18nsmith commands
+- **Inline Diagnostics**: See i18n issues directly in your editor (Problems panel + squiggles)
+- **Hover Provider**: Hover over `t('key')` to see values across all locales
+- **CodeLens Actions**: Quick actions to run i18nsmith commands above files with issues
+- **Quick Fixes**: Add missing key placeholders directly from the editor
+- **Extract String**: Select a hardcoded string and extract it as a translation key
 - **Auto-refresh**: Diagnostics update when the report file changes
 - **Status Bar**: Quick access to run health checks
 
@@ -23,6 +26,28 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - a
 | `i18nsmith: Run Health Check` | Run `i18nsmith check` and generate report |
 | `i18nsmith: Sync Locales (Dry Run)` | Run `i18nsmith sync` dry-run |
 | `i18nsmith: Refresh Diagnostics` | Manually refresh diagnostics from report |
+| `i18nsmith: Add Placeholder Key` | Add a TODO placeholder for a missing key |
+| `i18nsmith: Extract Selection as Translation Key` | Extract selected string as a new key |
+
+## Quick Fixes (CodeActions)
+
+When you see an i18nsmith diagnostic, click the lightbulb or press `Cmd+.` to see available fixes:
+
+- **Add placeholder for 'key'**: Adds a `[TODO: key]` entry to your source locale
+- **Run i18nsmith sync to fix**: Runs the sync command to fix drift
+- **Run i18nsmith check**: Re-runs the health check
+
+## Hover Preview
+
+Hover over any `t('key')` call to see a table of values across all locales:
+
+```
+| Locale | Value           |
+|--------|-----------------|
+| en     | Hello           |
+| es     | Hola            |
+| fr     | ⚠️ *missing*    |
+```
 
 ## Configuration
 
