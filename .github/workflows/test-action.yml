@@ -1,0 +1,87 @@
+name: Test i18nsmith Action
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run'
+        required: false
+        default: 'check'
+      fail-on:
+        description: 'Fail threshold'
+        required: false
+        default: 'conflicts'
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create test fixture
+        run: |
+          mkdir -p test-fixture/locales test-fixture/src
+          
+          # Create config
+          cat > test-fixture/i18n.config.json << 'EOF'
+          {
+            "sourceLanguage": "en",
+            "targetLanguages": ["es", "fr"],
+            "localesDir": "./locales",
+            "include": ["src/**/*.tsx"]
+          }
+          EOF
+          
+          # Create source locale
+          cat > test-fixture/locales/en.json << 'EOF'
+          {
+            "common.greeting": "Hello",
+            "common.farewell": "Goodbye"
+          }
+          EOF
+          
+          # Create target locales (partial)
+          cat > test-fixture/locales/es.json << 'EOF'
+          {
+            "common.greeting": "Hola"
+          }
+          EOF
+          
+          cat > test-fixture/locales/fr.json << 'EOF'
+          {
+            "common.greeting": "Bonjour"
+          }
+          EOF
+          
+          # Create a simple component
+          cat > test-fixture/src/App.tsx << 'EOF'
+          import { useTranslation } from 'react-i18next';
+          
+          export function App() {
+            const { t } = useTranslation();
+            return (
+              <div>
+                <h1>{t('common.greeting')}</h1>
+                <p>{t('common.farewell')}</p>
+              </div>
+            );
+          }
+          EOF
+      
+      - name: Run i18nsmith action
+        uses: ./
+        id: i18n
+        with:
+          command: ${{ github.event.inputs.command || 'check' }}
+          fail-on: ${{ github.event.inputs.fail-on || 'conflicts' }}
+          working-directory: test-fixture
+          report-path: i18n-report.json
+          package-manager: npm
+        continue-on-error: true
+      
+      - name: Show results
+        run: |
+          echo "Exit code: ${{ steps.i18n.outputs.exit-code }}"
+          echo "Summary: ${{ steps.i18n.outputs.summary }}"
+          echo ""
+          echo "Report contents:"
+          cat test-fixture/i18n-report.json 2>/dev/null || echo "No report generated"

@@ -6,8 +6,40 @@ on:
       - 'src/**'
       - 'i18n.config.json'
       - 'locales/**'
+  workflow_dispatch:  # Allow manual trigger for testing
+
 jobs:
-  i18n:
+  # Example 1: Using the reusable action (recommended for external repos)
+  i18n-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run i18nsmith check
+        uses: ./  # Use local action (for external repos: IMAGINARY9/i18nsmith@v1)
+        id: i18n-check
+        with:
+          command: check
+          fail-on: conflicts
+          report-path: i18n-check.json
+          package-manager: pnpm
+      
+      - name: Run i18nsmith sync (dry-run)
+        uses: ./
+        with:
+          command: sync
+          args: '--dry-run'
+          report-path: i18n-sync.json
+          package-manager: pnpm
+        continue-on-error: true  # Don't fail on drift, just report
+      
+      - name: Check results
+        run: |
+          echo "Check exit code: ${{ steps.i18n-check.outputs.exit-code }}"
+          echo "Summary: ${{ steps.i18n-check.outputs.summary }}"
+
+  # Example 2: Direct CLI usage (for monorepo development)
+  i18n-direct:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +66,4 @@ jobs:
           path: |
             i18n-check.json
             i18n-sync.json
+

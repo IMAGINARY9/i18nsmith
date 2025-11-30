@@ -1,0 +1,158 @@
+name: 'i18nsmith Check'
+description: 'Run i18nsmith i18n checks (diagnose, check, sync, scan) on your codebase'
+author: 'i18nsmith'
+branding:
+  icon: 'globe'
+  color: 'blue'
+
+inputs:
+  command:
+    description: 'The i18nsmith command to run: check, sync, scan, diagnose'
+    required: false
+    default: 'check'
+  
+  fail-on:
+    description: 'Failure threshold for check command: none, warnings, conflicts, drift'
+    required: false
+    default: 'conflicts'
+  
+  args:
+    description: 'Additional arguments to pass to the command'
+    required: false
+    default: ''
+  
+  working-directory:
+    description: 'Working directory (defaults to repository root)'
+    required: false
+    default: '.'
+  
+  report-path:
+    description: 'Path to write JSON report (enables --report flag)'
+    required: false
+    default: ''
+  
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '20'
+  
+  package-manager:
+    description: 'Package manager: npm, pnpm, yarn'
+    required: false
+    default: 'npm'
+
+outputs:
+  exit-code:
+    description: 'Exit code from i18nsmith command'
+    value: ${{ steps.run-i18nsmith.outputs.exit-code }}
+  
+  report-path:
+    description: 'Path to the generated report (if report-path input was provided)'
+    value: ${{ steps.run-i18nsmith.outputs.report-path }}
+  
+  summary:
+    description: 'Brief summary of the check results'
+    value: ${{ steps.run-i18nsmith.outputs.summary }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Setup pnpm
+      if: inputs.package-manager == 'pnpm'
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8
+
+    - name: Install i18nsmith
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "::group::Installing i18nsmith"
+        if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          pnpm add -D @i18nsmith/cli || npx @i18nsmith/cli --version
+        elif [ "${{ inputs.package-manager }}" = "yarn" ]; then
+          yarn add -D @i18nsmith/cli || npx @i18nsmith/cli --version
+        else
+          npm install -D @i18nsmith/cli || npx @i18nsmith/cli --version
+        fi
+        echo "::endgroup::"
+
+    - name: Run i18nsmith
+      id: run-i18nsmith
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FORCE_COLOR: '0'
+        NO_COLOR: '1'
+      run: |
+        set +e  # Don't exit on error, capture exit code
+        
+        # Build command
+        CMD="npx i18nsmith ${{ inputs.command }}"
+        
+        # Add --json for machine-readable output
+        CMD="$CMD --json"
+        
+        # Add fail-on for check command
+        if [ "${{ inputs.command }}" = "check" ] && [ -n "${{ inputs.fail-on }}" ]; then
+          CMD="$CMD --fail-on ${{ inputs.fail-on }}"
+        fi
+        
+        # Add report path if specified
+        if [ -n "${{ inputs.report-path }}" ]; then
+          CMD="$CMD --report ${{ inputs.report-path }}"
+          echo "report-path=${{ inputs.report-path }}" >> $GITHUB_OUTPUT
+        fi
+        
+        # Add extra args
+        if [ -n "${{ inputs.args }}" ]; then
+          CMD="$CMD ${{ inputs.args }}"
+        fi
+        
+        echo "::group::Running: $CMD"
+        OUTPUT=$($CMD 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        echo "::endgroup::"
+        
+        # Set outputs
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Extract summary from JSON output if possible
+        if echo "$OUTPUT" | jq -e '.hasDrift' > /dev/null 2>&1; then
+          DRIFT=$(echo "$OUTPUT" | jq -r '.hasDrift')
+          CONFLICTS=$(echo "$OUTPUT" | jq -r '.hasConflicts')
+          echo "summary=Drift: $DRIFT, Conflicts: $CONFLICTS" >> $GITHUB_OUTPUT
+        else
+          echo "summary=Command completed with exit code $EXIT_CODE" >> $GITHUB_OUTPUT
+        fi
+        
+        # Exit with captured code
+        exit $EXIT_CODE
+
+    - name: Upload Report Artifact
+      if: inputs.report-path != '' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: i18nsmith-report
+        path: ${{ inputs.working-directory }}/${{ inputs.report-path }}
+        if-no-files-found: ignore
+
+    - name: Add Job Summary
+      if: always()
+      shell: bash
+      run: |
+        echo "## 🌐 i18nsmith Check Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Command:** \`i18nsmith ${{ inputs.command }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "**Exit Code:** ${{ steps.run-i18nsmith.outputs.exit-code }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Summary:** ${{ steps.run-i18nsmith.outputs.summary }}" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ inputs.report-path }}" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📄 Report uploaded as artifact: \`i18nsmith-report\`" >> $GITHUB_STEP_SUMMARY
+        fi

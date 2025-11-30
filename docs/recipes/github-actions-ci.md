@@ -3,13 +3,50 @@
 ## Goal
 Automate i18n drift detection & safety checks in pull requests.
 
-## Workflow Summary
-1. Install dependencies & build.
-2. Run `i18nsmith check --fail-on conflicts`.
-3. Run `i18nsmith sync --dry-run --json` to produce artifact.
-4. Optionally comment summary on PR.
+## Quick Start: Using the i18nsmith Action
 
-## Example Workflow (.github/workflows/i18nsmith-check.yml)
+The easiest way to add i18n checks to your CI is with the reusable action:
+
+```yaml
+name: i18n Check
+on: [pull_request]
+
+jobs:
+  i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run i18nsmith check
+        uses: IMAGINARY9/i18nsmith@v1
+        with:
+          command: check
+          fail-on: conflicts
+          report-path: i18n-report.json
+```
+
+## Action Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `command` | `check` | Command to run: `check`, `sync`, `scan`, `diagnose` |
+| `fail-on` | `conflicts` | Failure threshold: `none`, `warnings`, `conflicts`, `drift` |
+| `args` | `''` | Additional CLI arguments |
+| `working-directory` | `.` | Working directory for the command |
+| `report-path` | `''` | Path to write JSON report (enables artifact upload) |
+| `node-version` | `20` | Node.js version |
+| `package-manager` | `npm` | Package manager: `npm`, `pnpm`, `yarn` |
+
+## Action Outputs
+
+| Output | Description |
+|--------|-------------|
+| `exit-code` | Exit code from i18nsmith command |
+| `report-path` | Path to the generated report |
+| `summary` | Brief summary of check results |
+
+## Example: Full CI Pipeline
+
 ```yaml
 name: i18nsmith
 on:
@@ -19,6 +56,46 @@ on:
       - 'src/**'
       - 'i18n.config.json'
       - 'locales/**'
+
+jobs:
+  i18n-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Health check with conflict detection
+      - name: i18n Health Check
+        uses: IMAGINARY9/i18nsmith@v1
+        id: check
+        with:
+          command: check
+          fail-on: conflicts
+          report-path: i18n-check.json
+          package-manager: pnpm
+      
+      # Sync analysis (dry-run)
+      - name: i18n Sync Analysis
+        uses: IMAGINARY9/i18nsmith@v1
+        with:
+          command: sync
+          args: '--check'
+          report-path: i18n-sync.json
+          package-manager: pnpm
+        continue-on-error: true
+      
+      # Use outputs in subsequent steps
+      - name: Check Results
+        if: always()
+        run: |
+          echo "Check exit code: ${{ steps.check.outputs.exit-code }}"
+          echo "Summary: ${{ steps.check.outputs.summary }}"
+```
+
+## Alternative: Direct CLI Usage
+
+For monorepos or when you need full control:
+
+```yaml
 jobs:
   drift:
     runs-on: ubuntu-latest
@@ -38,7 +115,7 @@ jobs:
       - name: i18n check
         run: npx i18nsmith check --fail-on conflicts --json --report i18n-check.json
       - name: i18n sync dry-run
-        run: npx i18nsmith sync --dry-run --json --report i18n-sync.json
+        run: npx i18nsmith sync --json --report i18n-sync.json
       - name: Upload reports
         uses: actions/upload-artifact@v4
         with:
