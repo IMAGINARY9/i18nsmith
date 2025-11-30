@@ -13,7 +13,7 @@ import { registerTransform } from './commands/transform.js';
 import { registerSync } from './commands/sync.js';
 import { registerBackup } from './commands/backup.js';
 import { registerRename } from './commands/rename.js';
-import './commands/install-hooks.js';
+import { registerInstallHooks } from './commands/install-hooks.js';
 
 export const program = new Command();
 
@@ -35,6 +35,7 @@ registerTransform(program);
 registerSync(program);
 registerBackup(program);
 registerRename(program);
+registerInstallHooks(program);
 
 
 program.parse();
