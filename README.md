@@ -395,6 +395,29 @@ Why this helps
  - Lets teams preview and estimate translation costs before spending on paid providers.
  - Ensures placeholder safety and deterministic locale writes across all workflows.
 
+## Recipes
+
+Curated, task-focused guides live under `docs/recipes/`:
+
+| Recipe | Purpose |
+|--------|---------|
+| [`nextjs-app-router.md`](./docs/recipes/nextjs-app-router.md) | Onboard i18nsmith in a Next.js App Router project (provider injection, scoped transform). |
+| [`before-after-transform.md`](./docs/recipes/before-after-transform.md) | Show concrete pre/post transform code examples & key generation modes. |
+| [`translation-workflows.md`](./docs/recipes/translation-workflows.md) | Tiered workflows: manual seeding, CSV handoff, automated adapters. |
+| [`github-actions-ci.md`](./docs/recipes/github-actions-ci.md) | Production-ready GitHub Actions workflow for drift detection & artifacts. |
+
+Additional Phase 5 docs:
+
+- Editor integration concept: [`docs/editor-integration.md`](./docs/editor-integration.md)
+- Adapter & extensibility guide: [`docs/adapter-extensibility.md`](./docs/adapter-extensibility.md)
+
+Upcoming (planned):
+- Monorepo workspaces recipe
+- Visual walkthroughs (GIFs) for `sync --interactive` and `diagnose` output
+- GitLab CI example & Husky pre-commit hooks (`i18nsmith install-hooks` roadmap)
+
+Use these recipes to copy/paste minimal setups rather than reverse-engineering long-form docs.
+
 ## Locale quality auditing
 
 Need to scan your locale files for suspicious patterns or quality issues? Use `i18nsmith audit`:

@@ -562,6 +562,34 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 
 ---
 
+**Progress notes (2025-11-29):** Phase 5 initiated.
+- ✅ Created `docs/recipes/` directory with initial recipes:
+  - `nextjs-app-router.md` (App Router onboarding & provider injection)
+  - `before-after-transform.md` (pre/post transform examples + key modes)
+  - `translation-workflows.md` (already existed; validated and retained)
+  - `github-actions-ci.md` (CI drift detection & artifact upload)
+- ✅ Added adapter & extensibility guide: `docs/adapter-extensibility.md` (contracts for runtime, writer, translator).
+- ✅ Added editor integration concept doc: `docs/editor-integration.md` (VS Code extension MVP architecture & data sources).
+- ✅ Added sample GitHub Actions workflow: `.github/workflows/i18nsmith-check.yml` (build + check + sync dry-run + artifact upload).
+- ✅ Updated root `README.md` with new **Recipes** section linking Phase 5 artifacts.
+- 🚧 Pending: Monorepo configuration recipe, GIF captures for interactive flows, Husky hook installer & docs, GitLab CI example.
+- 🚧 Planned UX polish backlog (spinners, colorized diffs, consistent schema doc) will be tracked under a forthcoming `docs/cli-ux-polish.md`.
+
+Next slice focus candidates:
+1. Monorepo & workspace recipe (multi-package config discovery, per-package transform).
+2. Visual assets pipeline (record scripted runs; integrate into README).
+3. Husky hook helper (`install-hooks`) + recipe.
+4. Adapter support matrix table integrated into README (linking to `adapter-extensibility.md`).
+
+Risks & Mitigations:
+- Risk: Recipe proliferation causing duplication → Mitigate by centralizing deep technical detail in architecture/extensibility docs and keeping recipes task-scoped.
+- Risk: VS Code integration scope creep → Keep MVP limited to passive JSON consumption; defer live transform suggestions.
+
+Metrics to collect (future):
+- Time-to-first-successful `check` run in new repo (target < 3 mins).
+- CI duration impact of i18n jobs (target < 60s incremental).
+- Coverage of recipe adoption (which recipe viewed/executed) via opt-in local analytics (deferred; privacy-first design required).
+
 ## Phase 6: Real-World Onboarding Fixes (External Testing Feedback)
 **Objective:** Address adoption blockers identified during external project testing. Prioritized by impact.
 
