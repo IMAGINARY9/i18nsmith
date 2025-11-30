@@ -49,11 +49,20 @@
       {
         "command": "i18nsmith.extractKey",
         "title": "i18nsmith: Extract Selection as Translation Key"
+      },
+      {
+        "command": "i18nsmith.showOutput",
+        "title": "i18nsmith: Show Output Channel"
       }
     ],
     "configuration": {
       "title": "i18nsmith",
       "properties": {
+        "i18nsmith.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the i18nsmith CLI entry point (e.g., /path/to/i18nsmith/packages/cli/dist/index.js). Leave empty to use npx i18nsmith."
+        },
         "i18nsmith.reportPath": {
           "type": "string",
           "default": ".i18nsmith/check-report.json",
@@ -63,6 +72,16 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically refresh diagnostics when report file changes"
+        },
+        "i18nsmith.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run scan when source or locale files are saved (debounced)"
+        },
+        "i18nsmith.scanOnActivation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run a background scan when the extension activates"
         },
         "i18nsmith.showCodeLens": {
           "type": "boolean",
