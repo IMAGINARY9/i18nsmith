@@ -581,16 +581,24 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 - ✅ Added Husky hooks recipe: `docs/recipes/husky-hooks.md`.
 - ✅ Added CLI UX polish backlog: `docs/cli-ux-polish.md` (issues to be created with label `phase5-ux`).
 - ✅ Inserted adapter/framework support matrix into `README.md`.
-- ✅ Added visual assets planning doc: `docs/visual-assets-plan.md` (GIF capture roadmap).
-- ✅ Added schema generation script: `scripts/generate-schema.mjs` (prototype for docs/schema.md).
+- ✅ Added visual assets planning doc: `docs/visual-assets-plan.md` (GIF capture roadmap with detailed storyboards).
+- ✅ Added schema generation script: `scripts/generate-schema.mjs` → generates `docs/schema.md`.
 - ✅ Implemented `install-hooks` command prototype: `packages/cli/src/commands/install-hooks.ts`.
 - ✅ All 86 CLI tests passing after fixing circular import in install-hooks module.
 
-Next slice focus candidates:
-1. Monorepo & workspace recipe (multi-package config discovery, per-package transform).
-2. Visual assets pipeline (record scripted runs; integrate into README).
-3. Husky hook helper (`install-hooks`) + recipe.
-4. Adapter support matrix table integrated into README (linking to `adapter-extensibility.md`).
+**Progress notes (2025-11-30):** GitHub Action implementation.
+- ✅ Created `action.yml` composite action with inputs: command, fail-on, args, working-directory, report-path, node-version, package-manager.
+- ✅ Action outputs: exit-code, summary, report-path. Includes artifact upload and job summary.
+- ✅ Updated `.github/workflows/i18nsmith-check.yml` with action-based and direct CLI examples.
+- ✅ Added `.github/workflows/test-action.yml` for manual action testing.
+- ✅ Updated `docs/recipes/github-actions-ci.md` with action inputs/outputs tables and quick start.
+- ✅ Updated README with GitHub Action quick start snippet and expanded recipes table.
+- ✅ Locally tested: check and sync commands work with --json and --report flags.
+
+Remaining Phase 5 items:
+- 🔲 GIF/visual assets capture (storyboards ready in visual-assets-plan.md)
+- 🔲 VS Code extension MVP (consume CLI JSON outputs)
+- 🔲 Publish action to GitHub Marketplace (requires tagging + release)
 
 Risks & Mitigations:
 - Risk: Recipe proliferation causing duplication → Mitigate by centralizing deep technical detail in architecture/extensibility docs and keeping recipes task-scoped.

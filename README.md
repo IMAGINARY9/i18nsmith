@@ -404,17 +404,30 @@ Curated, task-focused guides live under `docs/recipes/`:
 | [`nextjs-app-router.md`](./docs/recipes/nextjs-app-router.md) | Onboard i18nsmith in a Next.js App Router project (provider injection, scoped transform). |
 | [`before-after-transform.md`](./docs/recipes/before-after-transform.md) | Show concrete pre/post transform code examples & key generation modes. |
 | [`translation-workflows.md`](./docs/recipes/translation-workflows.md) | Tiered workflows: manual seeding, CSV handoff, automated adapters. |
-| [`github-actions-ci.md`](./docs/recipes/github-actions-ci.md) | Production-ready GitHub Actions workflow for drift detection & artifacts. |
+| [`github-actions-ci.md`](./docs/recipes/github-actions-ci.md) | **GitHub Action** for drift detection, includes reusable action & direct CLI examples. |
+| [`gitlab-ci.md`](./docs/recipes/gitlab-ci.md) | GitLab CI pipeline configuration for i18n checks. |
+| [`monorepo-workspaces.md`](./docs/recipes/monorepo-workspaces.md) | Multi-package monorepo configuration with per-package i18n. |
+| [`husky-hooks.md`](./docs/recipes/husky-hooks.md) | Pre-commit/pre-push hooks with Husky & lint-staged. |
 
-Additional Phase 5 docs:
+### GitHub Action Quick Start
+
+Add i18n checks to your PRs in seconds:
+
+```yaml
+- uses: IMAGINARY9/i18nsmith@v1
+  with:
+    command: check
+    fail-on: conflicts
+    report-path: i18n-report.json
+```
+
+See [`github-actions-ci.md`](./docs/recipes/github-actions-ci.md) for full input/output reference.
+
+Additional docs:
 
 - Editor integration concept: [`docs/editor-integration.md`](./docs/editor-integration.md)
 - Adapter & extensibility guide: [`docs/adapter-extensibility.md`](./docs/adapter-extensibility.md)
-
-Upcoming (planned):
-- Monorepo workspaces recipe
-- Visual walkthroughs (GIFs) for `sync --interactive` and `diagnose` output
-- GitLab CI example & Husky pre-commit hooks (`i18nsmith install-hooks` roadmap)
+- Visual assets plan: [`docs/visual-assets-plan.md`](./docs/visual-assets-plan.md)
 
 Use these recipes to copy/paste minimal setups rather than reverse-engineering long-form docs.
 
