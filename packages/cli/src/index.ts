@@ -13,8 +13,9 @@ import { registerTransform } from './commands/transform.js';
 import { registerSync } from './commands/sync.js';
 import { registerBackup } from './commands/backup.js';
 import { registerRename } from './commands/rename.js';
+import './commands/install-hooks.js';
 
-const program = new Command();
+export const program = new Command();
 
 program
   .name('i18nsmith')
