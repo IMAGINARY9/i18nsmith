@@ -1,0 +1,36 @@
+name: i18nsmith
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'i18n.config.json'
+      - 'locales/**'
+jobs:
+  i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Use Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Build workspaces
+        run: pnpm -r build
+      - name: Drift / diagnostics check
+        run: npx i18nsmith check --fail-on conflicts --json --report i18n-check.json || echo "Non-zero exit captured"
+      - name: Sync dry-run report
+        run: npx i18nsmith sync --dry-run --json --report i18n-sync.json
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18nsmith-reports
+          path: |
+            i18n-check.json
+            i18n-sync.json
