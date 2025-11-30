@@ -4,10 +4,14 @@ import { I18nCodeLensProvider } from './codelens';
 import { ReportWatcher } from './watcher';
 import { I18nHoverProvider } from './hover';
 import { I18nCodeActionProvider, addPlaceholderToLocale } from './codeactions';
+import { SmartScanner } from './scanner';
+import { StatusBarManager } from './statusbar';
 
 let diagnosticsManager: DiagnosticsManager;
 let reportWatcher: ReportWatcher;
 let hoverProvider: I18nHoverProvider;
+let smartScanner: SmartScanner;
+let statusBarManager: StatusBarManager;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('i18nsmith extension activated');
@@ -17,7 +21,17 @@ export function activate(context: vscode.ExtensionContext) {
     { scheme: 'file', language: 'typescriptreact' },
     { scheme: 'file', language: 'javascript' },
     { scheme: 'file', language: 'javascriptreact' },
+    { scheme: 'file', language: 'vue' },
+    { scheme: 'file', language: 'svelte' },
   ];
+
+  // Initialize smart scanner (handles background scanning with debounce)
+  smartScanner = new SmartScanner();
+  context.subscriptions.push(smartScanner);
+
+  // Initialize enhanced status bar
+  statusBarManager = new StatusBarManager(smartScanner);
+  context.subscriptions.push(statusBarManager);
 
   // Initialize diagnostics manager
   diagnosticsManager = new DiagnosticsManager();
@@ -45,17 +59,27 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Initialize file watcher for report changes
+  // Initialize file watcher for report changes (refreshes diagnostics)
   reportWatcher = new ReportWatcher(diagnosticsManager);
   context.subscriptions.push(reportWatcher);
 
+  // Connect scanner to diagnostics refresh
+  smartScanner.onScanComplete(() => {
+    hoverProvider.clearCache();
+    reportWatcher.refresh();
+  });
+
   // Register commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('i18nsmith.check', runCheck),
+    vscode.commands.registerCommand('i18nsmith.check', async () => {
+      smartScanner.showOutput();
+      await smartScanner.scan('manual');
+    }),
     vscode.commands.registerCommand('i18nsmith.sync', runSync),
     vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', () => {
       hoverProvider.clearCache();
       reportWatcher.refresh();
+      statusBarManager.refresh();
     }),
     vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
       await addPlaceholderToLocale(key, workspaceRoot);
@@ -64,47 +88,58 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.extractKey', async (uri: vscode.Uri, range: vscode.Range, text: string) => {
       await extractKeyFromSelection(uri, range, text);
+    }),
+    vscode.commands.registerCommand('i18nsmith.showOutput', () => {
+      smartScanner.showOutput();
     })
   );
 
-  // Initial load of diagnostics
+  // Initial load of diagnostics from existing report
   reportWatcher.refresh();
 
-  // Show status bar item
-  const statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
-  );
-  statusBarItem.command = 'i18nsmith.check';
-  statusBarItem.text = '$(globe) i18nsmith';
-  statusBarItem.tooltip = 'Run i18nsmith health check';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
+  // Run background scan on activation
+  smartScanner.runActivationScan();
 }
 
 export function deactivate() {
   console.log('i18nsmith extension deactivated');
 }
 
-async function runCheck() {
-  const terminal = vscode.window.createTerminal('i18nsmith');
-  terminal.show();
-  
-  const config = vscode.workspace.getConfiguration('i18nsmith');
-  const reportPath = config.get<string>('reportPath', '.i18nsmith/check-report.json');
-  
-  terminal.sendText(`npx i18nsmith check --json --report "${reportPath}"`);
-  
-  vscode.window.showInformationMessage('Running i18nsmith check...');
-}
-
 async function runSync() {
-  const terminal = vscode.window.createTerminal('i18nsmith');
-  terminal.show();
-  
-  terminal.sendText('npx i18nsmith sync --json');
-  
-  vscode.window.showInformationMessage('Running i18nsmith sync (dry-run)...');
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration('i18nsmith');
+  const cliPath = config.get<string>('cliPath', '');
+
+  const cmd = cliPath
+    ? `node "${cliPath}" sync --json`
+    : 'npx i18nsmith sync --json';
+
+  smartScanner.showOutput();
+
+  const { exec } = require('child_process');
+
+  return new Promise<void>((resolve) => {
+    exec(
+      cmd,
+      { cwd: workspaceFolder.uri.fsPath },
+      (error: Error | null, stdout: string, stderr: string) => {
+        // Output is handled by SmartScanner's output channel
+        if (error) {
+          vscode.window.showErrorMessage(`i18nsmith sync failed: ${error.message}`);
+        } else {
+          vscode.window.showInformationMessage('i18nsmith sync completed');
+          // Trigger a check to update diagnostics
+          smartScanner.scan('sync-complete');
+        }
+        resolve();
+      }
+    );
+  });
 }
 
 async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, text: string) {
