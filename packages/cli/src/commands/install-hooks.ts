@@ -2,7 +2,6 @@ import fs from 'fs/promises';
 import path from 'path';
 import { Command } from 'commander';
 import { detectPackageManager } from '../utils/package-manager.js';
-import { program } from '../index.js';
 
 interface InstallHooksOptions {
   yes?: boolean;
@@ -37,7 +36,7 @@ async function writeHook(root: string, file: string, content: string) {
   console.log(`✔ Hook created: ${path.relative(root, hookPath)}`);
 }
 
-export function registerInstallHooks() {
+export function registerInstallHooks(program: Command) {
   const cmd = new Command('install-hooks')
     .description('Prototype: scaffold Husky git hooks for i18nsmith checks')
     .option('-y, --yes', 'Skip confirmations')
@@ -65,5 +64,3 @@ export function registerInstallHooks() {
 
   program.addCommand(cmd);
 }
-
-registerInstallHooks();

@@ -581,7 +581,10 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 - ✅ Added Husky hooks recipe: `docs/recipes/husky-hooks.md`.
 - ✅ Added CLI UX polish backlog: `docs/cli-ux-polish.md` (issues to be created with label `phase5-ux`).
 - ✅ Inserted adapter/framework support matrix into `README.md`.
-- 🔜 Next targets: visual assets (GIFs), schema generation automation, `install-hooks` command prototype.
+- ✅ Added visual assets planning doc: `docs/visual-assets-plan.md` (GIF capture roadmap).
+- ✅ Added schema generation script: `scripts/generate-schema.mjs` (prototype for docs/schema.md).
+- ✅ Implemented `install-hooks` command prototype: `packages/cli/src/commands/install-hooks.ts`.
+- ✅ All 86 CLI tests passing after fixing circular import in install-hooks module.
 
 Next slice focus candidates:
 1. Monorepo & workspace recipe (multi-package config discovery, per-package transform).
