@@ -575,6 +575,14 @@ The `diagnose` command and its integration into `init` and `scaffold-adapter` su
 - 🚧 Pending: Monorepo configuration recipe, GIF captures for interactive flows, Husky hook installer & docs, GitLab CI example.
 - 🚧 Planned UX polish backlog (spinners, colorized diffs, consistent schema doc) will be tracked under a forthcoming `docs/cli-ux-polish.md`.
 
+**Progress notes (2025-11-30):** Phase 5 expansion.
+- ✅ Added monorepo integration recipe: `docs/recipes/monorepo-workspaces.md`.
+- ✅ Added GitLab CI pipeline recipe: `docs/recipes/gitlab-ci.md`.
+- ✅ Added Husky hooks recipe: `docs/recipes/husky-hooks.md`.
+- ✅ Added CLI UX polish backlog: `docs/cli-ux-polish.md` (issues to be created with label `phase5-ux`).
+- ✅ Inserted adapter/framework support matrix into `README.md`.
+- 🔜 Next targets: visual assets (GIFs), schema generation automation, `install-hooks` command prototype.
+
 Next slice focus candidates:
 1. Monorepo & workspace recipe (multi-package config discovery, per-package transform).
 2. Visual assets pipeline (record scripted runs; integrate into README).
