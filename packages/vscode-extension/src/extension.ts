@@ -2,12 +2,22 @@ import * as vscode from 'vscode';
 import { DiagnosticsManager } from './diagnostics';
 import { I18nCodeLensProvider } from './codelens';
 import { ReportWatcher } from './watcher';
+import { I18nHoverProvider } from './hover';
+import { I18nCodeActionProvider, addPlaceholderToLocale } from './codeactions';
 
 let diagnosticsManager: DiagnosticsManager;
 let reportWatcher: ReportWatcher;
+let hoverProvider: I18nHoverProvider;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('i18nsmith extension activated');
+
+  const supportedLanguages = [
+    { scheme: 'file', language: 'typescript' },
+    { scheme: 'file', language: 'typescriptreact' },
+    { scheme: 'file', language: 'javascript' },
+    { scheme: 'file', language: 'javascriptreact' },
+  ];
 
   // Initialize diagnostics manager
   diagnosticsManager = new DiagnosticsManager();
@@ -16,14 +26,22 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize CodeLens provider
   const codeLensProvider = new I18nCodeLensProvider(diagnosticsManager);
   context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider(
-      [
-        { scheme: 'file', language: 'typescript' },
-        { scheme: 'file', language: 'typescriptreact' },
-        { scheme: 'file', language: 'javascript' },
-        { scheme: 'file', language: 'javascriptreact' },
-      ],
-      codeLensProvider
+    vscode.languages.registerCodeLensProvider(supportedLanguages, codeLensProvider)
+  );
+
+  // Initialize Hover provider
+  hoverProvider = new I18nHoverProvider();
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(supportedLanguages, hoverProvider)
+  );
+
+  // Initialize CodeAction provider
+  const codeActionProvider = new I18nCodeActionProvider(diagnosticsManager);
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      supportedLanguages,
+      codeActionProvider,
+      { providedCodeActionKinds: I18nCodeActionProvider.providedCodeActionKinds }
     )
   );
 
@@ -36,7 +54,16 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.check', runCheck),
     vscode.commands.registerCommand('i18nsmith.sync', runSync),
     vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', () => {
+      hoverProvider.clearCache();
       reportWatcher.refresh();
+    }),
+    vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
+      await addPlaceholderToLocale(key, workspaceRoot);
+      hoverProvider.clearCache();
+      reportWatcher.refresh();
+    }),
+    vscode.commands.registerCommand('i18nsmith.extractKey', async (uri: vscode.Uri, range: vscode.Range, text: string) => {
+      await extractKeyFromSelection(uri, range, text);
     })
   );
 
@@ -78,4 +105,44 @@ async function runSync() {
   terminal.sendText('npx i18nsmith sync --json');
   
   vscode.window.showInformationMessage('Running i18nsmith sync (dry-run)...');
+}
+
+async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, text: string) {
+  // Generate a key from the text (simple slug)
+  const suggestedKey = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 30);
+
+  const key = await vscode.window.showInputBox({
+    prompt: 'Enter the translation key',
+    value: `common.${suggestedKey}`,
+    placeHolder: 'e.g., common.greeting',
+  });
+
+  if (!key) {
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  // Add to locale file
+  await addPlaceholderToLocale(key, workspaceFolder.uri.fsPath);
+
+  // Replace the selection with t('key')
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri, range, `t('${key}')`);
+  await vscode.workspace.applyEdit(edit);
+
+  // Clear cache and refresh
+  hoverProvider.clearCache();
+  reportWatcher.refresh();
+
+  vscode.window.showInformationMessage(`Extracted as '${key}'`);
 }
