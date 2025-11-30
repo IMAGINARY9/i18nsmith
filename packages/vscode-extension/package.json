@@ -1,0 +1,81 @@
+{
+  "name": "i18nsmith-vscode",
+  "displayName": "i18nsmith",
+  "description": "VS Code integration for i18nsmith - automated i18n tooling",
+  "version": "0.1.0",
+  "publisher": "i18nsmith",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IMAGINARY9/i18nsmith"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "i18n",
+    "internationalization",
+    "localization",
+    "translation",
+    "react-i18next"
+  ],
+  "activationEvents": [
+    "workspaceContains:i18n.config.json",
+    "workspaceContains:.i18nsmith/**"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "i18nsmith.check",
+        "title": "i18nsmith: Run Health Check"
+      },
+      {
+        "command": "i18nsmith.sync",
+        "title": "i18nsmith: Sync Locales (Dry Run)"
+      },
+      {
+        "command": "i18nsmith.refreshDiagnostics",
+        "title": "i18nsmith: Refresh Diagnostics"
+      }
+    ],
+    "configuration": {
+      "title": "i18nsmith",
+      "properties": {
+        "i18nsmith.reportPath": {
+          "type": "string",
+          "default": ".i18nsmith/check-report.json",
+          "description": "Path to the i18nsmith check report JSON file (relative to workspace root)"
+        },
+        "i18nsmith.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh diagnostics when report file changes"
+        },
+        "i18nsmith.showCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show CodeLens actions above files with i18n issues"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run compile -- --watch",
+    "lint": "eslint src --ext ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.3.0",
+    "vitest": "^0.34.0"
+  }
+}
