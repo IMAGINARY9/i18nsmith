@@ -18,7 +18,8 @@ export class StatusBarManager implements vscode.Disposable {
       100
     );
     
-    this.statusBarItem.command = 'i18nsmith.check';
+  // Clicking the status bar opens Quick Actions for fast access
+  this.statusBarItem.command = 'i18nsmith.actions';
     this.statusBarItem.show();
 
     // Subscribe to scanner events

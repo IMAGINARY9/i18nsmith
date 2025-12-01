@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { exec } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 
 export type ScanState = 'idle' | 'scanning' | 'success' | 'error';
 
@@ -240,6 +241,39 @@ export class SmartScanner implements vscode.Disposable {
             this.log(`[stderr] ${stderr}`);
           }
 
+          // Check if the report file was created/updated successfully
+          // The CLI may exit with non-zero codes when issues are found, but that's expected
+          const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
+          let issueCount = 0;
+          let reportExists = false;
+
+          try {
+            if (fs.existsSync(fullReportPath)) {
+              reportExists = true;
+              const reportContent = fs.readFileSync(fullReportPath, 'utf8');
+              const report = JSON.parse(reportContent);
+              // Count actionable items
+              issueCount =
+                (report.actionableItems?.length ?? 0) +
+                (report.diagnostics?.actionableItems?.length ?? 0) +
+                (report.sync?.actionableItems?.length ?? 0);
+            }
+          } catch (parseError) {
+            this.log(`[Scanner] Failed to parse report: ${parseError}`);
+          }
+
+          // If report exists and was updated, consider it a success even with non-zero exit
+          if (reportExists) {
+            this.log(`[Scanner] Completed successfully (${issueCount} issues found)`);
+            resolve({
+              success: true,
+              timestamp,
+              issueCount,
+            });
+            return;
+          }
+
+          // Only treat as error if report doesn't exist AND there was an exec error
           if (error) {
             this.log(`[Scanner] Error: ${error.message}`);
             resolve({
@@ -251,23 +285,12 @@ export class SmartScanner implements vscode.Disposable {
             return;
           }
 
-          // Try to parse issue count from output
-          let issueCount = 0;
-          try {
-            // Look for patterns like "2 issues found" or parse JSON
-            const match = stdout.match(/(\d+)\s+issue/i);
-            if (match) {
-              issueCount = parseInt(match[1], 10);
-            }
-          } catch {
-            // Ignore parse errors
-          }
-
-          this.log(`[Scanner] Completed successfully (${issueCount} issues)`);
+          // No report and no error - unusual but treat as success with 0 issues
+          this.log(`[Scanner] Completed (no report generated)`);
           resolve({
             success: true,
             timestamp,
-            issueCount,
+            issueCount: 0,
           });
         }
       );
