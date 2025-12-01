@@ -50,6 +50,11 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
         if (refactorAction) {
           actions.push(refactorAction);
         }
+
+        const ignoreAction = this.createIgnoreSuspiciousKeyAction(document, diagnostic);
+        if (ignoreAction) {
+          actions.push(ignoreAction);
+        }
       }
 
       // For any i18nsmith diagnostic, offer to run check
@@ -90,6 +95,23 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
       arguments: [key, suggestedKey],
     };
 
+    return action;
+  }
+
+  private createIgnoreSuspiciousKeyAction(
+    document: vscode.TextDocument,
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction | null {
+    const action = new vscode.CodeAction(
+      `Ignore suspicious key warning here`,
+      vscode.CodeActionKind.QuickFix
+    );
+    action.diagnostics = [diagnostic];
+    action.command = {
+      command: 'i18nsmith.ignoreSuspiciousKey',
+      title: 'Ignore suspicious key',
+      arguments: [document.uri, diagnostic.range.start.line],
+    };
     return action;
   }
 
@@ -275,10 +297,19 @@ export async function addPlaceholderToLocale(key: string, workspaceRoot: string)
 /**
  * Set a nested value in an object using dot notation
  */
-function setNestedValue(obj: Record<string, unknown>, key: string, value: unknown): void {
-  // For flat keys (containing dots but stored as-is), just set directly
-  // This matches i18nsmith's default behavior
-  obj[key] = value;
+function setNestedValue(obj: Record<string, any>, key: string, value: unknown): void {
+  const keys = key.split('.');
+  let current = obj;
+
+  for (let i = 0; i < keys.length - 1; i++) {
+    const currentKey = keys[i];
+    if (typeof current[currentKey] !== 'object' || current[currentKey] === null) {
+      current[currentKey] = {};
+    }
+    current = current[currentKey];
+  }
+
+  current[keys[keys.length - 1]] = value;
 }
 
 function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRoot?: string): string {

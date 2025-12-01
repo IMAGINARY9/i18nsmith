@@ -66,6 +66,18 @@
       {
         "command": "i18nsmith.renameSuspiciousKey",
         "title": "i18nsmith: Rename Suspicious Key"
+      },
+      {
+        "command": "i18nsmith.ignoreSuspiciousKey",
+        "title": "i18nsmith: Ignore Suspicious Key Here"
+      },
+      {
+        "command": "i18nsmith.openLocaleFile",
+        "title": "i18nsmith: Open Source Locale File"
+      },
+      {
+        "command": "i18nsmith.renameKey",
+        "title": "i18nsmith: Rename Key at Cursor"
       }
     ],
     "menus": {
@@ -73,6 +85,11 @@
         {
           "command": "i18nsmith.extractSelection",
           "when": "editorHasSelection && resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@1"
+        },
+        {
+          "command": "i18nsmith.renameKey",
+          "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
           "group": "i18nsmith@1"
         },
         {

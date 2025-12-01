@@ -193,6 +193,15 @@ export class SmartScanner implements vscode.Disposable {
         this._lastResult = result;
         this.setState(result.success ? 'success' : 'error');
         this.scanCompleteEmitter.fire(result);
+        if (!result.success) {
+          vscode.window
+            .showWarningMessage('i18nsmith background scan failed', 'Show Output')
+            .then((choice) => {
+              if (choice === 'Show Output') {
+                this.showOutput();
+              }
+            });
+        }
         return result;
       })
       .finally(() => {
