@@ -78,7 +78,23 @@ export class ReportWatcher implements vscode.Disposable {
       }
 
       const content = fs.readFileSync(fullPath, 'utf8');
-      const report: CheckReport = JSON.parse(content);
+      
+      // Handle empty or whitespace-only files
+      if (!content || !content.trim()) {
+        this.diagnosticsManager.clear();
+        return;
+      }
+      
+      let report: CheckReport;
+      try {
+        report = JSON.parse(content);
+      } catch (parseError) {
+        // JSON parse error - the file may be partially written or corrupted
+        console.error('Failed to parse i18nsmith report JSON:', parseError);
+        // Don't show a warning to the user for transient parse errors
+        // This can happen when the file is being written by the CLI
+        return;
+      }
       
       this.diagnosticsManager.updateFromReport(report, workspaceFolder.uri.fsPath);
       
@@ -96,10 +112,15 @@ export class ReportWatcher implements vscode.Disposable {
         vscode.window.setStatusBarMessage('$(check) i18nsmith: No issues', 3000);
       }
     } catch (error) {
+      // File system error (e.g., permission denied, file locked)
       console.error('Failed to read i18nsmith report:', error);
-      vscode.window.showWarningMessage(
-        `i18nsmith: Failed to parse report at ${reportPath}`
-      );
+      // Only show warning for persistent errors, not transient ones
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (!errMsg.includes('ENOENT') && !errMsg.includes('EBUSY')) {
+        vscode.window.showWarningMessage(
+          `i18nsmith: Failed to read report at ${reportPath}: ${errMsg}`
+        );
+      }
     }
   }
 }
