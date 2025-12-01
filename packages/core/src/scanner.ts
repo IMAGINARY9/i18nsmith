@@ -86,6 +86,7 @@ export class Scanner {
 
   public scan(): ScanSummary;
   public scan(options: ScanExecutionOptions & { collectNodes: true }): DetailedScanSummary;
+  public scan(options: ScanExecutionOptions): ScanSummary;
   public scan(options?: ScanExecutionOptions): ScanSummary | DetailedScanSummary {
     const collectNodes = options?.collectNodes ?? false;
     const scanCalls = options?.scanCalls ?? false;

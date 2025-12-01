@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import fg from 'fast-glob';
 import { I18nConfig } from './config.js';
+import { DEFAULT_ADAPTER_MODULE } from './config/defaults.js';
 import { ActionableItem } from './actionable.js';
 
 const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
@@ -162,7 +163,17 @@ function buildActionableInsights(input: InsightBuilderInput) {
     recommendations.push(`Run "i18nsmith sync" to seed missing locales (${missingTargets.join(', ')}).`);
   }
 
-  if (!input.runtimePackages.length) {
+  // Check if user has configured a custom translation adapter
+  // Note: config normalizer defaults translationAdapter.module to 'react-i18next'
+  // So we check if user actually configured a non-default value
+  const adapterModule = input.config.translationAdapter?.module;
+  const isDefaultAdapter = !adapterModule || adapterModule === DEFAULT_ADAPTER_MODULE;
+  const hasCustomAdapter = !isDefaultAdapter;
+  const hasExistingAdapter = input.adapterFiles.length > 0;
+  const hasWorkingSetup = hasCustomAdapter || hasExistingAdapter;
+
+  // Only warn about missing runtime if there's no custom adapter configured
+  if (!input.runtimePackages.length && !hasWorkingSetup) {
     actionableItems.push({
       kind: 'diagnostics-runtime-missing',
       severity: 'warn',
@@ -171,8 +182,9 @@ function buildActionableInsights(input: InsightBuilderInput) {
     recommendations.push('Install a runtime like "react-i18next" or configure translationAdapter.module.');
   }
 
+  // Only warn about missing provider if there's no custom adapter/working setup
   const providerWithI18n = input.providerFiles.find((provider) => provider.hasI18nProvider);
-  if (!providerWithI18n) {
+  if (!providerWithI18n && !hasWorkingSetup) {
     actionableItems.push({
       kind: 'diagnostics-provider-missing',
       severity: 'info',

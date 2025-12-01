@@ -7,5 +7,7 @@ export interface ActionableItem {
   key?: string;
   locale?: string;
   filePath?: string;
+  line?: number;
+  column?: number;
   details?: Record<string, unknown>;
 }
