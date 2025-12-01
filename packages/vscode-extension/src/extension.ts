@@ -389,10 +389,15 @@ async function showQuickActions() {
   }
 
   if (choice.command) {
-    await runCliCommand(choice.command, {
-      interactive: choice.interactive,
-      confirmMessage: choice.confirmMessage,
-    });
+    // Check if it's a VS Code command or a CLI command
+    if (choice.command.startsWith('i18nsmith.')) {
+      await vscode.commands.executeCommand(choice.command);
+    } else {
+      await runCliCommand(choice.command, {
+        interactive: choice.interactive,
+        confirmMessage: choice.confirmMessage,
+      });
+    }
     return;
   }
 

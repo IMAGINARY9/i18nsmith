@@ -110,13 +110,17 @@ export class I18nHoverProvider implements vscode.HoverProvider {
       for (const locale of allLocales) {
         try {
           const data = await store.get(locale);
+          console.log(`[hover] Loaded locale ${locale}, keys:`, Object.keys(data).slice(0, 5));
           this.localeData.set(locale, data);
           this.localeStores.set(locale, store);
-        } catch {
+        } catch (err) {
+          console.error(`[hover] Failed to load locale ${locale}:`, err);
           // Locale file doesn't exist yet; skip
         }
       }
-    } catch {
+      console.log(`[hover] Total locales loaded:`, this.localeData.size);
+    } catch (err) {
+      console.error('[hover] Failed to load config:', err);
       // Config not found or invalid; use empty data
     }
   }
@@ -126,8 +130,12 @@ export class I18nHoverProvider implements vscode.HoverProvider {
    */
   private buildHoverContent(key: string): vscode.MarkdownString | null {
     if (this.localeData.size === 0) {
+      console.log('[hover] No locale data available');
       return null;
     }
+
+    console.log(`[hover] Looking up key: ${key}`);
+    console.log(`[hover] Available locales:`, Array.from(this.localeData.keys()));
 
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
@@ -144,6 +152,8 @@ export class I18nHoverProvider implements vscode.HoverProvider {
       const localeData = this.localeData.get(locale)!;
       const value = localeData[key]; // LocaleStore already flattened keys
       
+      console.log(`[hover] Locale ${locale}, key ${key}, value:`, value);
+      
       if (value !== undefined) {
         foundAny = true;
         const displayValue = typeof value === 'string' 
@@ -154,6 +164,8 @@ export class I18nHoverProvider implements vscode.HoverProvider {
         md.appendMarkdown(`| **${locale}** | ⚠️ *missing* |\n`);
       }
     }
+
+    console.log(`[hover] Found any: ${foundAny}`);
 
     if (!foundAny) {
       return null;
