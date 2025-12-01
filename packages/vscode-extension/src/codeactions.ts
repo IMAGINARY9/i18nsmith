@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -44,6 +45,13 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
         }
       }
 
+      if (diagnostic.code === 'suspicious-key') {
+        const refactorAction = this.createRefactorSuspiciousKeyAction(document, diagnostic);
+        if (refactorAction) {
+          actions.push(refactorAction);
+        }
+      }
+
       // For any i18nsmith diagnostic, offer to run check
       const checkAction = this.createRunCheckAction(diagnostic);
       actions.push(checkAction);
@@ -56,6 +64,33 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     return actions;
+  }
+
+  private createRefactorSuspiciousKeyAction(
+    document: vscode.TextDocument,
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction | null {
+  const key = extractSuspiciousKeyFromMessage(diagnostic.message);
+    if (!key) {
+      return null;
+    }
+
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const suggestedKey = buildSuspiciousKeySuggestion(key, document.uri.fsPath, workspaceRoot);
+
+    const action = new vscode.CodeAction(
+      `Refactor suspicious key to "${suggestedKey}"`,
+      vscode.CodeActionKind.QuickFix
+    );
+
+    action.diagnostics = [diagnostic];
+    action.command = {
+      command: 'i18nsmith.renameSuspiciousKey',
+      title: 'Rename suspicious key',
+      arguments: [key, suggestedKey],
+    };
+
+    return action;
   }
 
   /**
@@ -244,4 +279,56 @@ function setNestedValue(obj: Record<string, unknown>, key: string, value: unknow
   // For flat keys (containing dots but stored as-is), just set directly
   // This matches i18nsmith's default behavior
   obj[key] = value;
+}
+
+function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRoot?: string): string {
+  const config = loadWorkspaceConfig(workspaceRoot);
+  const rootDir = workspaceRoot ?? process.cwd();
+  const localesDir = path.resolve(rootDir, config.localesDir ?? 'locales');
+
+  const relativeLocalePath = filePath
+    ? path.relative(localesDir, filePath).replace(/\\/g, '/')
+    : '';
+
+  const prefix = relativeLocalePath && !relativeLocalePath.startsWith('..')
+    ? relativeLocalePath.replace(/\.(json|ya?ml)$/i, '').replace(/\//g, '.')
+    : path.basename(filePath ?? '', path.extname(filePath ?? '')) || 'translation';
+
+  const sanitizedKey = key
+    .trim()
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .toLowerCase() || 'key';
+
+  const hash = createHash('sha256')
+    .update(`${key}|${filePath ?? ''}`)
+    .digest('hex')
+    .slice(0, 6);
+
+  return `${prefix}.${sanitizedKey}-${hash}`;
+}
+
+function loadWorkspaceConfig(workspaceRoot?: string): { localesDir?: string } {
+  if (!workspaceRoot) {
+    return {};
+  }
+
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+
+  try {
+    const content = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(content);
+    return { localesDir: parsed.localesDir };
+  } catch {
+    return {};
+  }
+}
+
+function extractSuspiciousKeyFromMessage(message: string): string | null {
+  const match = message.match(/"([^\"]+)"/);
+  return match ? match[1] : null;
 }

@@ -1,9 +1,11 @@
 import { DEFAULT_ADAPTER_MODULE } from './config/defaults.js';
 import { EmptyValuePolicy, I18nConfig } from './config.js';
-import { Syncer, SyncSummary } from './syncer.js';
+import { Syncer, SyncSummary, SuspiciousKeyWarning } from './syncer.js';
 import { diagnoseWorkspace, DiagnosisReport } from './diagnostics.js';
 import { ActionableItem, ActionableSeverity } from './actionable.js';
 import { Scanner, ScanCandidate, ScanSummary } from './scanner.js';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 export interface CheckRunnerOptions {
   workspaceRoot?: string;
@@ -27,7 +29,7 @@ export interface CheckSuggestedCommand {
   reason: string;
   severity: ActionableSeverity;
   /** Category for grouping related commands */
-  category?: 'extraction' | 'sync' | 'translation' | 'setup' | 'validation';
+  category?: 'extraction' | 'sync' | 'translation' | 'setup' | 'validation' | 'quality';
   /** Files this command is most relevant to */
   relevantFiles?: string[];
   /** Priority for sorting (lower = higher priority, default 50) */
@@ -91,7 +93,13 @@ export class CheckRunner {
       ...hardcodedItems,
     ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
-    const suggestedCommands = buildSuggestedCommands(diagnostics, sync, scan, this.config);
+    const suggestedCommands = buildSuggestedCommands(
+      diagnostics,
+      sync,
+      scan,
+      this.config,
+      this.workspaceRoot
+    );
     const hasConflicts = diagnostics.conflicts.length > 0;
     const hasDrift =
       sync.missingKeys.length > 0 ||
@@ -147,7 +155,8 @@ function buildSuggestedCommands(
   report: DiagnosisReport,
   sync: SyncSummary,
   scan: ScanSummary,
-  config: I18nConfig
+  config: I18nConfig,
+  workspaceRoot: string
 ): CheckSuggestedCommand[] {
   const ctx: SuggestedCommandContext = { report, sync, scan, config };
   const items: CheckSuggestedCommand[] = [];
@@ -185,7 +194,7 @@ function buildSuggestedCommands(
     const relevantFiles = [...new Set(scan.candidates.map((c) => c.filePath))].slice(0, 5);
     add({
       label: 'Extract hardcoded text',
-      command: 'i18nsmith transform --interactive',
+      command: 'i18nsmith transform --write',
       reason: `${scan.candidates.length} hardcoded string${scan.candidates.length === 1 ? '' : 's'} found that should be translated`,
       severity: 'warn',
       category: 'extraction',
@@ -244,14 +253,29 @@ function buildSuggestedCommands(
 
   if (sync.emptyValueViolations.length) {
     const emptyLocales = [...new Set(sync.emptyValueViolations.map((v) => v.locale))];
-    add({
-      label: 'Fill empty translations',
-      command: 'i18nsmith translate --write --force',
-      reason: `${sync.emptyValueViolations.length} empty translation value(s) in ${emptyLocales.join(', ')}`,
-      severity: 'warn',
-      category: 'translation',
-      priority: 40,
-    });
+    const hasTranslationProvider = config.translation?.provider && config.translation.provider !== 'manual';
+    
+    if (hasTranslationProvider) {
+      // User has a translation provider configured, suggest auto-translate
+      add({
+        label: 'Fill empty translations',
+        command: 'i18nsmith translate --write --yes',
+        reason: `${sync.emptyValueViolations.length} empty translation value(s) in ${emptyLocales.join(', ')}`,
+        severity: 'warn',
+        category: 'translation',
+        priority: 40,
+      });
+    } else {
+      // No provider - suggest exporting to CSV for manual translation
+      add({
+        label: 'Export for translation',
+        command: 'i18nsmith translate --export missing-translations.csv',
+        reason: `${sync.emptyValueViolations.length} empty value(s) in ${emptyLocales.join(', ')} — export to CSV for manual translation`,
+        severity: 'warn',
+        category: 'translation',
+        priority: 40,
+      });
+    }
   }
 
   if (diagKinds.has('diagnostics-missing-source-locale') || diagKinds.has('diagnostics-missing-target-locales')) {
@@ -317,5 +341,53 @@ function buildSuggestedCommands(
     });
   }
 
+  if (sync.suspiciousKeys.length) {
+    sync.suspiciousKeys.slice(0, 5).forEach((warning) => {
+      const suggestedKey = buildSuspiciousKeySuggestion(warning, config, workspaceRoot);
+      add({
+        label: `Rename suspicious key "${warning.key}"`,
+        command: `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(suggestedKey)} --write`,
+        reason: `Suspicious key format (${warning.reason}). Rename to ${suggestedKey} for consistency.`,
+        severity: 'info',
+        category: 'quality',
+        relevantFiles: [warning.filePath],
+        priority: 35,
+      });
+    });
+  }
+
   return items;
+}
+
+function quoteCliArg(value: string): string {
+  if (!value) {
+    return '""';
+  }
+  const escaped = value.replace(/(["\\])/g, '\\$1');
+  return `"${escaped}"`;
+}
+
+function buildSuspiciousKeySuggestion(
+  warning: SuspiciousKeyWarning,
+  config: I18nConfig,
+  workspaceRoot: string
+): string {
+  const localesDir = path.resolve(workspaceRoot, config.localesDir ?? 'locales');
+  const relativeLocalePath = warning.filePath
+    ? path.relative(localesDir, warning.filePath).replace(/\\/g, '/')
+    : '';
+  const prefix = relativeLocalePath && !relativeLocalePath.startsWith('..')
+    ? relativeLocalePath.replace(/\.(json|ya?ml)$/i, '').replace(/\//g, '.')
+    : path.basename(warning.filePath ?? '', path.extname(warning.filePath ?? '')) || 'translation';
+  const sanitizedKey = warning.key
+    .trim()
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .toLowerCase() || 'key';
+  const hash = createHash('sha256')
+    .update(`${warning.key}|${warning.filePath ?? ''}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `${prefix}.${sanitizedKey}-${hash}`;
 }

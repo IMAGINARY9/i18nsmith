@@ -103,6 +103,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.actions', async () => {
       await showQuickActions();
     }),
+    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (originalKey: string, newKey: string) => {
+      await renameSuspiciousKey(originalKey, newKey);
+    }),
     vscode.commands.registerCommand('i18nsmith.extractSelection', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.selection.isEmpty) {
@@ -130,6 +133,25 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Run background scan on activation
   smartScanner.runActivationScan();
+}
+
+async function renameSuspiciousKey(originalKey: string, newKey: string) {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const command = `i18nsmith rename-key ${quoteCliArg(originalKey)} ${quoteCliArg(newKey)} --write --json`;
+  await runCliCommand(command);
+}
+
+function quoteCliArg(value: string): string {
+  if (!value) {
+    return '""';
+  }
+  const escaped = value.replace(/(["\\])/g, '\\$1');
+  return `"${escaped}"`;
 }
 
 export function deactivate() {
