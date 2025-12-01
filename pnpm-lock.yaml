@@ -109,6 +109,10 @@ importers:
         version: link:../translation
 
   packages/vscode-extension:
+    dependencies:
+      '@i18nsmith/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^20.10.0
