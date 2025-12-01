@@ -14,6 +14,7 @@ import { registerSync } from './commands/sync.js';
 import { registerBackup } from './commands/backup.js';
 import { registerRename } from './commands/rename.js';
 import { registerInstallHooks } from './commands/install-hooks.js';
+import { registerConfig } from './commands/config.js';
 
 export const program = new Command();
 
@@ -36,6 +37,7 @@ registerSync(program);
 registerBackup(program);
 registerRename(program);
 registerInstallHooks(program);
+registerConfig(program);
 
 
 program.parse();
