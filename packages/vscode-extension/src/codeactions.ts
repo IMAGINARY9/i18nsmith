@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { KeyGenerator, loadConfig } from '@i18nsmith/core';
+import { KeyGenerator, loadConfig, LocaleStore } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -255,39 +255,23 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
  * Add a placeholder key to the source locale file
  */
 export async function addPlaceholderToLocale(key: string, workspaceRoot: string): Promise<void> {
-  // Find config to get locales dir and source language
-  const configPath = path.join(workspaceRoot, 'i18n.config.json');
-  let localesDir = 'locales';
-  let sourceLanguage = 'en';
-
   try {
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      localesDir = config.localesDir || 'locales';
-      sourceLanguage = config.sourceLanguage || 'en';
-    }
-  } catch {
-    // Use defaults
-  }
+    const { config } = loadConfig(workspaceRoot);
+    const localesDir = path.join(workspaceRoot, config.localesDir);
+    const store = new LocaleStore(localesDir, {
+      format: config.locales?.format ?? 'auto',
+      delimiter: config.locales?.delimiter ?? '.',
+      sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+    });
 
-  const localePath = path.join(workspaceRoot, localesDir, `${sourceLanguage}.json`);
-
-  try {
-    let localeData: Record<string, unknown> = {};
-    
-    if (fs.existsSync(localePath)) {
-      localeData = JSON.parse(fs.readFileSync(localePath, 'utf8'));
-    }
-
-    // Add the key with a TODO placeholder
-    setNestedValue(localeData, key, `[TODO: ${key}]`);
-
-    // Write back
-    fs.writeFileSync(localePath, JSON.stringify(localeData, null, 2) + '\n', 'utf8');
+    const sourceLanguage = config.sourceLanguage;
+    const seed = config.sync?.seedValue ?? `[TODO: ${key}]`;
+    await store.upsert(sourceLanguage, key, seed);
+    await store.flush();
 
     vscode.window.showInformationMessage(`Added placeholder for '${key}' to ${sourceLanguage}.json`);
 
-    // Open the locale file
+    const localePath = path.join(localesDir, `${sourceLanguage}.json`);
     const doc = await vscode.workspace.openTextDocument(localePath);
     await vscode.window.showTextDocument(doc);
   } catch (error) {
