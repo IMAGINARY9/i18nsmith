@@ -304,12 +304,25 @@ export class Syncer {
           (w) => w.key === key && w.reason === 'key-equals-value'
         );
         if (!alreadyReported) {
-          suspiciousKeys.push({
-            key,
-            filePath: this.localeStore.getFilePath(this.sourceLocale),
-            position: { line: 0, column: 0 },
-            reason: 'key-equals-value',
-          });
+          // Try to find source file reference for better context
+          const refs = scopedReferencesByKey.get(key) ?? [];
+          if (refs.length > 0) {
+            // Use the first source file reference for key generation context
+            suspiciousKeys.push({
+              key,
+              filePath: refs[0].filePath,
+              position: refs[0].position,
+              reason: 'key-equals-value',
+            });
+          } else {
+            // No source reference found, use locale file (fallback)
+            suspiciousKeys.push({
+              key,
+              filePath: this.localeStore.getFilePath(this.sourceLocale),
+              position: { line: 0, column: 0 },
+              reason: 'key-equals-value',
+            });
+          }
         }
       }
     }

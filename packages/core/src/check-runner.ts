@@ -4,8 +4,8 @@ import { Syncer, SyncSummary, SuspiciousKeyWarning } from './syncer.js';
 import { diagnoseWorkspace, DiagnosisReport } from './diagnostics.js';
 import { ActionableItem, ActionableSeverity } from './actionable.js';
 import { Scanner, ScanCandidate, ScanSummary } from './scanner.js';
+import { KeyGenerator } from './key-generator.js';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 
 export interface CheckRunnerOptions {
   workspaceRoot?: string;
@@ -372,22 +372,26 @@ function buildSuspiciousKeySuggestion(
   config: I18nConfig,
   workspaceRoot: string
 ): string {
+  // Use core KeyGenerator for consistent key generation (respects namespace and hashLength config)
+  const generator = new KeyGenerator({
+    namespace: config.keyGeneration?.namespace,
+    hashLength: config.keyGeneration?.shortHashLen,
+  });
+
+  // Extract the base text from the suspicious key (strip hash if present)
+  const baseText = warning.key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
+  
+  // Determine if filePath is a locale file (should be avoided for key generation context)
   const localesDir = path.resolve(workspaceRoot, config.localesDir ?? 'locales');
-  const relativeLocalePath = warning.filePath
-    ? path.relative(localesDir, warning.filePath).replace(/\\/g, '/')
-    : '';
-  const prefix = relativeLocalePath && !relativeLocalePath.startsWith('..')
-    ? relativeLocalePath.replace(/\.(json|ya?ml)$/i, '').replace(/\//g, '.')
-    : path.basename(warning.filePath ?? '', path.extname(warning.filePath ?? '')) || 'translation';
-  const sanitizedKey = warning.key
-    .trim()
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/(^-|-$)/g, '')
-    .toLowerCase() || 'key';
-  const hash = createHash('sha256')
-    .update(`${warning.key}|${warning.filePath ?? ''}`)
-    .digest('hex')
-    .slice(0, 6);
-  return `${prefix}.${sanitizedKey}-${hash}`;
+  const isLocaleFile = warning.filePath?.startsWith(localesDir);
+  
+  // Generate a properly formatted key
+  // If filePath is a locale file, use empty path to avoid locale name pollution (e.g., "en" from "locales/en.json")
+  const contextPath = isLocaleFile ? '' : warning.filePath ?? '';
+  const generated = generator.generate(baseText, {
+    filePath: contextPath,
+    kind: 'jsx-text',
+  });
+  
+  return generated.key;
 }
