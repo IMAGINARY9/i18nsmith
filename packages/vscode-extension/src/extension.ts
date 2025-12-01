@@ -4,9 +4,12 @@ import { DiagnosticsManager } from './diagnostics';
 import { I18nCodeLensProvider } from './codelens';
 import { ReportWatcher } from './watcher';
 import { I18nHoverProvider } from './hover';
+import * as fs from 'fs';
+import * as path from 'path';
 import { I18nCodeActionProvider, addPlaceholderToLocale } from './codeactions';
 import { SmartScanner } from './scanner';
 import { StatusBarManager } from './statusbar';
+import { I18nDefinitionProvider } from './definition';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -60,6 +63,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerHoverProvider(supportedLanguages, hoverProvider)
   );
 
+  // Initialize Definition provider (Go to Definition on translation keys)
+  context.subscriptions.push(
+    vscode.languages.registerDefinitionProvider(supportedLanguages, new I18nDefinitionProvider())
+  );
+
   // Initialize CodeAction provider
   const codeActionProvider = new I18nCodeActionProvider(diagnosticsManager);
   context.subscriptions.push(
@@ -105,6 +113,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (originalKey: string, newKey: string) => {
       await renameSuspiciousKey(originalKey, newKey);
+    }),
+    vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
+      await insertIgnoreComment(uri, line, 'suspicious-key');
+    }),
+    vscode.commands.registerCommand('i18nsmith.openLocaleFile', async () => {
+      await openSourceLocaleFile();
+    }),
+    vscode.commands.registerCommand('i18nsmith.renameKey', async () => {
+      await renameKeyAtCursor();
     }),
     vscode.commands.registerCommand('i18nsmith.extractSelection', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -279,6 +296,16 @@ async function showQuickActions() {
     });
   }
 
+  // If cursor is on a t('key') call, offer rename
+  const keyAtCursor = editor ? findKeyAtCursor(editor.document, editor.selection.active) : null;
+  if (keyAtCursor) {
+    picks.push({
+      label: `$(edit) Rename key '${keyAtCursor}'`,
+      description: 'Rename the translation key at cursor across project',
+      command: 'i18nsmith.renameKey',
+    });
+  }
+
   if (!hasApplySuggestion) {
     picks.push({
       label: '$(tools) Apply local fixes',
@@ -289,6 +316,11 @@ async function showQuickActions() {
   }
 
   picks.push(
+    {
+      label: '$(file-submodule) Open Source Locale File',
+      description: 'Open the primary locale file for quick edits',
+      command: 'i18nsmith.openLocaleFile'
+    },
     {
       label: '$(sync) Run Health Check',
       description: 'Run i18nsmith check (background)',
@@ -431,7 +463,12 @@ async function runCliCommand(
         out.appendLine(`[error] ${err.message}`);
         vscode.window.showErrorMessage(`Command failed: ${err.message}`);
       } else {
-        vscode.window.showInformationMessage('Command completed');
+        const summary = summarizeCliJson(stdout);
+        if (summary) {
+          vscode.window.showInformationMessage(summary);
+        } else {
+          vscode.window.showInformationMessage('Command completed');
+        }
         await reportWatcher?.refresh();
         if (smartScanner) {
           await smartScanner.scan('suggested-command');
@@ -463,6 +500,114 @@ function ensureInteractiveTerminal(cwd: string): vscode.Terminal {
     interactiveTerminal = vscode.window.createTerminal({ name: 'i18nsmith tasks', cwd });
   }
   return interactiveTerminal;
+}
+
+async function insertIgnoreComment(uri: vscode.Uri, line: number, rule: string) {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const edit = new vscode.WorkspaceEdit();
+  const insertPos = new vscode.Position(Math.max(0, line), 0);
+  const comment = `// i18n-ignore-next-line ${rule}\n`;
+  edit.insert(uri, insertPos, comment);
+  await vscode.workspace.applyEdit(edit);
+  vscode.window.showInformationMessage('Added ignore comment for i18nsmith');
+}
+
+async function openSourceLocaleFile() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+  const root = workspaceFolder.uri.fsPath;
+  const configPath = path.join(root, 'i18n.config.json');
+  let localesDir = 'locales';
+  let sourceLanguage = 'en';
+  try {
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      localesDir = cfg.localesDir || localesDir;
+      sourceLanguage = cfg.sourceLanguage || sourceLanguage;
+    }
+  } catch {
+    // use defaults
+  }
+  const filePath = path.join(root, localesDir, `${sourceLanguage}.json`);
+  if (!fs.existsSync(filePath)) {
+    vscode.window.showWarningMessage(`Locale file not found: ${path.relative(root, filePath)}`);
+    return;
+  }
+  const doc = await vscode.workspace.openTextDocument(filePath);
+  await vscode.window.showTextDocument(doc, { preview: false });
+}
+
+async function renameKeyAtCursor() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showErrorMessage('No active editor');
+    return;
+  }
+  const key = findKeyAtCursor(editor.document, editor.selection.active);
+  if (!key) {
+    vscode.window.showWarningMessage('Place the cursor inside a t("key") call to rename the key');
+    return;
+  }
+  const newKey = await vscode.window.showInputBox({
+    prompt: `Rename key '${key}' to:`,
+    value: key,
+    validateInput: (v) => (v.trim() ? undefined : 'Key cannot be empty'),
+  });
+  if (!newKey || newKey === key) return;
+  const cmd = `i18nsmith rename-key ${quoteCliArg(key)} ${quoteCliArg(newKey)} --write --json`;
+  await runCliCommand(cmd);
+}
+
+function findKeyAtCursor(document: vscode.TextDocument, position: vscode.Position): string | null {
+  const lineText = document.lineAt(position.line).text;
+  const patterns = [
+    /t\(\s*['"`](.+?)['"`]\s*\)/g,
+    /t\(\s*['"`](.+?)['"`]\s*,/g,
+  ];
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(lineText)) !== null) {
+      const keyStart = m.index + m[0].indexOf(m[1]);
+      const keyEnd = keyStart + m[1].length;
+      if (position.character >= keyStart && position.character <= keyEnd) {
+        return m[1];
+      }
+    }
+  }
+  return null;
+}
+
+function summarizeCliJson(stdout: string): string | null {
+  const text = stdout?.trim();
+  if (!text) return null;
+  // Try parse last JSON object in output
+  const lastBrace = text.lastIndexOf('{');
+  if (lastBrace === -1) return null;
+  try {
+    const obj = JSON.parse(text.slice(lastBrace));
+    // Heuristics for common summaries
+    if (obj?.sync) {
+      const s = obj.sync;
+      const added = s.added?.length ?? s.added ?? 0;
+      const removed = s.removed?.length ?? s.removed ?? 0;
+      const updated = s.updated?.length ?? s.updated ?? 0;
+      return `Sync completed: ${added} added, ${updated} updated, ${removed} removed`;
+    }
+    if (obj?.result?.renamed || obj?.renamed) {
+      const r = obj.result?.renamed ?? obj.renamed;
+      if (Array.isArray(r)) return `Renamed ${r.length} key(s)`;
+      return `Rename completed`;
+    }
+    if (obj?.status === 'ok' && obj?.message) {
+      return obj.message;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function shouldWrapSelectionInJsx(
