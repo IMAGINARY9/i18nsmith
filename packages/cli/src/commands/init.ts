@@ -39,6 +39,7 @@ export function parseGlobList(value: string): string[] {
 
 interface InitCommandOptions {
   merge?: boolean;
+  yes?: boolean;
 }
 
 interface InitAnswers {
@@ -63,13 +64,137 @@ interface InitAnswers {
   seedTargetLocales: boolean;
 }
 
+/**
+ * Run init in non-interactive mode with sensible defaults.
+ * Auto-detects existing adapters and locales.
+ */
+async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promise<void> {
+  const workspaceRoot = process.cwd();
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
+
+  // Check if config already exists
+  try {
+    await fs.access(configPath);
+    if (!commandOptions.merge) {
+      console.log(chalk.yellow('Config file already exists. Use --merge to update existing config.'));
+      console.log(chalk.dim(`  ${configPath}`));
+      return;
+    }
+  } catch {
+    // Config doesn't exist, proceed
+  }
+
+  // Create a minimal config for diagnostics
+  const minimalConfig: I18nConfig = {
+    version: 1 as const,
+    sourceLanguage: 'en',
+    targetLanguages: [],
+    localesDir: 'locales',
+    include: ['src/**/*.{ts,tsx,js,jsx}'],
+    exclude: ['node_modules/**'],
+    minTextLength: 1,
+    translation: { provider: 'manual' },
+    translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+    keyGeneration: { namespace: 'common', shortHashLen: 6 },
+    seedTargetLocales: false,
+  };
+
+  // Try to detect existing setup
+  let detectedAdapter: string | undefined;
+  let detectedLocales: string[] = [];
+
+  try {
+    const report = await diagnoseWorkspace(minimalConfig, { workspaceRoot });
+    
+    // Detect adapter files
+    if (report.adapterFiles.length > 0) {
+      detectedAdapter = report.adapterFiles[0].path;
+      console.log(chalk.blue(`Detected adapter: ${detectedAdapter}`));
+    }
+
+    // Detect existing locales
+    const existingLocales = report.localeFiles.filter(
+      (entry) => !entry.missing && !entry.parseError
+    );
+    if (existingLocales.length > 0) {
+      detectedLocales = existingLocales.map((entry) => entry.locale);
+      console.log(chalk.blue(`Detected locales: ${detectedLocales.join(', ')}`));
+    }
+  } catch (error) {
+    console.log(chalk.dim(`Could not run diagnostics: ${(error as Error).message}`));
+  }
+
+  // Determine source and target languages from detected locales
+  let sourceLanguage = 'en';
+  let targetLanguages: string[] = [];
+  
+  if (detectedLocales.length > 0) {
+    // Use 'en' as source if present, otherwise first detected locale
+    if (detectedLocales.includes('en')) {
+      sourceLanguage = 'en';
+      targetLanguages = detectedLocales.filter((l) => l !== 'en');
+    } else {
+      sourceLanguage = detectedLocales[0];
+      targetLanguages = detectedLocales.slice(1);
+    }
+  }
+
+  // Build the config
+  const config: I18nConfig = {
+    version: 1 as const,
+    sourceLanguage,
+    targetLanguages,
+    localesDir: 'locales',
+    include: [
+      'src/**/*.{ts,tsx,js,jsx}',
+      'app/**/*.{ts,tsx,js,jsx}',
+      'pages/**/*.{ts,tsx,js,jsx}',
+      'components/**/*.{ts,tsx,js,jsx}',
+    ],
+    exclude: ['node_modules/**', '**/*.test.*'],
+    minTextLength: 1,
+    translation: { provider: 'manual' },
+    translationAdapter: {
+      module: detectedAdapter ?? 'react-i18next',
+      hookName: 'useTranslation',
+    },
+    keyGeneration: {
+      namespace: 'common',
+      shortHashLen: 6,
+    },
+    seedTargetLocales: false,
+  };
+
+  try {
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+    console.log(chalk.green(`\n✓ Configuration created at ${configPath}`));
+    console.log(chalk.dim('  Source language: ' + sourceLanguage));
+    if (targetLanguages.length > 0) {
+      console.log(chalk.dim('  Target languages: ' + targetLanguages.join(', ')));
+    }
+    if (detectedAdapter) {
+      console.log(chalk.dim('  Adapter: ' + detectedAdapter));
+    }
+    console.log(chalk.blue('\nRun "i18nsmith check" to verify your setup.'));
+  } catch (error) {
+    console.error(chalk.red('Failed to write configuration file:'), error);
+  }
+}
+
 export function registerInit(program: Command) {
   program
     .command('init')
     .description('Initialize i18nsmith configuration')
     .option('--merge', 'Merge with existing locales/runtimes when detected', false)
+    .option('-y, --yes', 'Skip prompts and use defaults (non-interactive mode)', false)
     .action(async (commandOptions: InitCommandOptions) => {
       console.log(chalk.blue('Initializing i18nsmith configuration...'));
+
+      // Non-interactive mode with sensible defaults
+      if (commandOptions.yes) {
+        await runNonInteractiveInit(commandOptions);
+        return;
+      }
 
       const answers = await inquirer.prompt<InitAnswers>([
         {

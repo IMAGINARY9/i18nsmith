@@ -26,6 +26,12 @@ export interface CheckSuggestedCommand {
   command: string;
   reason: string;
   severity: ActionableSeverity;
+  /** Category for grouping related commands */
+  category?: 'extraction' | 'sync' | 'translation' | 'setup' | 'validation';
+  /** Files this command is most relevant to */
+  relevantFiles?: string[];
+  /** Priority for sorting (lower = higher priority, default 50) */
+  priority?: number;
 }
 
 export interface CheckSummary {
@@ -176,11 +182,15 @@ function buildSuggestedCommands(
 
   // High priority: hardcoded text should be transformed
   if (scan.candidates.length > 0) {
+    const relevantFiles = [...new Set(scan.candidates.map((c) => c.filePath))].slice(0, 5);
     add({
       label: 'Extract hardcoded text',
       command: 'i18nsmith transform --interactive',
       reason: `${scan.candidates.length} hardcoded string${scan.candidates.length === 1 ? '' : 's'} found that should be translated`,
       severity: 'warn',
+      category: 'extraction',
+      relevantFiles,
+      priority: 10,
     });
   }
 
@@ -189,18 +199,26 @@ function buildSuggestedCommands(
   const hasUnusedKeys = sync.unusedKeys.length > 0;
   
   if (hasMissingKeys && hasUnusedKeys) {
+    const missingKeyFiles = [...new Set(sync.missingKeys.flatMap((k) => k.references.map((r) => r.filePath)))].slice(0, 5);
     add({
       label: 'Apply locale fixes',
       command: 'i18nsmith sync --write --prune',
       reason: `${sync.missingKeys.length} missing key(s) to add, ${sync.unusedKeys.length} unused key(s) to remove`,
       severity: 'error',
+      category: 'sync',
+      relevantFiles: missingKeyFiles,
+      priority: 20,
     });
   } else if (hasMissingKeys) {
+    const relevantFiles = [...new Set(sync.missingKeys.flatMap((k) => k.references.map((r) => r.filePath)))].slice(0, 5);
     add({
       label: 'Add missing keys',
       command: 'i18nsmith sync --write',
       reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files`,
       severity: 'error',
+      category: 'sync',
+      relevantFiles,
+      priority: 20,
     });
   } else if (hasUnusedKeys) {
     add({
@@ -208,6 +226,8 @@ function buildSuggestedCommands(
       command: 'i18nsmith sync --write --prune',
       reason: `${sync.unusedKeys.length} key(s) in locale files but not used in code`,
       severity: 'warn',
+      category: 'sync',
+      priority: 30,
     });
   }
 
@@ -217,15 +237,20 @@ function buildSuggestedCommands(
       command: 'i18nsmith sync --write --validate-interpolations',
       reason: `${sync.placeholderIssues.length} placeholder mismatch(es) detected across locales`,
       severity: 'error',
+      category: 'validation',
+      priority: 25,
     });
   }
 
   if (sync.emptyValueViolations.length) {
+    const emptyLocales = [...new Set(sync.emptyValueViolations.map((v) => v.locale))];
     add({
       label: 'Fill empty translations',
       command: 'i18nsmith translate --write --force',
-      reason: `${sync.emptyValueViolations.length} empty translation value(s) need content`,
+      reason: `${sync.emptyValueViolations.length} empty translation value(s) in ${emptyLocales.join(', ')}`,
       severity: 'warn',
+      category: 'translation',
+      priority: 40,
     });
   }
 
@@ -235,6 +260,8 @@ function buildSuggestedCommands(
       command: 'i18nsmith sync --write --seed-target-locales',
       reason: 'One or more locale files are missing from the locales directory',
       severity: 'error',
+      category: 'setup',
+      priority: 15,
     });
   }
 
@@ -245,6 +272,8 @@ function buildSuggestedCommands(
       command: 'i18nsmith scaffold-adapter --type react-i18next --install-deps',
       reason: 'No i18n runtime packages were detected',
       severity: 'warn',
+      category: 'setup',
+      priority: 50,
     });
   }
 
@@ -254,6 +283,8 @@ function buildSuggestedCommands(
       command: 'i18nsmith scaffold-adapter --type react-i18next',
       reason: 'No provider wrapping <I18nProvider> was detected',
       severity: 'info',
+      category: 'setup',
+      priority: 55,
     });
   }
 
@@ -261,23 +292,28 @@ function buildSuggestedCommands(
   if (diagKinds.has('diagnostics-adapter-detected') && !hasCustomAdapter) {
     const adapterPath = report.adapterFiles[0]?.path;
     if (adapterPath) {
-      // Since 'i18nsmith config --set' doesn't exist yet, provide a helpful message
-      // The VS Code extension can implement a Quick Fix that updates the config directly
       add({
         label: 'Configure detected adapter',
-        command: `echo 'Add translationAdapter.module to i18n.config.json: "${adapterPath}"'`,
+        command: `i18nsmith config init-adapter "${adapterPath}"`,
         reason: `Existing adapter file "${adapterPath}" detected but not configured in i18n.config.json`,
         severity: 'info',
+        category: 'setup',
+        relevantFiles: [adapterPath],
+        priority: 45,
       });
     }
   }
 
   if (sync.dynamicKeyWarnings.length) {
+    const relevantFiles = [...new Set(sync.dynamicKeyWarnings.map((w) => w.filePath))].slice(0, 5);
     add({
       label: 'Whitelist dynamic keys',
       command: 'i18nsmith sync --assume key1,key2',
       reason: `${sync.dynamicKeyWarnings.length} dynamic translation key(s) detected that may need whitelisting`,
       severity: 'info',
+      category: 'validation',
+      relevantFiles,
+      priority: 60,
     });
   }
 
