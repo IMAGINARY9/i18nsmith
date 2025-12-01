@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
+import { loadConfig, LocaleStore } from '@i18nsmith/core';
 
 /**
  * Hover provider that shows locale values when hovering over t('key') calls
+ * Uses core LocaleStore for consistent key resolution and formatting
  */
 export class I18nHoverProvider implements vscode.HoverProvider {
-  private localeCache: Map<string, Record<string, unknown>> = new Map();
+  private localeStores: Map<string, LocaleStore> = new Map();
+  private localeData: Map<string, Record<string, string>> = new Map();
   private lastLoadTime: number = 0;
 
   provideHover(
@@ -31,16 +33,17 @@ export class I18nHoverProvider implements vscode.HoverProvider {
       return null;
     }
 
-    this.loadLocales(workspaceFolder.uri.fsPath);
+    // Load locales asynchronously
+    return this.loadLocales(workspaceFolder.uri.fsPath).then(() => {
+      const markdown = this.buildHoverContent(key);
+      if (!markdown) {
+        return new vscode.Hover(
+          new vscode.MarkdownString(`**i18nsmith**: Key \`${key}\` not found in any locale`)
+        );
+      }
 
-    const markdown = this.buildHoverContent(key);
-    if (!markdown) {
-      return new vscode.Hover(
-        new vscode.MarkdownString(`**i18nsmith**: Key \`${key}\` not found in any locale`)
-      );
-    }
-
-    return new vscode.Hover(markdown, range);
+      return new vscode.Hover(markdown, range);
+    });
   }
 
   /**
@@ -79,52 +82,42 @@ export class I18nHoverProvider implements vscode.HoverProvider {
   }
 
   /**
-   * Load locale files from the configured directory
+   * Load locale files from the configured directory using core LocaleStore
    */
-  private loadLocales(workspaceRoot: string) {
+  private async loadLocales(workspaceRoot: string) {
     // Only reload if more than 5 seconds have passed
-    if (Date.now() - this.lastLoadTime < 5000 && this.localeCache.size > 0) {
+    if (Date.now() - this.lastLoadTime < 5000 && this.localeData.size > 0) {
       return;
     }
 
-    this.localeCache.clear();
+    this.localeData.clear();
+    this.localeStores.clear();
     this.lastLoadTime = Date.now();
 
-    // Try to find locales directory from config
-    const configPath = path.join(workspaceRoot, 'i18n.config.json');
-    let localesDir = 'locales';
-
     try {
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        localesDir = config.localesDir || 'locales';
-      }
-    } catch {
-      // Use default
-    }
+      const { config } = loadConfig(workspaceRoot);
+      const localesDir = path.join(workspaceRoot, config.localesDir);
+      
+      const store = new LocaleStore(localesDir, {
+        format: config.locales?.format ?? 'auto',
+        delimiter: config.locales?.delimiter ?? '.',
+        sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+      });
 
-    const localesPath = path.join(workspaceRoot, localesDir);
-    
-    try {
-      if (!fs.existsSync(localesPath)) {
-        return;
-      }
-
-      const files = fs.readdirSync(localesPath);
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const locale = file.replace('.json', '');
-          const filePath = path.join(localesPath, file);
-          try {
-            const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-            this.localeCache.set(locale, content);
-          } catch {
-            // Skip invalid JSON files
-          }
+      // Load all locale files (source + targets)
+      const allLocales = [config.sourceLanguage, ...config.targetLanguages];
+      
+      for (const locale of allLocales) {
+        try {
+          const data = await store.get(locale);
+          this.localeData.set(locale, data);
+          this.localeStores.set(locale, store);
+        } catch {
+          // Locale file doesn't exist yet; skip
         }
       }
     } catch {
-      // Directory doesn't exist or isn't readable
+      // Config not found or invalid; use empty data
     }
   }
 
@@ -132,7 +125,7 @@ export class I18nHoverProvider implements vscode.HoverProvider {
    * Build markdown content showing the key's values across locales
    */
   private buildHoverContent(key: string): vscode.MarkdownString | null {
-    if (this.localeCache.size === 0) {
+    if (this.localeData.size === 0) {
       return null;
     }
 
@@ -145,11 +138,11 @@ export class I18nHoverProvider implements vscode.HoverProvider {
     md.appendMarkdown('|--------|-------|\n');
 
     let foundAny = false;
-    const sortedLocales = Array.from(this.localeCache.keys()).sort();
+    const sortedLocales = Array.from(this.localeData.keys()).sort();
 
     for (const locale of sortedLocales) {
-      const localeData = this.localeCache.get(locale)!;
-      const value = this.getNestedValue(localeData, key);
+      const localeData = this.localeData.get(locale)!;
+      const value = localeData[key]; // LocaleStore already flattened keys
       
       if (value !== undefined) {
         foundAny = true;
@@ -173,30 +166,6 @@ export class I18nHoverProvider implements vscode.HoverProvider {
   }
 
   /**
-   * Get a nested value from an object using dot notation
-   */
-  private getNestedValue(obj: Record<string, unknown>, key: string): unknown {
-    // First try direct key lookup (flat structure)
-    if (key in obj) {
-      return obj[key];
-    }
-
-    // Then try nested lookup
-    const parts = key.split('.');
-    let current: unknown = obj;
-
-    for (const part of parts) {
-      if (current && typeof current === 'object' && part in (current as Record<string, unknown>)) {
-        current = (current as Record<string, unknown>)[part];
-      } else {
-        return undefined;
-      }
-    }
-
-    return current;
-  }
-
-  /**
    * Escape markdown special characters
    */
   private escapeMarkdown(text: string): string {
@@ -210,7 +179,8 @@ export class I18nHoverProvider implements vscode.HoverProvider {
    * Clear the locale cache
    */
   clearCache() {
-    this.localeCache.clear();
+    this.localeData.clear();
+    this.localeStores.clear();
     this.lastLoadTime = 0;
   }
 }

@@ -78,6 +78,10 @@
       {
         "command": "i18nsmith.renameKey",
         "title": "i18nsmith: Rename Key at Cursor"
+      },
+      {
+        "command": "i18nsmith.checkFile",
+        "title": "i18nsmith: Check Current File"
       }
     ],
     "menus": {
@@ -89,6 +93,11 @@
         },
         {
           "command": "i18nsmith.renameKey",
+          "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@1"
+        },
+        {
+          "command": "i18nsmith.checkFile",
           "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
           "group": "i18nsmith@1"
         },

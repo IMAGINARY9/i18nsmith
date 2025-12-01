@@ -10,6 +10,7 @@ import { I18nCodeActionProvider, addPlaceholderToLocale } from './codeactions';
 import { SmartScanner } from './scanner';
 import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
+import { CheckIntegration } from './check-integration';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -26,6 +27,7 @@ let hoverProvider: I18nHoverProvider;
 let smartScanner: SmartScanner;
 let statusBarManager: StatusBarManager;
 let interactiveTerminal: vscode.Terminal | undefined;
+let checkIntegration: CheckIntegration;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('i18nsmith extension activated');
@@ -46,6 +48,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize enhanced status bar
   statusBarManager = new StatusBarManager(smartScanner);
   context.subscriptions.push(statusBarManager);
+
+  // Initialize check integration (core CheckRunner without CLI subprocess)
+  checkIntegration = new CheckIntegration();
 
   // Initialize diagnostics manager
   diagnosticsManager = new DiagnosticsManager();
@@ -123,6 +128,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.renameKey', async () => {
       await renameKeyAtCursor();
     }),
+    vscode.commands.registerCommand('i18nsmith.checkFile', async () => {
+      await checkCurrentFile();
+    }),
     vscode.commands.registerCommand('i18nsmith.extractSelection', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.selection.isEmpty) {
@@ -150,6 +158,38 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Run background scan on activation
   smartScanner.runActivationScan();
+}
+
+async function checkCurrentFile() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('No active editor');
+    return;
+  }
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Checking file...',
+      cancellable: false,
+    },
+    async () => {
+      const summary = await checkIntegration.checkFile(workspaceFolder.uri.fsPath, editor.document.uri.fsPath);
+      const fileIssues = summary.actionableItems.filter((item: any) => item.filePath === editor.document.uri.fsPath);
+      if (fileIssues.length === 0) {
+        vscode.window.showInformationMessage('No i18n issues found in this file');
+      } else {
+        vscode.window.showWarningMessage(
+          `Found ${fileIssues.length} i18n issue${fileIssues.length === 1 ? '' : 's'} in this file`
+        );
+      }
+    }
+  );
 }
 
 async function renameSuspiciousKey(originalKey: string, newKey: string) {
