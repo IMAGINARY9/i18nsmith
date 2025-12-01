@@ -44,22 +44,9 @@ export class I18nCodeLensProvider implements vscode.CodeLensProvider {
       );
     }
 
-    // Add CodeLens for each issue with a line number
-    for (const issue of issues) {
-      if (issue.line) {
-        const lineNum = issue.line - 1;
-        if (lineNum >= 0 && lineNum < document.lineCount) {
-          const range = new vscode.Range(lineNum, 0, lineNum, 0);
-          codeLenses.push(
-            new vscode.CodeLens(range, {
-              title: `$(lightbulb) ${issue.kind}: ${issue.key || issue.message.slice(0, 50)}`,
-              command: '',
-              tooltip: issue.message,
-            })
-          );
-        }
-      }
-    }
+    // NOTE: We no longer add per-issue CodeLens because the diagnostic squiggles
+    // and hover messages already provide the same information without clutter.
+    // The summary at the top of the file is sufficient.
 
     return codeLenses;
   }
