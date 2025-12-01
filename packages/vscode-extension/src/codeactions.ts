@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { KeyGenerator, loadConfig } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -313,31 +314,32 @@ function setNestedValue(obj: Record<string, any>, key: string, value: unknown): 
 }
 
 function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRoot?: string): string {
-  const config = loadWorkspaceConfig(workspaceRoot);
-  const rootDir = workspaceRoot ?? process.cwd();
-  const localesDir = path.resolve(rootDir, config.localesDir ?? 'locales');
+  // Use the shared KeyGenerator from core to honor workspace config (namespace, hash length, style)
+  try {
+    if (workspaceRoot) {
+      const { config } = loadConfig(workspaceRoot);
+      const hashLength = config.keyGeneration?.shortHashLen ?? 6;
+      const namespace = config.keyGeneration?.namespace ?? 'common';
+      const generator = new KeyGenerator({ namespace, hashLength });
+      const { key: generated } = generator.generate(key, { filePath, kind: 'locale' });
+      return generated;
+    }
+  } catch {
+    // Fall back to local heuristic below if config load fails
+  }
 
-  const relativeLocalePath = filePath
-    ? path.relative(localesDir, filePath).replace(/\\/g, '/')
-    : '';
-
-  const prefix = relativeLocalePath && !relativeLocalePath.startsWith('..')
-    ? relativeLocalePath.replace(/\.(json|ya?ml)$/i, '').replace(/\//g, '.')
-    : path.basename(filePath ?? '', path.extname(filePath ?? '')) || 'translation';
-
-  const sanitizedKey = key
+  // Fallback heuristic (no config): preserve namespace and add short hash
+  const lastDot = key.lastIndexOf('.');
+  const ns = lastDot > 0 ? key.slice(0, lastDot) : 'common';
+  const leaf = lastDot > 0 ? key.slice(lastDot + 1) : key;
+  const sanitizedLeaf = leaf
     .trim()
     .replace(/[^a-z0-9]+/gi, '-')
     .replace(/-+/g, '-')
     .replace(/(^-|-$)/g, '')
     .toLowerCase() || 'key';
-
-  const hash = createHash('sha256')
-    .update(`${key}|${filePath ?? ''}`)
-    .digest('hex')
-    .slice(0, 6);
-
-  return `${prefix}.${sanitizedKey}-${hash}`;
+  const hash = createHash('sha1').update(`${key}|${filePath ?? ''}`).digest('hex').slice(0, 6);
+  return `${ns}.${sanitizedLeaf}.${hash}`;
 }
 
 function loadWorkspaceConfig(workspaceRoot?: string): { localesDir?: string } {
