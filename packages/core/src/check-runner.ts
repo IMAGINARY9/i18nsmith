@@ -1,7 +1,9 @@
+import { DEFAULT_ADAPTER_MODULE } from './config/defaults.js';
 import { EmptyValuePolicy, I18nConfig } from './config.js';
 import { Syncer, SyncSummary } from './syncer.js';
 import { diagnoseWorkspace, DiagnosisReport } from './diagnostics.js';
 import { ActionableItem, ActionableSeverity } from './actionable.js';
+import { Scanner, ScanCandidate, ScanSummary } from './scanner.js';
 
 export interface CheckRunnerOptions {
   workspaceRoot?: string;
@@ -15,6 +17,8 @@ export interface CheckRunOptions {
   diff?: boolean;
   targets?: string[];
   invalidateCache?: boolean;
+  /** Scan source files for hardcoded text candidates (default: true) */
+  scanHardcoded?: boolean;
 }
 
 export interface CheckSuggestedCommand {
@@ -27,10 +31,12 @@ export interface CheckSuggestedCommand {
 export interface CheckSummary {
   diagnostics: DiagnosisReport;
   sync: SyncSummary;
+  scan: ScanSummary;
   actionableItems: ActionableItem[];
   suggestedCommands: CheckSuggestedCommand[];
   hasConflicts: boolean;
   hasDrift: boolean;
+  hasHardcodedText: boolean;
   timestamp: string;
 }
 
@@ -61,33 +67,105 @@ export class CheckRunner {
       invalidateCache: options.invalidateCache,
     });
 
-    const actionableItems = [...diagnostics.actionableItems, ...sync.actionableItems].sort(
-      (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]
-    );
+    // Scan for hardcoded text candidates (unless explicitly disabled)
+    const scanHardcoded = options.scanHardcoded ?? true;
+    let scan: ScanSummary = { filesScanned: 0, filesExamined: [], candidates: [] };
+    if (scanHardcoded) {
+      const scanner = new Scanner(this.config, { workspaceRoot: this.workspaceRoot });
+      scan = options.targets?.length
+        ? scanner.scan({ targets: options.targets })
+        : scanner.scan();
+    }
 
-    const suggestedCommands = buildSuggestedCommands(diagnostics, sync);
+    // Build actionable items from all sources
+    const hardcodedItems = scan.candidates.map((c) => candidateToActionable(c));
+    const actionableItems = [
+      ...diagnostics.actionableItems,
+      ...sync.actionableItems,
+      ...hardcodedItems,
+    ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
+    const suggestedCommands = buildSuggestedCommands(diagnostics, sync, scan, this.config);
     const hasConflicts = diagnostics.conflicts.length > 0;
     const hasDrift =
       sync.missingKeys.length > 0 ||
       sync.unusedKeys.length > 0 ||
       sync.placeholderIssues.length > 0 ||
       sync.emptyValueViolations.length > 0;
+    const hasHardcodedText = scan.candidates.length > 0;
 
     return {
       diagnostics,
       sync,
+      scan,
       actionableItems,
       suggestedCommands,
       hasConflicts,
       hasDrift,
+      hasHardcodedText,
       timestamp: new Date().toISOString(),
     };
   }
 }
 
-function buildSuggestedCommands(report: DiagnosisReport, sync: SyncSummary): CheckSuggestedCommand[] {
+/**
+ * Convert a scan candidate (hardcoded text) into an actionable item.
+ */
+function candidateToActionable(candidate: ScanCandidate): ActionableItem {
+  const preview = candidate.text.length > 40
+    ? `${candidate.text.slice(0, 37)}...`
+    : candidate.text;
+  return {
+    kind: 'hardcoded-text',
+    severity: 'warn',
+    message: `Hardcoded text "${preview}" should be extracted to a translation key`,
+    filePath: candidate.filePath,
+    line: candidate.position.line,
+    column: candidate.position.column,
+    details: {
+      text: candidate.text,
+      context: candidate.context,
+      candidateKind: candidate.kind,
+    },
+  };
+}
+
+interface SuggestedCommandContext {
+  report: DiagnosisReport;
+  sync: SyncSummary;
+  scan: ScanSummary;
+  config: I18nConfig;
+}
+
+function buildSuggestedCommands(
+  report: DiagnosisReport,
+  sync: SyncSummary,
+  scan: ScanSummary,
+  config: I18nConfig
+): CheckSuggestedCommand[] {
+  const ctx: SuggestedCommandContext = { report, sync, scan, config };
   const items: CheckSuggestedCommand[] = [];
   const diagKinds = new Set(report.actionableItems.map((item) => item.kind));
+
+  // Check if user has a custom/working translation adapter
+  // Note: If no translationAdapter is in the user's config, it defaults to 'react-i18next'
+  // So we need to check if the user ACTUALLY configured a custom adapter vs just using defaults
+  const adapterModule = config.translationAdapter?.module;
+  const isDefaultAdapter = !adapterModule || adapterModule === DEFAULT_ADAPTER_MODULE;
+  
+  // User has explicitly configured a non-default adapter path
+  const hasCustomAdapter = !isDefaultAdapter;
+  
+  // Adapter files exist that we detected
+  const hasExistingAdapter = report.adapterFiles.length > 0;
+  
+  // Runtime package is installed (react-i18next, i18next, etc.)
+  const hasRuntimePackage = report.runtimePackages.length > 0;
+  
+  // User has a working setup if:
+  // 1. They configured a custom adapter module (not default)
+  // 2. Or they have a runtime package installed (which matches the default adapter)
+  const hasWorkingSetup = hasCustomAdapter || hasRuntimePackage;
 
   const add = (entry: CheckSuggestedCommand) => {
     if (items.some((item) => item.command === entry.command)) {
@@ -96,13 +174,40 @@ function buildSuggestedCommands(report: DiagnosisReport, sync: SyncSummary): Che
     items.push(entry);
   };
 
-  const syncNeedsWrite = sync.missingKeys.length > 0 || sync.unusedKeys.length > 0;
-  if (syncNeedsWrite) {
+  // High priority: hardcoded text should be transformed
+  if (scan.candidates.length > 0) {
+    add({
+      label: 'Extract hardcoded text',
+      command: 'i18nsmith transform --interactive',
+      reason: `${scan.candidates.length} hardcoded string${scan.candidates.length === 1 ? '' : 's'} found that should be translated`,
+      severity: 'warn',
+    });
+  }
+
+  // Only suggest sync --write if it will actually do something
+  const hasMissingKeys = sync.missingKeys.length > 0;
+  const hasUnusedKeys = sync.unusedKeys.length > 0;
+  
+  if (hasMissingKeys && hasUnusedKeys) {
     add({
       label: 'Apply locale fixes',
-      command: 'i18nsmith sync --write',
-      reason: 'Missing or unused locale keys detected',
+      command: 'i18nsmith sync --write --prune',
+      reason: `${sync.missingKeys.length} missing key(s) to add, ${sync.unusedKeys.length} unused key(s) to remove`,
       severity: 'error',
+    });
+  } else if (hasMissingKeys) {
+    add({
+      label: 'Add missing keys',
+      command: 'i18nsmith sync --write',
+      reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files`,
+      severity: 'error',
+    });
+  } else if (hasUnusedKeys) {
+    add({
+      label: 'Prune unused keys',
+      command: 'i18nsmith sync --write --prune',
+      reason: `${sync.unusedKeys.length} key(s) in locale files but not used in code`,
+      severity: 'warn',
     });
   }
 
@@ -110,30 +215,31 @@ function buildSuggestedCommands(report: DiagnosisReport, sync: SyncSummary): Che
     add({
       label: 'Fix placeholder mismatches',
       command: 'i18nsmith sync --write --validate-interpolations',
-      reason: 'Placeholder mismatches detected across locales',
+      reason: `${sync.placeholderIssues.length} placeholder mismatch(es) detected across locales`,
       severity: 'error',
     });
   }
 
   if (sync.emptyValueViolations.length) {
     add({
-      label: 'Resolve empty translations',
-      command: 'i18nsmith sync --write --no-empty-values',
-      reason: 'Empty locale values found that violate policy',
+      label: 'Fill empty translations',
+      command: 'i18nsmith translate --write --force',
+      reason: `${sync.emptyValueViolations.length} empty translation value(s) need content`,
       severity: 'warn',
     });
   }
 
   if (diagKinds.has('diagnostics-missing-source-locale') || diagKinds.has('diagnostics-missing-target-locales')) {
     add({
-      label: 'Seed missing locale files',
-      command: 'i18nsmith sync --write',
-      reason: 'Missing locale files were detected in diagnostics',
+      label: 'Create missing locale files',
+      command: 'i18nsmith sync --write --seed-target-locales',
+      reason: 'One or more locale files are missing from the locales directory',
       severity: 'error',
     });
   }
 
-  if (diagKinds.has('diagnostics-runtime-missing')) {
+  // Only suggest runtime/provider scaffolding if no working setup exists
+  if (diagKinds.has('diagnostics-runtime-missing') && !hasWorkingSetup) {
     add({
       label: 'Install or scaffold runtime',
       command: 'i18nsmith scaffold-adapter --type react-i18next --install-deps',
@@ -142,7 +248,7 @@ function buildSuggestedCommands(report: DiagnosisReport, sync: SyncSummary): Che
     });
   }
 
-  if (diagKinds.has('diagnostics-provider-missing')) {
+  if (diagKinds.has('diagnostics-provider-missing') && !hasWorkingSetup) {
     add({
       label: 'Generate provider shell',
       command: 'i18nsmith scaffold-adapter --type react-i18next',
@@ -151,21 +257,27 @@ function buildSuggestedCommands(report: DiagnosisReport, sync: SyncSummary): Che
     });
   }
 
-  if (diagKinds.has('diagnostics-adapter-detected')) {
-    add({
-      label: 'Merge existing runtime',
-      command: 'i18nsmith init --merge',
-      reason: 'Existing adapter/runtime files were found',
-      severity: 'info',
-    });
+  // Only suggest configuring adapter if adapter files exist but config doesn't reference them
+  if (diagKinds.has('diagnostics-adapter-detected') && !hasCustomAdapter) {
+    const adapterPath = report.adapterFiles[0]?.path;
+    if (adapterPath) {
+      // Since 'i18nsmith config --set' doesn't exist yet, provide a helpful message
+      // The VS Code extension can implement a Quick Fix that updates the config directly
+      add({
+        label: 'Configure detected adapter',
+        command: `echo 'Add translationAdapter.module to i18n.config.json: "${adapterPath}"'`,
+        reason: `Existing adapter file "${adapterPath}" detected but not configured in i18n.config.json`,
+        severity: 'info',
+      });
+    }
   }
 
   if (sync.dynamicKeyWarnings.length) {
     add({
-      label: 'Whitelist runtime-only keys',
+      label: 'Whitelist dynamic keys',
       command: 'i18nsmith sync --assume key1,key2',
-      reason: 'Dynamic translation keys were detected in code',
-      severity: 'warn',
+      reason: `${sync.dynamicKeyWarnings.length} dynamic translation key(s) detected that may need whitelisting`,
+      severity: 'info',
     });
   }
 
