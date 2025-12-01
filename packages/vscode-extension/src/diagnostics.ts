@@ -27,6 +27,12 @@ export interface CheckReport {
     actionableItems?: ActionableItem[];
   };
   actionableItems?: ActionableItem[];
+  suggestedCommands?: Array<{
+    label: string;
+    command: string;
+    reason?: string;
+    severity?: 'error' | 'warn' | 'info';
+  }>;
   hasConflicts?: boolean;
   hasDrift?: boolean;
   timestamp?: string;

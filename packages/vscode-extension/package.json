@@ -54,7 +54,30 @@
         "command": "i18nsmith.showOutput",
         "title": "i18nsmith: Show Output Channel"
       }
+      ,
+      {
+        "command": "i18nsmith.actions",
+        "title": "i18nsmith: Quick Actions"
+      },
+      {
+        "command": "i18nsmith.extractSelection",
+        "title": "Extract as Translation Key"
+      }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "i18nsmith.extractSelection",
+          "when": "editorHasSelection && resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@1"
+        },
+        {
+          "command": "i18nsmith.actions",
+          "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "i18nsmith",
       "properties": {
@@ -88,8 +111,23 @@
           "default": true,
           "description": "Show CodeLens actions above files with i18n issues"
         }
+        
       }
     }
+    ,
+    "keybindings": [
+      {
+        "command": "i18nsmith.actions",
+        "key": "cmd+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "i18nsmith.actions",
+        "key": "ctrl+alt+i",
+        "when": "editorTextFocus"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
