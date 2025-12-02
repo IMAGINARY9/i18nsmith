@@ -104,9 +104,13 @@ export class Transformer {
       const fileImportCache = new Map<string, { module: string; hookName: string }>();
 
       for (const candidate of enriched) {
-        if (candidate.status !== 'pending') {
+        // Process both 'pending' (new) and 'existing' (key exists but code not transformed) candidates
+        if (candidate.status !== 'pending' && candidate.status !== 'existing') {
           continue;
         }
+
+        // Track original status to determine if we need to upsert locale data
+        const wasExisting = candidate.status === 'existing';
 
         try {
           const sourceFile = candidate.raw.sourceFile;
@@ -132,8 +136,10 @@ export class Transformer {
           }
           
           if (write) {
+            // Convert absolute module path to relative path for the source file
+            const relativeModulePath = this.getRelativeModulePath(adapterForFile.module, filePath);
             ensureUseTranslationImport(sourceFile, {
-              moduleSpecifier: adapterForFile.module,
+              moduleSpecifier: relativeModulePath,
               namedImport: adapterForFile.hookName,
             });
           }
@@ -153,17 +159,20 @@ export class Transformer {
             filesChanged.set(candidate.filePath, sourceFile);
           }
 
-          const sourceValue =
-            (await this.findLegacyLocaleValue(this.sourceLocale, candidate.text)) ??
-            candidate.text ??
-            generateValueFromKey(candidate.suggestedKey);
-          await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, sourceValue);
-          
-          const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
-          if (shouldMigrate) {
-            for (const locale of this.targetLocales) {
-              const legacyValue = await this.findLegacyLocaleValue(locale, candidate.text);
-              await this.localeStore.upsert(locale, candidate.suggestedKey, legacyValue ?? '');
+          // Only upsert to locale store if this is a new key (wasExisting = false)
+          if (!wasExisting) {
+            const sourceValue =
+              (await this.findLegacyLocaleValue(this.sourceLocale, candidate.text)) ??
+              candidate.text ??
+              generateValueFromKey(candidate.suggestedKey);
+            await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, sourceValue);
+            
+            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
+            if (shouldMigrate) {
+              for (const locale of this.targetLocales) {
+                const legacyValue = await this.findLegacyLocaleValue(locale, candidate.text);
+                await this.localeStore.upsert(locale, candidate.suggestedKey, legacyValue ?? '');
+              }
             }
           }
         } catch (error) {
@@ -389,5 +398,26 @@ export class Transformer {
       variants.add(rawKey.replace(/\s+/g, ' ').trim());
     }
     return Array.from(variants).filter(Boolean);
+  }
+
+  private getRelativeModulePath(absoluteModulePath: string, sourceFilePath: string): string {
+    // Convert the module path to absolute path (whether it starts with . or not)
+    const absoluteModuleFullPath = path.isAbsolute(absoluteModulePath) 
+      ? absoluteModulePath 
+      : path.resolve(this.workspaceRoot, absoluteModulePath);
+    
+    // Convert to relative path from the source file's directory
+    const sourceDir = path.dirname(sourceFilePath);
+    const relativePath = path.relative(sourceDir, absoluteModuleFullPath);
+
+    // Remove .tsx extension for imports
+    const withoutExtension = relativePath.replace(/\.tsx?$/, '');
+    
+    // Ensure it starts with ./ for relative imports
+    if (!withoutExtension.startsWith('.')) {
+      return './' + withoutExtension;
+    }
+
+    return withoutExtension;
   }
 }

@@ -1,0 +1,11 @@
+{
+  "sourceLanguage": "en",
+  "targetLanguages": [],
+  "localesDir": "./locales",
+  "include": ["src/**/*.{ts,tsx}"],
+  "exclude": ["node_modules/**"],
+  "translationAdapter": {
+    "module": "./src/contexts/TranslationContext.tsx",
+    "hookName": "useTranslation"
+  }
+}
