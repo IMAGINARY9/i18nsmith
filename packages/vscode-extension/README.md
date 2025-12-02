@@ -49,6 +49,18 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - a
 4. When applying, the extension updates the source file (ensuring `useTranslation` wiring), seeds locale entries via `LocaleStore`, formats code, and then refreshes diagnostics/hover caches.
 5. If you need to undo, rely on the built-in VS Code undo stack or your VCS.
 
+### Diff Preview
+
+Both **Sync** and **Transform** workflows support inline diff previews:
+
+- **When available**: After selecting changes to apply, you'll see a **"Preview Diff"** button
+- **What it shows**: A formatted view of locale file changes in a separate editor tab:
+  - Summary statistics (additions, updates, removals)
+  - Per-locale unified diffs showing exact JSON changes
+  - Easy-to-read format with syntax highlighting
+- **Workflow**: Preview → Confirm → Apply, or skip preview and apply directly
+- **Use case**: Review large changesets before committing to ensure correctness
+
 ## Quick Actions Menu
 
 Press `Cmd+Shift+P` (or `Ctrl+Shift+P` on Windows/Linux) and run **"i18nsmith: Quick Actions"** to access a unified command palette with context-aware actions:
