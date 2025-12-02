@@ -559,8 +559,41 @@ async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, tex
   vscode.window.showInformationMessage(`Extracted as '${key}'`);
 }
 
+function getDriftStatistics(report: any): { missing: number; unused: number } | null {
+  if (!report?.sync) {
+    return null;
+  }
+  
+  const missing = Array.isArray(report.sync.missingKeys) ? report.sync.missingKeys.length : 0;
+  const unused = Array.isArray(report.sync.unusedKeys) ? report.sync.unusedKeys.length : 0;
+  
+  if (missing === 0 && unused === 0) {
+    return null;
+  }
+  
+  return { missing, unused };
+}
+
 async function showQuickActions() {
   await ensureFreshDiagnosticsForQuickActions();
+
+  // Show drift statistics summary if available
+  const report = diagnosticsManager?.getReport?.();
+  const driftStats = getDriftStatistics(report);
+  if (driftStats) {
+    const totalDrift = driftStats.missing + driftStats.unused;
+    logVerbose(`showQuickActions: Drift detected - ${driftStats.missing} missing, ${driftStats.unused} unused (total: ${totalDrift})`);
+    
+    // Show a toast notification for significant drift (>10 keys)
+    if (totalDrift > 10) {
+      const parts: string[] = [];
+      if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
+      if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
+      vscode.window.showInformationMessage(
+        `i18nsmith detected ${totalDrift} locale drift issues: ${parts.join(', ')}`
+      );
+    }
+  }
 
   const editor = vscode.window.activeTextEditor;
   const selection = editor?.selection;
@@ -568,7 +601,6 @@ async function showQuickActions() {
   const picks: QuickActionPick[] = [];
 
   let hasApplySuggestion = false;
-  const report = diagnosticsManager?.getReport?.();
   const suggestedCommands = Array.isArray(report?.suggestedCommands)
     ? report.suggestedCommands
     : [];
@@ -612,9 +644,18 @@ async function showQuickActions() {
   }
 
   if (!hasApplySuggestion) {
+    // Build description with drift stats if available
+    let syncDescription = 'Run i18nsmith sync --write to add/remove locale keys';
+    if (driftStats) {
+      const parts: string[] = [];
+      if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
+      if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
+      syncDescription = `${parts.join(', ')} — ${syncDescription}`;
+    }
+    
     picks.push({
       label: '$(tools) Apply local fixes',
-      description: 'Run i18nsmith sync --write to add/remove locale keys',
+      description: syncDescription,
       detail: 'i18nsmith: Sync workspace',
       command: 'i18nsmith.sync',
     });
@@ -640,10 +681,22 @@ async function showQuickActions() {
       label: '$(sync) Run Health Check',
       description: 'Run i18nsmith check (background)',
       builtin: 'run-check',
-    },
+    }
+  );
+
+  // Add sync dry-run with drift stats if available
+  let dryRunDescription = 'Run i18nsmith sync --dry-run';
+  if (driftStats) {
+    const parts: string[] = [];
+    if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
+    if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
+    dryRunDescription = `Preview ${parts.join(', ')} — ${dryRunDescription}`;
+  }
+  
+  picks.push(
     {
       label: '$(cloud-download) Sync Locales (dry-run)',
-      description: 'Run i18nsmith sync --dry-run',
+      description: dryRunDescription,
       builtin: 'sync-dry-run',
     },
     {
@@ -658,7 +711,22 @@ async function showQuickActions() {
     }
   );
 
-  const choice = (await vscode.window.showQuickPick(picks, { placeHolder: 'i18nsmith actions' })) as QuickActionPick | undefined;
+  // Build placeholder with drift stats if available
+  let placeholder = 'i18nsmith actions';
+  if (driftStats) {
+    const parts: string[] = [];
+    if (driftStats.missing > 0) {
+      parts.push(`${driftStats.missing} missing key${driftStats.missing === 1 ? '' : 's'}`);
+    }
+    if (driftStats.unused > 0) {
+      parts.push(`${driftStats.unused} unused key${driftStats.unused === 1 ? '' : 's'}`);
+    }
+    if (parts.length > 0) {
+      placeholder = `${parts.join(', ')} detected — Choose an action`;
+    }
+  }
+
+  const choice = (await vscode.window.showQuickPick(picks, { placeHolder: placeholder })) as QuickActionPick | undefined;
   if (!choice || choice.kind === vscode.QuickPickItemKind.Separator) {
     return;
   }
