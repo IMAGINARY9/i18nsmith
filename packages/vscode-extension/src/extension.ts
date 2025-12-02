@@ -461,9 +461,12 @@ async function transformCurrentFile() {
 
   const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
   const transformer = new Transformer(config, { workspaceRoot: projectRoot });
-  const relativePath = path.relative(projectRoot, editor.document.uri.fsPath) || editor.document.uri.fsPath;
+  const absolutePath = editor.document.uri.fsPath;
+  const relativePath = path.relative(projectRoot, absolutePath) || absolutePath;
 
   logVerbose(`transformCurrentFile: Starting preview for ${relativePath}`);
+  logVerbose(`transformCurrentFile: Project root: ${projectRoot}`);
+  logVerbose(`transformCurrentFile: Absolute path: ${absolutePath}`);
 
   const preview: TransformSummary = await vscode.window.withProgress(
     {
@@ -473,17 +476,49 @@ async function transformCurrentFile() {
     },
     () => transformer.run({
       write: false,
-      targets: [relativePath],
+      targets: [absolutePath],  // Pass absolute path instead of relative
       diff: true,
     })
   );
 
-  const pending = preview.candidates.filter((candidate: TransformCandidate) => candidate.status === 'pending');
+  // Include both 'pending' (new keys) and 'existing' (keys exist but code not yet transformed) candidates
+  const transformable = preview.candidates.filter((candidate: TransformCandidate) => 
+    candidate.status === 'pending' || candidate.status === 'existing'
+  );
   
-  logVerbose(`transformCurrentFile: Preview complete - ${pending.length} pending candidates`);
+  logVerbose(`transformCurrentFile: Preview complete - ${transformable.length} transformable candidates`);
+  logVerbose(`transformCurrentFile: Total candidates: ${preview.candidates.length}`);
+  logVerbose(`transformCurrentFile: Files scanned: ${preview.filesScanned}`);
+  logVerbose(`transformCurrentFile: Files changed: ${preview.filesChanged.length}`);
+  logVerbose(`transformCurrentFile: Skipped files: ${preview.skippedFiles.length}`);
+  if (preview.skippedFiles.length > 0) {
+    preview.skippedFiles.forEach((sf: { filePath: string; reason: string }) => {
+      logVerbose(`  - Skipped: ${sf.filePath} (${sf.reason})`);
+    });
+  }
+  if (preview.candidates.length > 0) {
+    preview.candidates.forEach((c: TransformCandidate) => {
+      logVerbose(`  - Candidate: "${c.text}" => "${c.suggestedKey}" [${c.status}] ${c.reason || '(no reason)'}`);
+    });
+  } else {
+    logVerbose('  - No candidates found by Scanner');
+  }
   
-  if (!pending.length) {
-    vscode.window.showInformationMessage('No transformable strings found in this file.');
+  if (!transformable.length) {
+    let message = 'No transformable strings found in this file.';
+    if (preview.filesScanned === 0) {
+      message += '\n\n⚠️ File was not scanned. This might be because:';
+      message += '\n• The file is not in your i18n.config.json "include" patterns';
+      message += '\n• The file extension is not supported (.tsx, .jsx, .ts, .js)';
+      message += `\n\nFile: ${relativePath}`;
+      message += `\n\nTry adding the file pattern to your include array in i18n.config.json`;
+    } else if (preview.skippedFiles.length > 0) {
+      const skipped = preview.skippedFiles[0];
+      message += `\n\nReason: ${skipped.reason}`;
+    } else if (preview.candidates.length > 0) {
+      message += '\n\nAll candidates were filtered out (already translated, duplicates, or too short).';
+    }
+    vscode.window.showWarningMessage(message);
     return;
   }
 
@@ -493,7 +528,7 @@ async function transformCurrentFile() {
     : ['Apply', 'Dry Run Only'];
   
   const choice = await vscode.window.showInformationMessage(
-    `Transform ${pending.length} candidate${pending.length === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}?`,
+    `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}?`,
     { modal: true, detail },
     ...buttons
   );
@@ -525,7 +560,7 @@ async function transformCurrentFile() {
     return;
   }
 
-  logVerbose(`transformCurrentFile: Applying ${pending.length} transformations`);
+  logVerbose(`transformCurrentFile: Applying ${transformable.length} transformations`);
 
   const writeSummary: TransformSummary = await vscode.window.withProgress(
     {
@@ -535,7 +570,7 @@ async function transformCurrentFile() {
     },
     () => transformer.run({
       write: true,
-      targets: [relativePath],
+      targets: [absolutePath],  // Use absolute path here too
       diff: true,
     })
   );
