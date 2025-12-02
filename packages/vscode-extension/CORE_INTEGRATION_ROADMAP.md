@@ -174,7 +174,38 @@ logVerbose('transformCurrentFile: Write complete - 5 applied');
 
 **Status**: Completed. Output visible in "i18nsmith (Verbose)" output channel when setting enabled.
 
-### 10. Diff Preview Surfaces (Potential)
+### 10. Quick Actions Drift Statistics (Completed ✅)
+**Purpose**: Display locale drift statistics in the Quick Actions menu to give users immediate visibility into sync status.  
+**Benefits**:
+- Users see drift counts before choosing an action
+- Contextual info helps prioritize what to fix
+- Reduces guesswork about locale health
+
+**Implementation**:
+```typescript
+// Helper to extract drift stats from report
+function getDriftStatistics(report: any): { missing: number; unused: number } | null {
+  if (!report?.sync) return null;
+  const missing = report.sync.missingKeys?.length ?? 0;
+  const unused = report.sync.unusedKeys?.length ?? 0;
+  return missing === 0 && unused === 0 ? null : { missing, unused };
+}
+
+// Enhanced QuickPick placeholder
+placeholder = "5 missing keys, 3 unused keys detected — Choose an action";
+
+// Inline stats in action descriptions
+description: "5 missing, 3 unused — Run i18nsmith sync --write";
+
+// Toast notification for significant drift (>10 keys)
+if (totalDrift > 10) {
+  vscode.window.showInformationMessage(`i18nsmith detected ${totalDrift} locale drift issues`);
+}
+```
+
+**Status**: Completed. Quick Actions menu now shows drift counts in placeholder, action descriptions, and toast notifications.
+
+### 11. Diff Preview Surfaces (Potential)
 **Current State**: QuickPick sync flow lists keys but doesn’t show diffs; transform confirmations only include textual summaries.  
 **Opportunity**: Render structured diffs (or inline patches) using existing `SyncSummary.diffs` / `TransformSummary.diffs` data.
 
@@ -183,7 +214,7 @@ logVerbose('transformCurrentFile: Write complete - 5 applied');
 - Optional "copy patch" action for PR descriptions
 - Extend transform confirmation to show highlighted code change snippets
 
-### 11. Diagnostics Telemetry (Potential)
+### 12. Diagnostics Telemetry (Potential)
 ### 11. Diagnostics Telemetry (Potential)
 **Current State**: Console logging is minimal beyond verbose toggle; no persistent performance tracking.  
 **Opportunity**: Add opt-in telemetry for perf counters (Syncer/Transformer runtimes, selections, failures) to aid debugging and analysis (no PII).
@@ -205,6 +236,7 @@ logVerbose('transformCurrentFile: Write complete - 5 applied');
 | **Syncer** | ✅ Integrated | +1.0MB | Structured diff output, no shell exec | Interactive QuickPick preview + scoped syncs |
 | **Transformer** | ✅ Integrated | +1.5MB | No CLI exec for extract | Per-file onboarding with preview/confirm |
 | **Verbose Logging** | ✅ Integrated | +0.0MB | Configurable debug output | Easier troubleshooting |
+| **Quick Actions Stats** | ✅ Integrated | +0.0MB | Drift visibility in UI | Informed decision-making |
 | **ReferenceExtractor** | ⚠️ Defer | +3.0MB (parsers) | Real-time diagnostics | Faster background scan |
 
 **Current Bundle Size**: 17.6 MB (`pnpm --filter i18nsmith-vscode run compile`, 2025‑12‑02) with Syncer + Transformer embedded.  
@@ -219,7 +251,7 @@ logVerbose('transformCurrentFile: Write complete - 5 applied');
 ### Immediate (This Session)
 1. ✅ Flesh out README/docs with step-by-step guides (and gifs/screenshots) for `i18nsmith.syncFile` + `i18nsmith.transformFile` flows.
 2. ✅ Implement verbose logging toggle with `enableVerboseLogging` setting.
-3. 📈 Enhance Quick Actions to summarize drift counts (missing/unused) before opening the QuickPick.
+3. ✅ Enhance Quick Actions to summarize drift counts (missing/unused) before opening the QuickPick.
 
 ### Short-Term (Next Session)
 1. 🪟 Prototype diff previews (webview or inline) sourced from `SyncSummary.diffs` / `TransformSummary.diffs`.

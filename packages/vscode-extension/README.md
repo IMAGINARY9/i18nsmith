@@ -49,6 +49,26 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - a
 4. When applying, the extension updates the source file (ensuring `useTranslation` wiring), seeds locale entries via `LocaleStore`, formats code, and then refreshes diagnostics/hover caches.
 5. If you need to undo, rely on the built-in VS Code undo stack or your VCS.
 
+## Quick Actions Menu
+
+Press `Cmd+Shift+P` (or `Ctrl+Shift+P` on Windows/Linux) and run **"i18nsmith: Quick Actions"** to access a unified command palette with context-aware actions:
+
+**Drift Statistics**: When locale drift is detected, the Quick Actions menu automatically displays:
+- **Placeholder text**: Shows counts like "5 missing keys, 3 unused keys detected — Choose an action"
+- **Inline stats**: Sync-related actions show drift counts in their descriptions (e.g., "5 missing, 3 unused — Run i18nsmith sync")
+- **Toast notification**: For significant drift (>10 keys), a notification appears before the menu opens
+
+**Available Actions**:
+- Extract selection as translation key
+- Rename key at cursor
+- Apply local fixes (sync with write)
+- Open source locale file
+- Sync/transform current file
+- Run health check
+- Preview sync changes (dry-run)
+- Refresh diagnostics
+- Show verbose output
+
 ## Quick Fixes (CodeActions)
 
 When you see an i18nsmith diagnostic, click the lightbulb or press `Cmd+.` to see available fixes:
@@ -76,6 +96,7 @@ Hover over any `t('key')` call to see a table of values across all locales:
 | `i18nsmith.reportPath` | `.i18nsmith/check-report.json` | Path to the report file |
 | `i18nsmith.autoRefresh` | `true` | Auto-refresh when report changes |
 | `i18nsmith.showCodeLens` | `true` | Show CodeLens actions |
+| `i18nsmith.enableVerboseLogging` | `false` | Enable verbose logging to Output channel for debugging sync/transform operations |
 
 ## Development
 
