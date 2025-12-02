@@ -12,6 +12,7 @@ import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { SyncIntegration } from './sync-integration';
+import { DiffPeekProvider } from './diff-peek';
 import { loadConfigWithMeta } from '@i18nsmith/core';
 import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
@@ -34,6 +35,7 @@ let statusBarManager: StatusBarManager;
 let interactiveTerminal: vscode.Terminal | undefined;
 let checkIntegration: CheckIntegration;
 let syncIntegration: SyncIntegration | undefined;
+let diffPeekProvider: DiffPeekProvider;
 let verboseOutputChannel: vscode.OutputChannel;
 
 function logVerbose(message: string) {
@@ -69,6 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize check integration (core CheckRunner without CLI subprocess)
   checkIntegration = new CheckIntegration();
   syncIntegration = new SyncIntegration();
+  diffPeekProvider = new DiffPeekProvider();
 
   // Initialize diagnostics manager
   diagnosticsManager = new DiagnosticsManager();
@@ -304,6 +307,40 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     return;
   }
 
+  // Show diff preview if available
+  if (summary.diffs && summary.diffs.length > 0) {
+    const previewChoice = await vscode.window.showInformationMessage(
+      `Ready to apply ${selection.missing.length + selection.unused.length} locale changes`,
+      'Preview Diff',
+      'Apply Now',
+      'Cancel'
+    );
+
+    if (previewChoice === 'Cancel' || !previewChoice) {
+      logVerbose('runSync: User cancelled after selection');
+      return;
+    }
+
+    if (previewChoice === 'Preview Diff') {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Sync Preview');
+        
+        // Ask again after showing preview
+        const applyChoice = await vscode.window.showInformationMessage(
+          `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
+          'Apply',
+          'Cancel'
+        );
+        
+        if (applyChoice !== 'Apply') {
+          logVerbose('runSync: User cancelled after viewing diff preview');
+          return;
+        }
+      }
+    }
+  }
+
   logVerbose(`runSync: Applying ${selection.missing.length} missing, ${selection.unused.length} unused`);
 
   const writeResult = await vscode.window.withProgress(
@@ -451,11 +488,14 @@ async function transformCurrentFile() {
   }
 
   const detail = formatTransformPreview(preview);
+  const buttons = preview.diffs && preview.diffs.length > 0
+    ? ['Apply', 'Preview Diff', 'Dry Run Only']
+    : ['Apply', 'Dry Run Only'];
+  
   const choice = await vscode.window.showInformationMessage(
     `Transform ${pending.length} candidate${pending.length === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}?`,
     { modal: true, detail },
-    'Apply',
-    'Dry Run Only'
+    ...buttons
   );
 
   if (!choice) {
@@ -463,7 +503,23 @@ async function transformCurrentFile() {
     return;
   }
 
-  if (choice === 'Dry Run Only') {
+  if (choice === 'Preview Diff') {
+    logVerbose('transformCurrentFile: Showing diff preview');
+    await diffPeekProvider.showDiffPeek(editor, preview.diffs, 'Transform Preview');
+    
+    // Ask again after preview
+    const applyChoice = await vscode.window.showInformationMessage(
+      `Apply transform to ${path.basename(editor.document.uri.fsPath)}?`,
+      { modal: true, detail },
+      'Apply',
+      'Cancel'
+    );
+    
+    if (applyChoice !== 'Apply') {
+      logVerbose('transformCurrentFile: User cancelled after viewing diff');
+      return;
+    }
+  } else if (choice === 'Dry Run Only') {
     logVerbose('transformCurrentFile: Dry run only, showing preview');
     vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
     return;

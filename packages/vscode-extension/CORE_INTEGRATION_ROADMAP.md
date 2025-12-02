@@ -205,17 +205,69 @@ if (totalDrift > 10) {
 
 **Status**: Completed. Quick Actions menu now shows drift counts in placeholder, action descriptions, and toast notifications.
 
-### 11. Diff Preview Surfaces (Potential)
-**Current State**: QuickPick sync flow lists keys but doesn’t show diffs; transform confirmations only include textual summaries.  
-**Opportunity**: Render structured diffs (or inline patches) using existing `SyncSummary.diffs` / `TransformSummary.diffs` data.
+### 11. Inline Diff Preview (Completed ✅)
+**Purpose**: Show formatted locale file diffs before applying sync/transform operations.  
+**Benefits**:
+- Users can review exact changes before committing
+- Reduces errors from blind application of large changesets
+- Provides confidence in automated operations
+- Easy to spot unexpected changes
+
+**Implementation**:
+```typescript
+// DiffPeekProvider shows diffs in a side-by-side editor
+export class DiffPeekProvider {
+  async showDiffPeek(editor: vscode.TextEditor, diffs: LocaleDiffEntry[], title: string) {
+    const content = this.formatDiffsForPeek(diffs, title);
+    const uri = vscode.Uri.parse(`i18nsmith-diff:${title}.diff`);
+    await vscode.window.showTextDocument(doc, {
+      viewColumn: vscode.ViewColumn.Beside,
+      preview: true,
+    });
+  }
+}
+
+// Integrated into sync workflow
+const previewChoice = await vscode.window.showInformationMessage(
+  'Ready to apply changes',
+  'Preview Diff',  // ← New button
+  'Apply Now',
+  'Cancel'
+);
+
+// Integrated into transform workflow  
+const buttons = preview.diffs?.length > 0
+  ? ['Apply', 'Preview Diff', 'Dry Run Only']
+  : ['Apply', 'Dry Run Only'];
+```
+
+**Features**:
+- Summary statistics (X additions, Y updates, Z removals)
+- Per-locale unified diffs showing exact JSON changes
+- Formatted Markdown-style output for readability
+- Opens in side-by-side editor (ViewColumn.Beside)
+- Auto-disposes after 1 minute to avoid clutter
+
+**Status**: Completed. Diff preview available in both sync and transform workflows via "Preview Diff" button.
+
+**Future Enhancements** (deferred):
+- Webview panel for interactive diff (checkboxes to toggle specific changes)
+- Syntax-highlighted diffs with collapsible sections
+- Copy patch to clipboard action
+- Inline peek widget (vs. side editor) for smaller screens
+
+### 12. Webview Diff Preview (Potential)
+**Current State**: Inline diff preview implemented using side-by-side editor.  
+**Opportunity**: Upgrade to interactive webview panel with richer UI (checkboxes, syntax highlighting, collapsible sections).
 
 **Potential UX**:
-- Webview panel or inline preview listing locale patches before apply
-- Optional "copy patch" action for PR descriptions
-- Extend transform confirmation to show highlighted code change snippets
+- Webview panel with interactive controls
+- Toggle individual changes on/off before applying
+- Syntax-highlighted JSON diffs with line numbers
+- Copy patch to clipboard action
+- Filter diffs by locale or change type
 
-### 12. Diagnostics Telemetry (Potential)
-### 11. Diagnostics Telemetry (Potential)
+### 13. Diagnostics Telemetry (Potential)
 **Current State**: Console logging is minimal beyond verbose toggle; no persistent performance tracking.  
 **Opportunity**: Add opt-in telemetry for perf counters (Syncer/Transformer runtimes, selections, failures) to aid debugging and analysis (no PII).
 
@@ -252,11 +304,12 @@ if (totalDrift > 10) {
 1. ✅ Flesh out README/docs with step-by-step guides (and gifs/screenshots) for `i18nsmith.syncFile` + `i18nsmith.transformFile` flows.
 2. ✅ Implement verbose logging toggle with `enableVerboseLogging` setting.
 3. ✅ Enhance Quick Actions to summarize drift counts (missing/unused) before opening the QuickPick.
+4. ✅ Implement inline diff preview with side-by-side editor for sync/transform operations.
 
 ### Short-Term (Next Session)
-1. 🪟 Prototype diff previews (webview or inline) sourced from `SyncSummary.diffs` / `TransformSummary.diffs`.
-2. 📊 Implement optional telemetry sink for performance tracking (if needed).
-3. 🧪 Dogfood the QuickPick sync workflow in the `i18nsmith-ext-test` multi-root sandbox; capture console logs + friction notes.
+1. 🧪 Dogfood the QuickPick sync workflow + diff preview in the `i18nsmith-ext-test` multi-root sandbox.
+2. 🪟 Evaluate webview panel upgrade for diff preview (interactive controls, syntax highlighting).
+3. 📊 Implement optional telemetry sink for performance tracking (if needed).
 
 ### Long-Term (Future)
 1. Evaluate ReferenceExtractor integration (monitor bundle size, parser impact, and need for AST fidelity).
