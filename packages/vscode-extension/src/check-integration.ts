@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { loadConfig, CheckRunner, CheckSummary } from '@i18nsmith/core';
+import { loadConfigWithMeta, CheckRunner, CheckSummary } from '@i18nsmith/core';
 
 /**
  * Integration layer for running i18nsmith check directly via core CheckRunner
@@ -22,15 +22,16 @@ export class CheckIntegration {
       scanHardcoded?: boolean;
     } = {}
   ): Promise<CheckSummary> {
-    const { config } = loadConfig(workspaceRoot);
-    const runner = new CheckRunner(config, { workspaceRoot });
+  const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceRoot });
+  const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
+  const normalizedTargets = this.normalizeTargets(options.targets, projectRoot);
     
     const summary = await runner.run({
       validateInterpolations: config.sync?.validateInterpolations ?? false,
       emptyValuePolicy: config.sync?.emptyValuePolicy ?? 'warn',
       assumedKeys: options.targets ? [] : config.sync?.dynamicKeyAssumptions ?? [],
       diff: false,
-      targets: options.targets,
+  targets: normalizedTargets,
       invalidateCache: options.invalidateCache ?? false,
       scanHardcoded: options.scanHardcoded ?? true,
     });
@@ -54,8 +55,18 @@ export class CheckIntegration {
    * Uses core's --target functionality for focused diagnostics
    */
   async checkFile(workspaceRoot: string, filePath: string): Promise<CheckSummary> {
-    const relativePath = path.relative(workspaceRoot, filePath);
-    return this.runCheck(workspaceRoot, { targets: [relativePath] });
+    return this.runCheck(workspaceRoot, { targets: [filePath] });
+  }
+
+  private normalizeTargets(targets: string[] | undefined, projectRoot: string): string[] | undefined {
+    if (!targets?.length) {
+      return undefined;
+    }
+
+    return targets
+      .map((target) => target?.trim())
+      .filter((target): target is string => Boolean(target))
+      .map((target) => (path.isAbsolute(target) ? path.relative(projectRoot, target) : target));
   }
 
   /**

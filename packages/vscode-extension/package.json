@@ -39,6 +39,10 @@
         "title": "i18nsmith: Sync Locales (Dry Run)"
       },
       {
+        "command": "i18nsmith.syncFile",
+        "title": "i18nsmith: Sync Current File"
+      },
+      {
         "command": "i18nsmith.refreshDiagnostics",
         "title": "i18nsmith: Refresh Diagnostics"
       },
@@ -82,6 +86,10 @@
       {
         "command": "i18nsmith.checkFile",
         "title": "i18nsmith: Check Current File"
+      },
+      {
+        "command": "i18nsmith.transformFile",
+        "title": "i18nsmith: Transform Current File"
       }
     ],
     "menus": {
@@ -98,6 +106,16 @@
         },
         {
           "command": "i18nsmith.checkFile",
+          "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@1"
+        },
+        {
+          "command": "i18nsmith.syncFile",
+          "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
+          "group": "i18nsmith@1"
+        },
+        {
+          "command": "i18nsmith.transformFile",
           "when": "resourceLangId =~ /typescript|typescriptreact|javascript|javascriptreact|vue|svelte/",
           "group": "i18nsmith@1"
         },
@@ -174,6 +192,7 @@
     "vitest": "^0.34.0"
   },
   "dependencies": {
-    "@i18nsmith/core": "workspace:*"
+    "@i18nsmith/core": "workspace:*",
+    "@i18nsmith/transformer": "workspace:*"
   }
 }

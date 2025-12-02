@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { KeyGenerator, loadConfig, LocaleStore } from '@i18nsmith/core';
+import { KeyGenerator, loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -256,15 +256,15 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
  */
 export async function addPlaceholderToLocale(key: string, workspaceRoot: string): Promise<void> {
   try {
-    const { config } = loadConfig(workspaceRoot);
-    const localesDir = path.join(workspaceRoot, config.localesDir);
+    const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceRoot });
+    const localesDir = path.join(projectRoot, config.localesDir ?? 'locales');
     const store = new LocaleStore(localesDir, {
       format: config.locales?.format ?? 'auto',
       delimiter: config.locales?.delimiter ?? '.',
       sortKeys: config.locales?.sortKeys ?? 'alphabetical',
     });
 
-    const sourceLanguage = config.sourceLanguage;
+    const sourceLanguage = config.sourceLanguage ?? 'en';
     const seed = config.sync?.seedValue ?? `[TODO: ${key}]`;
     await store.upsert(sourceLanguage, key, seed);
     await store.flush();
@@ -301,7 +301,7 @@ function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRo
   // Use the shared KeyGenerator from core to honor workspace config (namespace, hash length, style)
   try {
     if (workspaceRoot) {
-      const { config } = loadConfig(workspaceRoot);
+      const config = loadWorkspaceConfig(workspaceRoot);
       const hashLength = config.keyGeneration?.shortHashLen ?? 6;
       const namespace = config.keyGeneration?.namespace ?? 'common';
       const generator = new KeyGenerator({ namespace, hashLength });
@@ -326,7 +326,15 @@ function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRo
   return `${ns}.${sanitizedLeaf}.${hash}`;
 }
 
-function loadWorkspaceConfig(workspaceRoot?: string): { localesDir?: string } {
+interface LightweightWorkspaceConfig {
+  localesDir?: string;
+  keyGeneration?: {
+    namespace?: string;
+    shortHashLen?: number;
+  };
+}
+
+function loadWorkspaceConfig(workspaceRoot?: string): LightweightWorkspaceConfig {
   if (!workspaceRoot) {
     return {};
   }
@@ -339,7 +347,10 @@ function loadWorkspaceConfig(workspaceRoot?: string): { localesDir?: string } {
   try {
     const content = fs.readFileSync(configPath, 'utf8');
     const parsed = JSON.parse(content);
-    return { localesDir: parsed.localesDir };
+    return {
+      localesDir: parsed.localesDir,
+      keyGeneration: parsed.keyGeneration,
+    };
   } catch {
     return {};
   }
