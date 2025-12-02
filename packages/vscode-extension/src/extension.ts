@@ -11,6 +11,11 @@ import { SmartScanner } from './scanner';
 import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
+import { SyncIntegration } from './sync-integration';
+import { loadConfigWithMeta } from '@i18nsmith/core';
+import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord } from '@i18nsmith/core';
+import { Transformer } from '@i18nsmith/transformer';
+import type { TransformSummary } from '@i18nsmith/transformer';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -28,6 +33,7 @@ let smartScanner: SmartScanner;
 let statusBarManager: StatusBarManager;
 let interactiveTerminal: vscode.Terminal | undefined;
 let checkIntegration: CheckIntegration;
+let syncIntegration: SyncIntegration;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('i18nsmith extension activated');
@@ -51,6 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize check integration (core CheckRunner without CLI subprocess)
   checkIntegration = new CheckIntegration();
+  syncIntegration = new SyncIntegration();
 
   // Initialize diagnostics manager
   diagnosticsManager = new DiagnosticsManager();
@@ -99,7 +106,12 @@ export function activate(context: vscode.ExtensionContext) {
       smartScanner.showOutput();
       await smartScanner.scan('manual');
     }),
-    vscode.commands.registerCommand('i18nsmith.sync', runSync),
+    vscode.commands.registerCommand('i18nsmith.sync', async () => {
+      await runSync({ dryRunOnly: false });
+    }),
+    vscode.commands.registerCommand('i18nsmith.syncFile', async () => {
+      await syncCurrentFile();
+    }),
     vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', () => {
       hoverProvider.clearCache();
       reportWatcher.refresh();
@@ -142,6 +154,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.showOutput', () => {
       smartScanner.showOutput();
+    }),
+    vscode.commands.registerCommand('i18nsmith.transformFile', async () => {
+      await transformCurrentFile();
     })
   );
 
@@ -215,39 +230,253 @@ export function deactivate() {
   console.log('i18nsmith extension deactivated');
 }
 
-async function runSync() {
+interface SyncQuickPickItem extends vscode.QuickPickItem {
+  bucket: 'missing' | 'unused';
+  key: string;
+}
+
+interface SyncSelectionResult {
+  missing: string[];
+  unused: string[];
+}
+
+async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {}) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     vscode.window.showErrorMessage('No workspace folder found');
     return;
   }
 
-  const config = vscode.workspace.getConfiguration('i18nsmith');
-  const cliPath = config.get<string>('cliPath', '');
+  if (!syncIntegration) {
+    syncIntegration = new SyncIntegration();
+  }
 
-  const cmd = cliPath
-    ? `node "${cliPath}" sync --json`
-    : 'npx i18nsmith sync --json';
+  const preview: TransformSummary = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: options.dryRunOnly ? 'i18nsmith: Gathering sync preview…' : 'i18nsmith: Preparing sync…',
+      cancellable: false,
+    },
+    () => syncIntegration.run(workspaceFolder.uri.fsPath, {
+      write: false,
+      diff: true,
+      targets: options.targets,
+    })
+  );
 
-  smartScanner.showOutput();
+  const summary = preview.summary;
+  const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
 
-  return new Promise<void>((resolve) => {
-    exec(
-      cmd,
-      { cwd: workspaceFolder.uri.fsPath },
-      (error: Error | null, _stdout: string, _stderr: string) => {
-        // Output is handled by SmartScanner's output channel
-        if (error) {
-          vscode.window.showErrorMessage(`i18nsmith sync failed: ${error.message}`);
-        } else {
-          vscode.window.showInformationMessage('i18nsmith sync completed');
-          // Trigger a check to update diagnostics
-          smartScanner.scan('sync-complete');
-        }
-        resolve();
-      }
-    );
+  if (!hasDrift) {
+    vscode.window.showInformationMessage('Locales are already in sync. Nothing to do.');
+    return;
+  }
+
+  if (options.dryRunOnly) {
+    showSyncDryRunSummary(summary);
+    return;
+  }
+
+  const selection = await presentSyncQuickPick(summary);
+  if (!selection) {
+    return;
+  }
+
+  if (!selection.missing.length && !selection.unused.length) {
+    vscode.window.showWarningMessage('No changes selected for sync.');
+    return;
+  }
+
+  const writeResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Applying locale changes…',
+      cancellable: false,
+    },
+    () => syncIntegration!.run(workspaceFolder.uri.fsPath, {
+      write: true,
+      prune: selection.unused.length > 0,
+      selection,
+      targets: options.targets,
+    })
+  );
+
+  const added = selection.missing.length;
+  const removed = selection.unused.length;
+  const parts = [];
+  if (added) parts.push(`${added} addition${added === 1 ? '' : 's'}`);
+  if (removed) parts.push(`${removed} removal${removed === 1 ? '' : 's'}`);
+  const message = parts.length ? parts.join(' and ') : 'No changes applied';
+  vscode.window.showInformationMessage(`Locale sync completed (${message}).`);
+
+  hoverProvider.clearCache();
+  await reportWatcher.refresh();
+  await smartScanner.scan('sync-complete');
+}
+
+function showSyncDryRunSummary(summary: SyncSummary) {
+  const added = summary.missingKeys.length;
+  const removed = summary.unusedKeys.length;
+  const placeholderIssues = summary.placeholderIssues.length;
+  const emptyValues = summary.emptyValueViolations.length;
+
+  const lines = [
+    added ? `• ${added} missing key${added === 1 ? '' : 's'} detected` : '• No missing keys',
+    removed ? `• ${removed} unused key${removed === 1 ? '' : 's'} detected` : '• No unused keys',
+  ];
+  if (placeholderIssues) {
+    lines.push(`• ${placeholderIssues} placeholder mismatch${placeholderIssues === 1 ? '' : 'es'}`);
+  }
+  if (emptyValues) {
+    lines.push(`• ${emptyValues} empty locale value${emptyValues === 1 ? '' : 's'}`);
+  }
+
+  vscode.window.showInformationMessage(`i18nsmith sync preview:\n${lines.join('\n')}`);
+}
+
+async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelectionResult | null> {
+  const items: SyncQuickPickItem[] = [];
+
+  summary.missingKeys.forEach((record: MissingKeyRecord) => {
+    const sample = record.references[0];
+    items.push({
+      label: `$(diff-added) ${record.key}`,
+      description: sample ? `${sample.filePath}:${sample.position.line}` : 'missing in source locale',
+      detail: `${record.references.length} reference${record.references.length === 1 ? '' : 's'}`,
+      picked: true,
+      bucket: 'missing',
+      key: record.key,
+    });
   });
+
+  summary.unusedKeys.forEach((record: UnusedKeyRecord) => {
+    items.push({
+      label: `$(diff-removed) ${record.key}`,
+      description: record.locales.join(', '),
+      detail: 'Remove from locales',
+      picked: false,
+      bucket: 'unused',
+      key: record.key,
+    });
+  });
+
+  const selection = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    placeHolder: 'Select locale changes to apply (toggle entries to include or exclude)',
+  });
+
+  if (!selection) {
+    return null;
+  }
+
+  const missing = selection.filter((item) => item.bucket === 'missing').map((item) => item.key);
+  const unused = selection.filter((item) => item.bucket === 'unused').map((item) => item.key);
+
+  return { missing, unused };
+}
+
+async function syncCurrentFile() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a file to run a focused sync.');
+    return;
+  }
+
+  await runSync({ targets: [editor.document.uri.fsPath] });
+}
+
+async function transformCurrentFile() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a file to transform.');
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri) ?? vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
+  const transformer = new Transformer(config, { workspaceRoot: projectRoot });
+  const relativePath = path.relative(projectRoot, editor.document.uri.fsPath) || editor.document.uri.fsPath;
+
+  const preview = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Analyzing transform candidates…',
+      cancellable: false,
+    },
+    () => transformer.run({
+      write: false,
+      targets: [relativePath],
+      diff: true,
+    })
+  );
+
+  const pending = preview.candidates.filter((candidate) => candidate.status === 'pending');
+  if (!pending.length) {
+    vscode.window.showInformationMessage('No transformable strings found in this file.');
+    return;
+  }
+
+  const detail = formatTransformPreview(preview);
+  const choice = await vscode.window.showInformationMessage(
+    `Transform ${pending.length} candidate${pending.length === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}?`,
+    { modal: true, detail },
+    'Apply',
+    'Dry Run Only'
+  );
+
+  if (!choice) {
+    return;
+  }
+
+  if (choice === 'Dry Run Only') {
+    vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
+    return;
+  }
+
+  const writeSummary: TransformSummary = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Applying transform…',
+      cancellable: false,
+    },
+    () => transformer.run({
+      write: true,
+      targets: [relativePath],
+      diff: true,
+    })
+  );
+
+  const applied = writeSummary.candidates.filter((candidate) => candidate.status === 'applied').length;
+  vscode.window.showInformationMessage(
+    `Applied ${applied} transformation${applied === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}.`,
+    { detail: formatTransformPreview(writeSummary) }
+  );
+
+  hoverProvider.clearCache();
+  await reportWatcher.refresh();
+  await smartScanner.scan('transform-file');
+}
+
+function formatTransformPreview(summary: TransformSummary, limit = 5): string {
+  const preview = summary.candidates
+    .filter((candidate) => candidate.status === 'pending' || candidate.status === 'applied')
+    .slice(0, limit)
+    .map((candidate) => {
+      const snippet = candidate.text.replace(/\s+/g, ' ').trim();
+      return `• ${candidate.filePath}:${candidate.position.line} ⇒ ${candidate.suggestedKey} (${snippet.slice(0, 60)}${snippet.length > 60 ? '…' : ''})`;
+    });
+
+  if (!preview.length) {
+    return 'No candidate preview available.';
+  }
+
+  const remaining = summary.candidates.length - preview.length;
+  return remaining > 0 ? `${preview.join('\n')}\n…and ${remaining} more.` : preview.join('\n');
 }
 
 async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, text: string) {
@@ -350,8 +579,8 @@ async function showQuickActions() {
     picks.push({
       label: '$(tools) Apply local fixes',
       description: 'Run i18nsmith sync --write to add/remove locale keys',
-      detail: 'i18nsmith sync --write --json',
-      command: 'i18nsmith sync --write --json',
+      detail: 'i18nsmith: Sync workspace',
+      command: 'i18nsmith.sync',
     });
   }
 
@@ -360,6 +589,16 @@ async function showQuickActions() {
       label: '$(file-submodule) Open Source Locale File',
       description: 'Open the primary locale file for quick edits',
       command: 'i18nsmith.openLocaleFile'
+    },
+    {
+      label: '$(file-symlink-directory) Sync current file only',
+      description: 'Analyze translation usage for the active editor',
+      command: 'i18nsmith.syncFile',
+    },
+    {
+      label: '$(wand) Transform current file to use i18nsmith',
+      description: 'Run transformer on active file with preview',
+      command: 'i18nsmith.transformFile',
     },
     {
       label: '$(sync) Run Health Check',
@@ -416,7 +655,7 @@ async function showQuickActions() {
       break;
     }
     case 'sync-dry-run': {
-      await runSync();
+      await runSync({ dryRunOnly: true });
       break;
     }
     case 'refresh': {

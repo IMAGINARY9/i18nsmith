@@ -82,61 +82,44 @@ const issues = summary.actionableItems.filter(item => item.filePath === filePath
 - `i18nsmith.checkFile`: Check current file without full workspace scan
 - Context menu integration for per-file diagnostics
 
+### 5. Syncer Integration (extension.ts + sync-integration.ts)
+**Purpose**: Replace CLI-based `sync` runs with the core `Syncer` and surface an interactive preview before applying locale changes.  
+**Benefits**:
+- Eliminates shelling out to `npx i18nsmith sync`, reducing latency and noise in the output channel
+- Provides structured `SyncSummary` data for the UI (missing keys, unused keys, placeholder issues, backups)
+- Adds a QuickPick workflow so users can cherry-pick additions/removals before writing to disk
+
+**Implementation Highlights**:
+- New `SyncIntegration` helper wraps `Syncer.run`, normalizes targets for multi-root workspaces, and exposes dry-run/apply variants.
+- `runSync` now runs a background preview, opens a QuickPick with all missing/unused keys (pre-selected additions), and then re-runs Syncer with the user’s selections.
+- Added `i18nsmith.syncFile` for scoped syncs using `targets`, plus quick-action entries and status notifications.
+
+### 6. Transformer Integration (extension.ts)
+**Purpose**: Offer a per-file extract-to-key workflow powered by `@i18nsmith/transformer` without invoking the CLI.  
+**Benefits**:
+- Shows pending candidates (location, suggested key, snippet) before writing
+- Gives authors a modal confirmation flow with optional “dry run only” preview
+- Keeps locale updates in lock-step with source edits by reusing the same `Transformer` + `LocaleStore` stack as the CLI
+
+**Implementation Highlights**:
+- Added `i18nsmith.transformFile` command (command palette + editor context menu).
+- Uses `loadConfigWithMeta` to respect config roots discovered above the workspace folder and instantiates `Transformer` with that root.
+- After applying, refreshes diagnostics, hover cache, and background scanner so UX stays in sync.
+
+### 8. Per-File Onboarding Commands (extension.ts + package.json)
+**Purpose**: Streamline incremental adoption workflows inside VS Code.  
+**Benefits**:
+- Dedicated commands + context menu items for “Sync current file” and “Transform current file” lower the barrier for gradual migrations.
+- Quick Actions now surface these entries so users can fix issues without leaving the editor.
+
+**Implementation Highlights**:
+- New commands registered in `extension.ts` and exposed via `package.json` contributes.
+- Quick Actions include onboarding entries alongside existing scan/diagnostic shortcuts.
+- Menu contributions ensure the commands appear only for supported language IDs.
+
 ---
 
 ## 🔄 Potential Future Integrations
-
-### 5. Syncer Integration (Planned)
-**Current State**: Extension uses CLI subprocess via `runCliCommand`  
-**Opportunity**: Direct core Syncer usage for structured output
-
-**Benefits**:
-- Access to diff details (added/removed/changed keys) without JSON parsing
-- Richer progress indicators during sync operations
-- Ability to show sync preview in extension UI (like Git diff)
-
-**Implementation Strategy**:
-```typescript
-// Proposed: Direct syncer usage
-import { Syncer } from '@i18nsmith/core';
-
-const syncer = new Syncer(config);
-const result = await syncer.sync({ dryRun: true });
-// result.added: string[], result.removed: string[], result.changed: string[]
-
-// Show structured preview in webview or QuickPick
-```
-
-**Files to Modify**:
-- `src/extension.ts`: Replace `runSync` CLI exec with direct Syncer call
-- Add sync preview Quick Pick showing added/removed keys before write
-
-### 6. Transformer Integration (Planned)
-**Current State**: Extension calls CLI for extraction workflow  
-**Opportunity**: Direct Transformer usage for extract-to-key workflow
-
-**Benefits**:
-- Show live preview of transformed code before writing
-- Access to full AST context for better key suggestions
-- Ability to offer multiple transformation strategies (inline vs hook vs component)
-
-**Implementation Strategy**:
-```typescript
-// Proposed: Direct transformer usage
-import { transform } from '@i18nsmith/transformer';
-
-const originalCode = editor.document.getText();
-const transformed = await transform(originalCode, {
-  target: [editor.document.uri.fsPath],
-  keyGenerator: generator,
-});
-
-// Show diff preview, let user confirm before writing
-```
-
-**Files to Modify**:
-- `src/extension.ts`: Refactor `extractKeyFromSelection` to use core transformer
-- Add preview UI for transformation results
 
 ### 7. ReferenceExtractor Integration (Potential)
 **Current State**: Scanner runs CLI check, reads JSON report  
@@ -164,47 +147,6 @@ const references = await extractor.extract([filePath]);
 - Direct AST parsing would require bundling all parsers into extension (bundle size concern)
 - **Recommendation**: Keep CLI-based scanning for now; revisit if bundle size allows parser inclusion
 
-### 8. Per-File Onboarding Commands (Planned)
-**Current State**: Extension lacks per-file transform/sync commands  
-**Opportunity**: Leverage core's `--target` support for incremental i18n adoption
-
-**Benefits**:
-- Users can i18n-ify one component at a time without affecting entire workspace
-- Safer onboarding flow for large codebases
-- Aligns with implementation-plan.md Phase 3.14
-
-**Implementation Strategy**:
-```typescript
-// Proposed: Per-file transform command
-vscode.commands.registerCommand('i18nsmith.transformFile', async () => {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) return;
-  
-  const transformer = new Transformer(config);
-  const result = await transformer.transform({
-    target: [editor.document.uri.fsPath],
-    dryRun: true,
-  });
-  
-  // Show preview, confirm, write
-});
-
-// Proposed: Per-file sync command
-vscode.commands.registerCommand('i18nsmith.syncFile', async () => {
-  const summary = await checkIntegration.checkFile(workspaceRoot, filePath);
-  // summary already scoped to target file via CheckRunner --target
-});
-```
-
-**Commands to Add**:
-- `i18nsmith.transformFile`: Transform current file to i18n (preview + confirm)
-- `i18nsmith.syncFile`: Sync locale keys for current file only (already implemented via `checkFile`)
-- Context menu: "i18nsmith: Onboard This File"
-
-**Files to Modify**:
-- `src/extension.ts`: Add command registrations
-- `package.json`: Add commands to contributes.commands and editor/context menu
-
 ---
 
 ## 📊 Integration Impact Summary
@@ -214,45 +156,42 @@ vscode.commands.registerCommand('i18nsmith.syncFile', async () => {
 | **KeyGenerator** | ✅ Integrated | +0.2MB | No custom slug logic | Consistent keys with CLI |
 | **LocaleStore** | ✅ Integrated | +0.5MB | No custom JSON I/O | Respects format config |
 | **CheckRunner** | ✅ Integrated | +2.0MB | No CLI subprocess for checks | Faster per-file diagnostics |
-| Syncer | 🔄 Planned | +1.0MB | Structured diff output | Rich sync preview UI |
-| Transformer | 🔄 Planned | +1.5MB | No CLI exec for extract | Live transform preview |
-| ReferenceExtractor | ⚠️ Defer | +3.0MB (parsers) | Real-time diagnostics | Faster background scan |
+| **Syncer** | ✅ Integrated | +1.0MB | Structured diff output, no shell exec | Interactive QuickPick preview + scoped syncs |
+| **Transformer** | ✅ Integrated | +1.5MB | No CLI exec for extract | Per-file onboarding with preview/confirm |
+| **ReferenceExtractor** | ⚠️ Defer | +3.0MB (parsers) | Real-time diagnostics | Faster background scan |
 
-**Current Bundle Size**: 12.1MB (with KeyGenerator, LocaleStore, CheckRunner)  
-**Expected After All Integrations**: ~15-16MB (Syncer + Transformer added)
+**Current Bundle Size**: ~12.1MB before Syncer/Transformer; re-measure after bundling the new modules.  
+**Expected After Remaining Integrations**: ~13-14MB (depending on transformer tree-shaking) without ReferenceExtractor.
 
-**Recommendation**: Proceed with Syncer and Transformer integrations. Defer ReferenceExtractor due to parser bundle size; CLI-based scanning is sufficient for now.
+**Recommendation**: Focus future work on ReferenceExtractor only if bundle budgets allow; otherwise double down on UX polish/testing for the new commands.
 
 ---
 
 ## 🎯 Next Steps
 
 ### Immediate (This Session)
-1. ✅ Wire CheckIntegration into extension.ts (completed)
-2. ✅ Add `i18nsmith.checkFile` command (completed)
-3. 🔄 Test `checkFile` command in Extension Development Host
-4. 📝 Document per-file onboarding workflow in extension README
+1. 🔄 Re-measure bundle size after Syncer/Transformer additions and update README release notes.
+2. 🔄 Dogfood the new QuickPick sync flow in a multi-root workspace, capture logs if selections misbehave.
+3. 📝 Document `i18nsmith.syncFile` / `i18nsmith.transformFile` workflows in the extension README + screenshots.
 
 ### Short-Term (Next Session)
-1. Integrate Syncer for structured sync output
-2. Add sync preview UI (QuickPick showing added/removed keys)
-3. Add `i18nsmith.transformFile` command with preview
-4. Context menu: "Onboard This File" workflow
+1. Consider lightweight diff previews (webview or inline) fed by `SyncSummary.diffs` / `TransformSummary.diffs`.
+2. Add telemetry or verbose logging toggles for Syncer/Transformer failures.
+3. Evaluate whether Quick Actions should surface diff stats (counts) without opening the QuickPick.
 
 ### Long-Term (Future)
-1. Evaluate ReferenceExtractor integration (monitor bundle size)
-2. Consider webview-based UI for complex operations (sync diff, transform preview)
-3. Explore Language Server Protocol (LSP) for real-time diagnostics across IDEs
+1. Evaluate ReferenceExtractor integration (monitor bundle size, parser impact, and need for AST fidelity).
+2. Explore Language Server Protocol (LSP) support so the same core integrations power other IDEs without duplicating VS Code glue.
 
 ---
 
 ## 📝 Notes
 
-- All integrations honor workspace config via `loadConfig(workspaceRoot)`
-- Extension now uses `@i18nsmith/core` via `workspace:*` pnpm protocol
-- Bundle size increased from ~1MB to 12.1MB after core integrations (expected; core contains full i18n tooling)
-- CLI-based workflows still available for commands not yet migrated (transform, sync)
-- CheckIntegration wrapper enables gradual migration from CLI to core APIs
+- All integrations now honor workspace config via `loadConfigWithMeta`, so configs discovered outside the VS Code workspace are handled gracefully.
+- Extension consumes `@i18nsmith/core` + `@i18nsmith/transformer` via `workspace:*` for zero-dup builds.
+- Bundle size jumped from ~1MB to ~12MB after the early integrations; re-check after bundling the new Syncer/Transformer code paths.
+- CLI workflows remain available for power users, but extension features default to in-process integrations for better UX.
+- New commands (`i18nsmith.sync`, `i18nsmith.syncFile`, `i18nsmith.transformFile`) refresh diagnostics + caches automatically to keep the UI aligned.
 
 ---
 
