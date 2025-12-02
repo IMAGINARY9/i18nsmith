@@ -25,9 +25,29 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - a
 |---------|-------------|
 | `i18nsmith: Run Health Check` | Run `i18nsmith check` and generate report |
 | `i18nsmith: Sync Locales (Dry Run)` | Run `i18nsmith sync` dry-run |
+| `i18nsmith: Sync Current File` | Analyze only the active file using core Syncer with QuickPick preview |
 | `i18nsmith: Refresh Diagnostics` | Manually refresh diagnostics from report |
 | `i18nsmith: Add Placeholder Key` | Add a TODO placeholder for a missing key |
 | `i18nsmith: Extract Selection as Translation Key` | Extract selected string as a new key |
+| `i18nsmith: Transform Current File` | Run the transformer on the active file with preview + confirmation |
+
+## Per-file Workflows
+
+### Sync just the active file (`i18nsmith.syncFile`)
+1. Open the source file you want to audit in VS Code.
+2. Run **Command Palette → “i18nsmith: Sync Current File”** (also available via editor context menu or Quick Actions).
+3. The extension runs a **dry-run Syncer** scoped to that file and shows a QuickPick grouped by:
+  - `$(diff-added)` entries for missing keys (pre-selected).
+  - `$(diff-removed)` entries for unused keys (opt-in by toggling).
+4. Adjust selections as needed, then confirm. The extension re-runs Syncer with `write: true`, applies the chosen additions/removals, and refreshes diagnostics/hover caches automatically.
+5. Use the Output channel for verbose logs if you enabled verbose logging.
+
+### Transform the active file (`i18nsmith.transformFile`)
+1. Place the cursor in the file you want to migrate and open the **Command Palette → “i18nsmith: Transform Current File.”**
+2. The transformer runs in **dry-run mode**, producing a modal summary that lists candidate count and sample snippets.
+3. Choose **“Apply”** to write changes or **“Dry Run Only”** to inspect without touching files.
+4. When applying, the extension updates the source file (ensuring `useTranslation` wiring), seeds locale entries via `LocaleStore`, formats code, and then refreshes diagnostics/hover caches.
+5. If you need to undo, rely on the built-in VS Code undo stack or your VCS.
 
 ## Quick Fixes (CodeActions)
 
@@ -73,6 +93,10 @@ npm run watch
 # Run in VS Code
 # Press F5 or use "Run Extension" launch config
 ```
+
+## Bundle Size
+
+Latest dev build (esbuild) recorded a **17.6 MB** `dist/extension.js` when running `pnpm --filter i18nsmith-vscode run compile` on 2025‑12‑02 after embedding Syncer + Transformer integrations.
 
 ## How It Works
 
