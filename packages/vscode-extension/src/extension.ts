@@ -15,7 +15,7 @@ import { SyncIntegration } from './sync-integration';
 import { loadConfigWithMeta } from '@i18nsmith/core';
 import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
-import type { TransformSummary } from '@i18nsmith/transformer';
+import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -33,10 +33,21 @@ let smartScanner: SmartScanner;
 let statusBarManager: StatusBarManager;
 let interactiveTerminal: vscode.Terminal | undefined;
 let checkIntegration: CheckIntegration;
-let syncIntegration: SyncIntegration;
+let syncIntegration: SyncIntegration | undefined;
+let verboseOutputChannel: vscode.OutputChannel;
+
+function logVerbose(message: string) {
+  const config = vscode.workspace.getConfiguration('i18nsmith');
+  if (config.get<boolean>('enableVerboseLogging', false)) {
+    verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('i18nsmith extension activated');
+
+  verboseOutputChannel = vscode.window.createOutputChannel('i18nsmith (Verbose)');
+  context.subscriptions.push(verboseOutputChannel);
 
   const supportedLanguages = [
     { scheme: 'file', language: 'typescript' },
@@ -251,13 +262,15 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     syncIntegration = new SyncIntegration();
   }
 
-  const preview: TransformSummary = await vscode.window.withProgress(
+  logVerbose(`runSync: Starting preview for ${options.targets?.length ?? 'all'} target(s)`);
+
+  const preview = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: options.dryRunOnly ? 'i18nsmith: Gathering sync preview…' : 'i18nsmith: Preparing sync…',
       cancellable: false,
     },
-    () => syncIntegration.run(workspaceFolder.uri.fsPath, {
+    () => syncIntegration!.run(workspaceFolder.uri.fsPath, {
       write: false,
       diff: true,
       targets: options.targets,
@@ -266,6 +279,8 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
 
   const summary = preview.summary;
   const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
+
+  logVerbose(`runSync: Preview complete - ${summary.missingKeys.length} missing, ${summary.unusedKeys.length} unused`);
 
   if (!hasDrift) {
     vscode.window.showInformationMessage('Locales are already in sync. Nothing to do.');
@@ -279,13 +294,17 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
 
   const selection = await presentSyncQuickPick(summary);
   if (!selection) {
+    logVerbose('runSync: User cancelled selection');
     return;
   }
 
   if (!selection.missing.length && !selection.unused.length) {
+    logVerbose('runSync: No changes selected');
     vscode.window.showWarningMessage('No changes selected for sync.');
     return;
   }
+
+  logVerbose(`runSync: Applying ${selection.missing.length} missing, ${selection.unused.length} unused`);
 
   const writeResult = await vscode.window.withProgress(
     {
@@ -307,6 +326,9 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
   if (added) parts.push(`${added} addition${added === 1 ? '' : 's'}`);
   if (removed) parts.push(`${removed} removal${removed === 1 ? '' : 's'}`);
   const message = parts.length ? parts.join(' and ') : 'No changes applied';
+  
+  logVerbose(`runSync: Write complete - ${message}`);
+  
   vscode.window.showInformationMessage(`Locale sync completed (${message}).`);
 
   hoverProvider.clearCache();
@@ -382,6 +404,8 @@ async function syncCurrentFile() {
     return;
   }
 
+  logVerbose(`syncCurrentFile: Starting sync for ${editor.document.uri.fsPath}`);
+
   await runSync({ targets: [editor.document.uri.fsPath] });
 }
 
@@ -402,7 +426,9 @@ async function transformCurrentFile() {
   const transformer = new Transformer(config, { workspaceRoot: projectRoot });
   const relativePath = path.relative(projectRoot, editor.document.uri.fsPath) || editor.document.uri.fsPath;
 
-  const preview = await vscode.window.withProgress(
+  logVerbose(`transformCurrentFile: Starting preview for ${relativePath}`);
+
+  const preview: TransformSummary = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: 'i18nsmith: Analyzing transform candidates…',
@@ -415,7 +441,10 @@ async function transformCurrentFile() {
     })
   );
 
-  const pending = preview.candidates.filter((candidate) => candidate.status === 'pending');
+  const pending = preview.candidates.filter((candidate: TransformCandidate) => candidate.status === 'pending');
+  
+  logVerbose(`transformCurrentFile: Preview complete - ${pending.length} pending candidates`);
+  
   if (!pending.length) {
     vscode.window.showInformationMessage('No transformable strings found in this file.');
     return;
@@ -430,13 +459,17 @@ async function transformCurrentFile() {
   );
 
   if (!choice) {
+    logVerbose('transformCurrentFile: User cancelled');
     return;
   }
 
   if (choice === 'Dry Run Only') {
+    logVerbose('transformCurrentFile: Dry run only, showing preview');
     vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
     return;
   }
+
+  logVerbose(`transformCurrentFile: Applying ${pending.length} transformations`);
 
   const writeSummary: TransformSummary = await vscode.window.withProgress(
     {
@@ -451,7 +484,10 @@ async function transformCurrentFile() {
     })
   );
 
-  const applied = writeSummary.candidates.filter((candidate) => candidate.status === 'applied').length;
+  const applied = writeSummary.candidates.filter((candidate: TransformCandidate) => candidate.status === 'applied').length;
+  
+  logVerbose(`transformCurrentFile: Write complete - ${applied} applied`);
+  
   vscode.window.showInformationMessage(
     `Applied ${applied} transformation${applied === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}.`,
     { detail: formatTransformPreview(writeSummary) }
@@ -464,9 +500,9 @@ async function transformCurrentFile() {
 
 function formatTransformPreview(summary: TransformSummary, limit = 5): string {
   const preview = summary.candidates
-    .filter((candidate) => candidate.status === 'pending' || candidate.status === 'applied')
+    .filter((candidate: TransformCandidate) => candidate.status === 'pending' || candidate.status === 'applied')
     .slice(0, limit)
-    .map((candidate) => {
+    .map((candidate: TransformCandidate) => {
       const snippet = candidate.text.replace(/\s+/g, ' ').trim();
       return `• ${candidate.filePath}:${candidate.position.line} ⇒ ${candidate.suggestedKey} (${snippet.slice(0, 60)}${snippet.length > 60 ? '…' : ''})`;
     });

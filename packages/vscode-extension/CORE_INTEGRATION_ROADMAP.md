@@ -122,30 +122,76 @@ const issues = summary.actionableItems.filter(item => item.filePath === filePath
 ## 🔄 Potential Future Integrations
 
 ### 7. ReferenceExtractor Integration (Potential)
-**Current State**: Scanner runs CLI check, reads JSON report  
-**Opportunity**: Direct ReferenceExtractor for inline diagnostics
+**Current State**: Scanner still shells out to the CLI for report generation.  
+**Opportunity**: Move background diagnostics to an in-process `ReferenceExtractor` for faster, more precise feedback.
 
 **Benefits**:
-- Real-time diagnostics without CLI subprocess
-- Faster background scanning (no process spawn overhead)
-- Access to AST node positions for precise diagnostics
+- Real-time diagnostics without CLI subprocess latency
+- Access to AST node positions for pinpoint squiggles + code actions
+- Enables per-file "live" scans without generating `.i18nsmith/check-report.json`
 
 **Implementation Strategy**:
 ```typescript
-// Proposed: Direct reference extraction
 import { ReferenceExtractor } from '@i18nsmith/core';
 
 const extractor = new ReferenceExtractor(config);
-const references = await extractor.extract([filePath]);
-// references: Array<{ key: string, filePath: string, line: number, column: number }>
-
-// Convert to VSCode Diagnostics directly
+const references = await extractor.extract(targetFiles);
+diagnosticsManager.applyReferences(references);
 ```
 
 **Considerations**:
-- Current CLI-based approach handles bundler/transpiler compatibility (TypeScript, JSX, Vue, Svelte)
-- Direct AST parsing would require bundling all parsers into extension (bundle size concern)
-- **Recommendation**: Keep CLI-based scanning for now; revisit if bundle size allows parser inclusion
+- Requires bundling parser dependencies for TS/JS/JSX/Vue/Svelte; monitor bundle size closely.
+- Until parsers are tree-shaken aggressively, keep CLI-based scanning as the default path.
+
+### 9. Verbose Logging Toggle (Completed ✅)
+**Purpose**: Enable opt-in verbose logging to diagnose field bugs and capture Syncer/Transformer operations.  
+**Benefits**:
+- Helps users and maintainers debug sync/transform issues without requiring code changes
+- Logs key workflow points: previews, selections, writes, completions
+- Controlled via `i18nsmith.enableVerboseLogging` setting (default: false)
+
+**Implementation**:
+```typescript
+// Extension setting in package.json
+"i18nsmith.enableVerboseLogging": {
+  "type": "boolean",
+  "default": false,
+  "description": "Enable verbose logging to the Output channel for debugging sync and transform operations"
+}
+
+// Helper function in extension.ts
+function logVerbose(message: string) {
+  const config = vscode.workspace.getConfiguration('i18nsmith');
+  if (config.get<boolean>('enableVerboseLogging')) {
+    verboseOutputChannel?.appendLine(`[${new Date().toISOString()}] ${message}`);
+  }
+}
+
+// Instrumented at key points:
+logVerbose('runSync: Starting preview...');
+logVerbose('transformCurrentFile: Write complete - 5 applied');
+```
+
+**Status**: Completed. Output visible in "i18nsmith (Verbose)" output channel when setting enabled.
+
+### 10. Diff Preview Surfaces (Potential)
+**Current State**: QuickPick sync flow lists keys but doesn’t show diffs; transform confirmations only include textual summaries.  
+**Opportunity**: Render structured diffs (or inline patches) using existing `SyncSummary.diffs` / `TransformSummary.diffs` data.
+
+**Potential UX**:
+- Webview panel or inline preview listing locale patches before apply
+- Optional "copy patch" action for PR descriptions
+- Extend transform confirmation to show highlighted code change snippets
+
+### 11. Diagnostics Telemetry (Potential)
+### 11. Diagnostics Telemetry (Potential)
+**Current State**: Console logging is minimal beyond verbose toggle; no persistent performance tracking.  
+**Opportunity**: Add opt-in telemetry for perf counters (Syncer/Transformer runtimes, selections, failures) to aid debugging and analysis (no PII).
+
+**Implementation Ideas**:
+- Perf counters for Syncer run duration, candidate counts, QuickPick accept rates
+- Lightweight telemetry interface that extension tests can hook for assertions
+- Export anonymized metrics to local log file or extension-provided dashboard
 
 ---
 
@@ -158,10 +204,11 @@ const references = await extractor.extract([filePath]);
 | **CheckRunner** | ✅ Integrated | +2.0MB | No CLI subprocess for checks | Faster per-file diagnostics |
 | **Syncer** | ✅ Integrated | +1.0MB | Structured diff output, no shell exec | Interactive QuickPick preview + scoped syncs |
 | **Transformer** | ✅ Integrated | +1.5MB | No CLI exec for extract | Per-file onboarding with preview/confirm |
+| **Verbose Logging** | ✅ Integrated | +0.0MB | Configurable debug output | Easier troubleshooting |
 | **ReferenceExtractor** | ⚠️ Defer | +3.0MB (parsers) | Real-time diagnostics | Faster background scan |
 
-**Current Bundle Size**: ~12.1MB before Syncer/Transformer; re-measure after bundling the new modules.  
-**Expected After Remaining Integrations**: ~13-14MB (depending on transformer tree-shaking) without ReferenceExtractor.
+**Current Bundle Size**: 17.6 MB (`pnpm --filter i18nsmith-vscode run compile`, 2025‑12‑02) with Syncer + Transformer embedded.  
+**Expected After Remaining Integrations**: ~13-14 MB without ReferenceExtractor once dead code pruning + shared parser dedupe is applied; leave ReferenceExtractor deferred unless this budget increases.
 
 **Recommendation**: Focus future work on ReferenceExtractor only if bundle budgets allow; otherwise double down on UX polish/testing for the new commands.
 
@@ -170,14 +217,14 @@ const references = await extractor.extract([filePath]);
 ## 🎯 Next Steps
 
 ### Immediate (This Session)
-1. 🔄 Re-measure bundle size after Syncer/Transformer additions and update README release notes.
-2. 🔄 Dogfood the new QuickPick sync flow in a multi-root workspace, capture logs if selections misbehave.
-3. 📝 Document `i18nsmith.syncFile` / `i18nsmith.transformFile` workflows in the extension README + screenshots.
+1. ✅ Flesh out README/docs with step-by-step guides (and gifs/screenshots) for `i18nsmith.syncFile` + `i18nsmith.transformFile` flows.
+2. ✅ Implement verbose logging toggle with `enableVerboseLogging` setting.
+3. 📈 Enhance Quick Actions to summarize drift counts (missing/unused) before opening the QuickPick.
 
 ### Short-Term (Next Session)
-1. Consider lightweight diff previews (webview or inline) fed by `SyncSummary.diffs` / `TransformSummary.diffs`.
-2. Add telemetry or verbose logging toggles for Syncer/Transformer failures.
-3. Evaluate whether Quick Actions should surface diff stats (counts) without opening the QuickPick.
+1. 🪟 Prototype diff previews (webview or inline) sourced from `SyncSummary.diffs` / `TransformSummary.diffs`.
+2. 📊 Implement optional telemetry sink for performance tracking (if needed).
+3. 🧪 Dogfood the QuickPick sync workflow in the `i18nsmith-ext-test` multi-root sandbox; capture console logs + friction notes.
 
 ### Long-Term (Future)
 1. Evaluate ReferenceExtractor integration (monitor bundle size, parser impact, and need for AST fidelity).

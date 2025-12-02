@@ -158,6 +158,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show CodeLens actions above files with i18n issues"
+        },
+        "i18nsmith.enableVerboseLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose logging to the i18nsmith Output channel for debugging Syncer/Transformer operations"
         }
         
       }
