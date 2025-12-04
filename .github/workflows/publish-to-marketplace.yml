@@ -16,6 +16,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: vsce-publish
     steps:
       - name: Checkout
         uses: actions/checkout@v4
