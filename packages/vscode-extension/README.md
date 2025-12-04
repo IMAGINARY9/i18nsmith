@@ -173,3 +173,78 @@ The extension pairs well with the i18nsmith GitHub Action:
 ```
 
 The generated report artifact can be downloaded and viewed locally with the extension.
+
+## How to test (Open testing)
+
+Follow these steps to perform a focused open-testing session with the packaged VSIX or a locally built copy:
+
+1. Build and package the extension to a VSIX (from repo root):
+
+```bash
+pnpm install --no-frozen-lockfile
+pnpm --filter i18nsmith-vscode run compile
+cd packages/vscode-extension
+npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+```
+
+2. Install the VSIX in VS Code:
+
+- Open VS Code → Extensions view → … → "Install from VSIX..." → choose `i18nsmith-vscode.vsix`.
+
+3. Prepare a simple workspace for testing:
+
+- Create an `i18n.config.json` in workspace root (example below).
+- Add `locales/en.json` and a test source file (see `.github/workflows/test-action.yml` for a minimal fixture).
+
+Example `i18n.config.json`:
+
+```json
+{
+  "sourceLanguage": "en",
+  "targetLanguages": ["es","fr"],
+  "localesDir": "./locales",
+  "include": ["src/**/*.tsx"]
+}
+```
+
+4. Generate a report the extension will consume:
+
+```bash
+npx i18nsmith check --report .i18nsmith/check-report.json
+```
+
+5. Verify extension features in VS Code:
+
+- Open a source file and confirm diagnostics appear (Problems panel + squiggles).
+- Test hover preview on `t('key')` calls.
+- Use the Command Palette to run: "i18nsmith: Run Health Check", "i18nsmith: Sync Current File", "i18nsmith: Transform Current File", and other commands listed in the Commands section.
+- Try the editor context menu actions (Extract selection as translation key) and CodeLens quick actions.
+
+6. Smoke checks to perform:
+
+- Confirm diagnostics refresh when `.i18nsmith/check-report.json` is updated.
+- Confirm the Sync/Transform dry-run previews show expected diffs and that Apply writes changes and refreshes diagnostics.
+- Confirm undo/VS Code's undo stack works after applying transforms.
+
+If you spot runtime errors or missing behavior, capture the Output channel logs (View → Output → select "i18nsmith") and attach them to the GitHub issue.
+
+## Privacy & Telemetry
+
+- Short statement: This extension does not collect or transmit telemetry, usage analytics, or source code to external services by default. All diagnostic data and logs remain local to the user's environment (Output channel and files in the workspace).
+- Verbose logging: Enabling `i18nsmith.enableVerboseLogging` only increases local logging to the `i18nsmith` Output channel; it does not send logs to a remote server.
+- Opt-in uploads: If future features add optional upload or remote diagnostics, they will be explicitly documented and require opt-in consent. No automatic uploads occur without explicit, documented user action.
+
+If your organization requires a formal privacy policy, link it from the repository `homepage` or add a `PRIVACY.md` with the required legal text.
+
+## Reporting issues & open testing feedback
+
+- Open an issue at: https://github.com/IMAGINARY9/i18nsmith/issues
+- When filing issues during open testing, please include:
+  - VS Code version and platform
+  - Extension version (found in `Help → About` or `Extensions` view)
+  - Steps to reproduce
+  - Attach `.i18nsmith/check-report.json` (if applicable)
+  - The `i18nsmith` Output channel contents (copy/paste)
+
+Label feature requests as `enhancement` and runtime bugs as `bug` to help triage. If you want a dedicated testing/discussion channel, we can add a DISCUSSION template or use GitHub Discussions.
+

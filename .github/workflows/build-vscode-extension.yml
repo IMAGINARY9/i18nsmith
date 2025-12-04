@@ -1,0 +1,42 @@
+name: Build VS Code extension (package VSIX)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packages/vscode-extension/**'
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node and pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Use Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build vscode-extension package
+        run: pnpm --filter i18nsmith-vscode --parallel run compile
+
+      - name: Package VSIX
+        run: |
+          cd packages/vscode-extension
+          # Ensure vsce is available; this will install temporarily if missing
+          npx -y vsce package --out ../../i18nsmith-vscode.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18nsmith-vscode-vsix
+          path: i18nsmith-vscode.vsix

@@ -113,6 +113,9 @@ importers:
       '@i18nsmith/core':
         specifier: workspace:*
         version: link:../core
+      '@i18nsmith/transformer':
+        specifier: workspace:*
+        version: link:../transformer
     devDependencies:
       '@types/node':
         specifier: ^20.10.0
