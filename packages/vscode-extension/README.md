@@ -1,6 +1,10 @@
 # i18nsmith VS Code Extension
 
-VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) - automated i18n tooling.
+![i18nsmith](https://img.shields.io/badge/i18nsmith-vscode-blue)
+
+TL;DR: Lightweight VS Code integration for i18nsmith — run health checks, sync locales, extract strings, and transform files from inside the editor.
+
+VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) — automated i18n tooling. Install the VSIX (see "How to test") or use the Marketplace once published.
 
 ## Features
 
@@ -220,6 +224,14 @@ npx i18nsmith check --report .i18nsmith/check-report.json
 - Use the Command Palette to run: "i18nsmith: Run Health Check", "i18nsmith: Sync Current File", "i18nsmith: Transform Current File", and other commands listed in the Commands section.
 - Try the editor context menu actions (Extract selection as translation key) and CodeLens quick actions.
 
+### Quick smoke test checklist
+
+- Install the VSIX or run the extension in the debugger (F5).
+- Open a project with `i18n.config.json` and `locales/` present.
+- Run `i18nsmith check --report .i18nsmith/check-report.json` and confirm diagnostics appear.
+- Run `i18nsmith: Sync Current File` and `i18nsmith: Transform Current File` to exercise UI flows.
+- Check the `i18nsmith` Output channel for errors.
+
 6. Smoke checks to perform:
 
 - Confirm diagnostics refresh when `.i18nsmith/check-report.json` is updated.
@@ -272,5 +284,13 @@ npx -y @vscode/vsce publish --pat <YOUR_TOKEN>
 ```
 
 This will package and publish the extension using the token you provide.
+
+## Troubleshooting
+
+- "code: command not found": enable the `code` CLI from VS Code (Cmd+Shift+P → "Shell Command: Install 'code' command in PATH") or create a symlink to the app bundle. See the project root README for exact commands.
+- Packaging fails (vsce errors): ensure `packages/vscode-extension/LICENSE` exists and run `pnpm --filter i18nsmith-vscode run compile` before packaging.
+- Large bundle size: If runtime errors relate to missing modules, confirm workspace dependencies are built and that `esbuild` bundles required code. Use `pnpm -r build` at repo root to build workspace packages.
+
+If you need help with any of these steps I can update the README further or add scripts to simplify packaging and local testing.
 
 
