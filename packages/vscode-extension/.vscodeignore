@@ -1,0 +1,19 @@
+# Exclude files outside the extension folder
+../**
+
+# Exclude source and test files (we ship compiled dist/)
+src/
+**/*.ts
+**/*.test.*
+
+# Editor / git / logs
+.vscode/
+.git/
+*.log
+
+# Local node modules and build artifacts
+node_modules/
+dist/**/*.map
+
+# TS config used for building in the monorepo (not needed in VSIX)
+tsconfig*.json

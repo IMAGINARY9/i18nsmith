@@ -9,6 +9,10 @@
     "type": "git",
     "url": "https://github.com/IMAGINARY9/i18nsmith"
   },
+  "bugs": {
+    "url": "https://github.com/IMAGINARY9/i18nsmith/issues"
+  },
+  "homepage": "https://github.com/IMAGINARY9/i18nsmith#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -16,6 +20,7 @@
     "Linters",
     "Other"
   ],
+  "icon": "images/icon.png",
   "keywords": [
     "i18n",
     "internationalization",
