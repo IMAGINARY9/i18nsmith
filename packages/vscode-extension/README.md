@@ -248,3 +248,29 @@ If your organization requires a formal privacy policy, link it from the reposito
 
 Label feature requests as `enhancement` and runtime bugs as `bug` to help triage. If you want a dedicated testing/discussion channel, we can add a DISCUSSION template or use GitHub Discussions.
 
+## Publishing to the Visual Studio Marketplace (automation)
+
+An optional workflow (`.github/workflows/publish-to-marketplace.yml`) is included that will publish the extension when a GitHub Release is published.
+
+Requirements:
+
+- A repository secret named `VSCE_TOKEN` that contains a Personal Access Token (PAT) for publishing to the Visual Studio Marketplace. Create the token according to the `@vscode/vsce` documentation and add it to GitHub → Settings → Secrets → Actions.
+- Ensure the `publisher` field in `packages/vscode-extension/package.json` matches the Marketplace publisher id that will own the extension.
+
+Workflow behavior and safety:
+
+- The workflow triggers on `release` events (when you publish a GitHub Release). It builds the extension, runs `@vscode/vsce publish` using the token, and uploads a VSIX artifact.
+- Publishing from a release reduces accidental publishes; we recommend creating a Draft release and verifying the produced VSIX artifact before publishing it to the Marketplace.
+
+Manual publish alternative:
+
+If you prefer manual publishing, you can publish locally with:
+
+```bash
+cd packages/vscode-extension
+npx -y @vscode/vsce publish --pat <YOUR_TOKEN>
+```
+
+This will package and publish the extension using the token you provide.
+
+

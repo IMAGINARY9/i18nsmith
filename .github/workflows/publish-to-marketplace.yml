@@ -1,0 +1,59 @@
+name: Publish VS Code extension to Marketplace
+
+# This workflow publishes the `packages/vscode-extension` package to the
+# Visual Studio Marketplace when a GitHub Release is published.
+#
+# Requirements:
+# - Create a Personal Access Token (PAT) with the `All accessible accounts` scope
+#   for VSCE publishing and add it to repository secrets as `VSCE_TOKEN`.
+# - The `publisher` field in `packages/vscode-extension/package.json` must match
+#   the Marketplace publisher id you control.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension
+        run: pnpm --filter i18nsmith-vscode run compile
+
+      - name: Publish to Marketplace (vsce)
+        env:
+          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+        run: |
+          cd packages/vscode-extension
+          # Use @vscode/vsce to publish. The token is passed via --pat.
+          npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
+
+      - name: Upload VSIX (artifact)
+        if: always()
+        run: |
+          cd packages/vscode-extension
+          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+        continue-on-error: true
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18nsmith-vscode-vsix
+          path: i18nsmith-vscode.vsix
