@@ -38,6 +38,28 @@ jobs:
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
 
+      - name: Pre-publish validation
+        run: |
+          set -euo pipefail
+          echo "Validating tag and publisher before publish..."
+          # Ensure the GITHUB_REF is a tag and matches vMAJOR.MINOR.PATCH
+          if [ -z "${GITHUB_REF:-}" ]; then
+            echo "GITHUB_REF is empty"; exit 1
+          fi
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "Ref ${GITHUB_REF} is not a tag ref (refs/tags/v*). Aborting."; exit 1
+          fi
+          TAG=${GITHUB_REF#refs/tags/}
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag $TAG does not match semver vMAJOR.MINOR.PATCH. Aborting."; exit 1
+          fi
+          echo "Tag $TAG looks good."
+          PUBLISHER=$(node -e "console.log(require('./packages/vscode-extension/package.json').publisher || '')")
+          if [ -z "$PUBLISHER" ]; then
+            echo "publisher field in packages/vscode-extension/package.json is empty. Aborting."; exit 1
+          fi
+          echo "Publisher is '$PUBLISHER'"
+
       - name: Publish to Marketplace (vsce)
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
