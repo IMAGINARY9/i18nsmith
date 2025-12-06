@@ -38,9 +38,7 @@ jobs:
       - name: Build workspace packages
         # Build shared packages (core, transformer, cli, etc.) so their
         # `dist/` outputs exist for the extension bundler to resolve.
-        run: |
-          pnpm run build
-          pnpm --filter "@i18nsmith/*" run --if-present build
+        run: pnpm run build
 
       - name: Verify built artifacts
         run: |
