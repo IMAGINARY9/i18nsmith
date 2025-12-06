@@ -5,7 +5,10 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@i18nsmith/*": ["packages/*/dist"]
+      "@i18nsmith/*": [
+        "packages/*/src",
+        "packages/*/dist"
+      ]
     },
     "strict": true,
     "esModuleInterop": true,
