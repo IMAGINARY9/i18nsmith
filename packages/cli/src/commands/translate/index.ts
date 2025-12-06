@@ -206,11 +206,14 @@ export function registerTranslate(program: Command): void {
         }
 
         await emitTranslateOutput(summary, options);
-      } catch (error) {
+      } catch (error: unknown) {
         const translatorError = error instanceof TranslatorLoadError ? error : undefined;
-        const err = translatorError
-          ?? (error instanceof Error ? error : new Error(typeof error === 'string' ? error : JSON.stringify(error)));
-        console.error(chalk.red('Translate failed:'), translatorError?.message ?? err.message);
+        const normalizedError =
+          error instanceof Error
+            ? error
+            : new Error(typeof error === 'string' ? error : JSON.stringify(error));
+
+        console.error(chalk.red('Translate failed:'), translatorError?.message ?? normalizedError.message);
         process.exitCode = 1;
       }
     });
