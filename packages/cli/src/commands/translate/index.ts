@@ -209,7 +209,7 @@ export function registerTranslate(program: Command): void {
       } catch (error) {
         const translatorError = error instanceof TranslatorLoadError ? error : undefined;
         const err = translatorError
-          ?? (error instanceof Error ? error : new Error(typeof error === 'string' ? error : 'Unknown error'));
+          ?? (error instanceof Error ? error : new Error(typeof error === 'string' ? error : JSON.stringify(error)));
         console.error(chalk.red('Translate failed:'), translatorError?.message ?? err.message);
         process.exitCode = 1;
       }
