@@ -3,7 +3,7 @@
   "displayName": "i18nsmith",
   "description": "VS Code integration for i18nsmith - automated i18n tooling",
   "version": "0.1.2",
-  "publisher": "i18nsmith",
+  "publisher": "ArturLavrov",
   "license": "MIT",
   "repository": {
     "type": "git",
