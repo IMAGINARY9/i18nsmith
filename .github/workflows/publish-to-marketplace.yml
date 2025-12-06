@@ -35,8 +35,42 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        # Build shared packages (core, transformer, cli, etc.) so their
+        # `dist/` outputs exist for the extension bundler to resolve.
+        run: pnpm -w -r run build
+
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
+
+      - name: Package VSIX for smoke test
+        # Create a VSIX package so we can perform a lightweight smoke-test on the
+        # produced archive before attempting to publish to the Marketplace.
+        run: |
+          set -euo pipefail
+          cd packages/vscode-extension
+          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+
+      - name: Smoke-test packaged VSIX
+        # Minimal runtime check: unzip the VSIX and verify extension/package.json
+        # exists, has a `main` field, and the resolved main file (usually
+        # dist/extension.js) is present in the VSIX. This avoids publishing a
+        # broken package that lacks built files.
+        run: |
+          set -euo pipefail
+          VSIX=./i18nsmith-vscode.vsix
+          if [ ! -f "$VSIX" ]; then echo "VSIX not found at $VSIX"; exit 1; fi
+          TMPDIR=$(mktemp -d)
+          unzip -q "$VSIX" -d "$TMPDIR"
+          PKG="$TMPDIR/extension/package.json"
+          if [ ! -f "$PKG" ]; then echo "package.json missing from VSIX"; ls -la "$TMPDIR"; exit 1; fi
+          MAIN=$(node -e "const fs=require('fs'); const p=process.argv[1]; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); console.log(pkg.main||'')" "$PKG")
+          if [ -z "$MAIN" ]; then echo "package.json main field is empty"; exit 1; fi
+          # Remove leading ./ if present
+          MAIN_PATH="${MAIN#./}"
+          if [ ! -f "$TMPDIR/extension/$MAIN_PATH" ]; then echo "Main file $MAIN_PATH missing in VSIX"; ls -la "$TMPDIR/extension"; exit 1; fi
+          if [ ! -f "$TMPDIR/extension/dist/extension.js" ]; then echo "dist/extension.js missing in VSIX"; ls -la "$TMPDIR/extension/dist"; exit 1; fi
+          echo "VSIX smoke-test passed: main file exists: $MAIN_PATH"
 
       - name: Pre-publish validation
         run: |
