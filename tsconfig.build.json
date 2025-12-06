@@ -1,4 +1,19 @@
 {
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@i18nsmith/core": ["packages/core/src"],
+      "@i18nsmith/transformer": ["packages/transformer/src"],
+      "@i18nsmith/translation": ["packages/translation/src"],
+      "@i18nsmith/translator-mock": ["packages/translator-mock/src"],
+      "@i18nsmith/cli": ["packages/cli/src"],
+      "@i18nsmith/core/*": ["packages/core/src/*"],
+      "@i18nsmith/transformer/*": ["packages/transformer/src/*"],
+      "@i18nsmith/translation/*": ["packages/translation/src/*"],
+      "@i18nsmith/translator-mock/*": ["packages/translator-mock/src/*"],
+      "@i18nsmith/cli/*": ["packages/cli/src/*"]
+    }
+  },
   "files": [],
   "references": [
     { "path": "packages/core" },
