@@ -38,7 +38,14 @@ jobs:
       - name: Build workspace packages
         # Build shared packages (core, transformer, cli, etc.) so their
         # `dist/` outputs exist for the extension bundler to resolve.
-        run: pnpm -w -r run build
+        run: |
+          pnpm run build
+          pnpm --filter "@i18nsmith/*" run --if-present build
+
+      - name: Verify built artifacts
+        run: |
+          test -f packages/core/dist/index.js || (echo "packages/core/dist/index.js missing" && ls -R packages/core && exit 1)
+          test -f packages/transformer/dist/index.js || (echo "packages/transformer/dist/index.js missing" && ls -R packages/transformer && exit 1)
 
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
