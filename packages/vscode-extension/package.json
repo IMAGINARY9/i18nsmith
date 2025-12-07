@@ -195,14 +195,13 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@i18nsmith/core": "workspace:*",
+    "@i18nsmith/transformer": "workspace:*",
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.19.0",
     "typescript": "^5.3.0",
     "vitest": "^0.34.0"
   },
-  "dependencies": {
-    "@i18nsmith/core": "workspace:*",
-    "@i18nsmith/transformer": "workspace:*"
-  }
+  "dependencies": {}
 }
