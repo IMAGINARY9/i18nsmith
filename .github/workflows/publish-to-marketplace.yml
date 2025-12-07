@@ -54,11 +54,14 @@ jobs:
         run: pnpm --filter i18nsmith-vscode run compile
 
       - name: Package VSIX for smoke test
-        # Create a VSIX package so we can perform a lightweight smoke-test on the
-        # produced archive before attempting to publish to the Marketplace.
+        # Create an npm-style deploy folder for the extension and package from
+        # that layout. This avoids pnpm workspace layout issues that make
+        # `npm list --production` fail during vsce's prepublish checks.
         run: |
           set -euo pipefail
-          cd packages/vscode-extension
+          # Create a small npm-compatible deploy folder for the extension
+          pnpm deploy --filter i18nsmith-vscode --prod --legacy ./tmp-vscode-deploy
+          cd tmp-vscode-deploy
           npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
 
       - name: Smoke-test packaged VSIX
@@ -109,19 +112,24 @@ jobs:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
         run: |
           set -euo pipefail
-          cd packages/vscode-extension
-          # Install production deps using pnpm so workspace:* specifiers resolve.
-          # This creates a local node_modules that vsce's npm checks can read.
-          echo "Installing production dependencies for extension (pnpm, hoisted node_modules)"
-          # Use shamefully-hoist to create a flat node_modules layout that npm/vsce can inspect
-          pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
+          # Use the same npm-compatible deploy layout to publish so vsce's
+          # internal `npm list` sanity checks see a normal node_modules layout.
+          pnpm deploy --filter i18nsmith-vscode --prod --legacy ./tmp-vscode-deploy
+          cd tmp-vscode-deploy
           # Use @vscode/vsce to publish. The token is passed via --pat.
           npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
       - name: Upload VSIX (artifact)
         if: always()
         run: |
-          cd packages/vscode-extension
+          set -euo pipefail
+          # If the deploy folder exists from previous steps, package from it;
+          # otherwise fall back to packaging the workspace extension folder.
+          if [ -d ./tmp-vscode-deploy ]; then
+            cd ./tmp-vscode-deploy
+          else
+            cd packages/vscode-extension
+          fi
           npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
         continue-on-error: true
       - name: Upload artifact
