@@ -47,7 +47,7 @@ pnpm -w test --filter @i18nsmith/core
 pnpm -w test --filter @i18nsmith/transformer
 pnpm -w test --filter @i18nsmith/translation
 pnpm -w test --filter @i18nsmith/translator-mock
-pnpm -w test --filter @i18nsmith/cli
+pnpm -w test --filter i18nsmith
 ```
 
 2. Acceptance:
@@ -63,7 +63,7 @@ Steps:
 1. Run CLI integration test suite (existing vitest files that shell out to `dist/index.js`).
 
 ```bash
-pnpm -w test --filter @i18nsmith/cli
+pnpm -w test --filter i18nsmith
 ```
 
 2. Manually smoke test the primary commands (dry-run) in an isolated temp dir (use the included E2E fixture `basic-react`):
@@ -350,7 +350,7 @@ Maintenance & flake policy
 How to run locally (quick checklist)
 1. Build packages: `pnpm -w build`
 2. Run unit tests: `pnpm -w test --filter @i18nsmith/core`
-3. Run CLI tests: `pnpm -w test --filter @i18nsmith/cli`
+3. Run CLI tests: `pnpm -w test --filter i18nsmith`
 4. Run an E2E fixture: copy a fixture into a temp dir and run the manual smoke pipeline listed above.
 
 Documentation & artifacts
@@ -390,7 +390,7 @@ pnpm -w build
 pnpm -w test
 
 # Run CLI integration tests
-pnpm -w test --filter @i18nsmith/cli
+pnpm -w test --filter i18nsmith
 
 # Example single E2E flow (from repo root)
 cd /tmp

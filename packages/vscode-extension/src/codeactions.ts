@@ -305,7 +305,7 @@ function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRo
       const hashLength = config.keyGeneration?.shortHashLen ?? 6;
       const namespace = config.keyGeneration?.namespace ?? 'common';
       const generator = new KeyGenerator({ namespace, hashLength });
-      const { key: generated } = generator.generate(key, { filePath, kind: 'locale' });
+      const { key: generated } = generator.generate(key, { filePath, kind: 'call-expression' });
       return generated;
     }
   } catch {

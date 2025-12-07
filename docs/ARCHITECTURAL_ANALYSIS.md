@@ -53,11 +53,11 @@ After comprehensive analysis of the i18nsmith codebase, several architectural is
 ### Largest Files (Non-Test)
 | File | Lines | Package | Primary Concerns |
 |------|-------|---------|------------------|
-| `cli/src/index.ts` | 1,793 | @i18nsmith/cli | God object, 12 commands inline, mixed concerns |
+| `cli/src/index.ts` | 1,793 | i18nsmith | God object, 12 commands inline, mixed concerns |
 | `core/src/syncer.ts` | 1,247 | @i18nsmith/core | Still complex despite refactoring |
-| `cli/commands/translate.ts` | 789 | @i18nsmith/cli | Command orchestration, validation, UI mixed |
+| `cli/commands/translate.ts` | 789 | i18nsmith | Command orchestration, validation, UI mixed |
 | `core/src/config.ts` | 550 | @i18nsmith/core | Configuration + validation + normalization |
-| `cli/commands/preflight.ts` | 488 | @i18nsmith/cli | Complex pre-flight checks |
+| `cli/commands/preflight.ts` | 488 | i18nsmith | Complex pre-flight checks |
 | `core/src/diagnostics.ts` | 454 | @i18nsmith/core | Workspace diagnostics |
 | `core/src/scanner.ts` | 418 | @i18nsmith/core | AST scanning (reasonable) |
 | `core/src/locale-store.ts` | 407 | @i18nsmith/core | File I/O, caching, sorting (reasonable) |

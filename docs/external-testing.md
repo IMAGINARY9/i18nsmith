@@ -34,7 +34,7 @@ EXTERNAL_PROJECT_ROOT=/path/to/external/project pnpm external:transform --write
 
 What the script does:
 
-- Ensures the local `@i18nsmith/cli` package is built if needed.
+ - Ensures the local `i18nsmith` package is built if needed.
 - Switches the working directory to the specified external project so the transformer operates on the real workspace.
 - Executes the CLI `transform` command and forwards any additional CLI flags you pass.
 
@@ -89,7 +89,7 @@ Because `translate` is dry-run by default, it’s safe to run in CI to generate 
 
 - **Missing repo**: The script fails if the supplied path does not exist.
 - **Missing config**: A warning is printed if `i18n.config.json` is absent; run `i18nsmith init` inside the project.
-- **Build errors**: Run `pnpm --filter @i18nsmith/cli build` manually to see TypeScript diagnostics before re-running the script.
+ - **Build errors**: Run `pnpm --filter i18nsmith build` manually to see TypeScript diagnostics before re-running the script.
 - **Permissions**: Ensure the external project working directory is writable so locale JSON files can be created.
 
 With these steps, you can test i18nsmith against any local project while keeping sensitive paths out of the repository.

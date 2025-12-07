@@ -40,7 +40,7 @@ This is a Node.js-based CLI tool (`i18nsmith`) that runs locally or in CI. It is
     *   Adds necessary imports (`import { t } from '...';`).
     *   Uses `prettier` to format the modified code.
 
-#### 3. `@i18nsmith/cli`: The User Interface
+#### 3. `i18nsmith`: The User Interface
 *   **Function:** The main entry point for the user.
 *   **Logic:**
     *   Provides commands: `i18nsmith init`, `i18nsmith scan`, `i18nsmith translate`.

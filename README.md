@@ -5,7 +5,7 @@ Universal Automated i18n Library.
 ## Quick start
 
 1. Install pnpm (if you don't have it).
-2. Add `@i18nsmith/cli` to your project (once it’s published) or run the CLI from this monorepo.
+2. Add `i18nsmith` to your project (once it’s published) or run the CLI from this monorepo.
 3. Run `i18nsmith diagnose` to detect any existing locale files, runtime adapters, or provider scaffolds. Review the actionable items before continuing (add `--json` for automation or `--report .i18nsmith/diagnostics.json` to persist a report for CI/VS Code tooling).
 4. Run `i18nsmith check` for a guided health report that merges diagnostics + a sync dry-run. The command prints actionable items, suggested follow-up commands, and fails CI when blocking issues remain.
 5. Run `i18nsmith init` in your app to generate an `i18n.config.json`. If `diagnose` found existing assets, pass `--merge` to opt into the guided merge flow so you don’t overwrite what’s already there.

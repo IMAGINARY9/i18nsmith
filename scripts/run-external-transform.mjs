@@ -36,7 +36,7 @@ function ensureCliBuild() {
   }
 
   console.log('[i18nsmith] Building CLI before running transform...');
-  run('pnpm', ['--filter', '@i18nsmith/cli', 'build'], { cwd: repoRoot });
+  run('pnpm', ['--filter', 'i18nsmith', 'build'], { cwd: repoRoot });
 
   if (!fs.existsSync(cliDist)) {
     console.error('[i18nsmith] CLI build output not found at', cliDist);
