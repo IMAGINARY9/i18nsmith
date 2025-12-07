@@ -2,7 +2,7 @@
   "name": "i18nsmith-vscode",
   "displayName": "i18nsmith",
   "description": "VS Code integration for i18nsmith - automated i18n tooling",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "ArturLavrov",
   "license": "MIT",
   "repository": {
