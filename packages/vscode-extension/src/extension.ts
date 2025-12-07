@@ -13,7 +13,7 @@ import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { SyncIntegration } from './sync-integration';
 import { DiffPeekProvider } from './diff-peek';
-import { loadConfigWithMeta } from '@i18nsmith/core';
+import { loadConfigWithMeta, ensureGitignore } from '@i18nsmith/core';
 import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
@@ -50,6 +50,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   verboseOutputChannel = vscode.window.createOutputChannel('i18nsmith (Verbose)');
   context.subscriptions.push(verboseOutputChannel);
+
+  // Ensure .gitignore has i18nsmith artifacts listed (non-blocking)
+  ensureGitignoreEntries();
 
   const supportedLanguages = [
     { scheme: 'file', language: 'typescript' },
@@ -1140,4 +1143,25 @@ function getCharAfter(document: vscode.TextDocument, position: vscode.Position):
     return undefined;
   }
   return '\n';
+}
+
+/**
+ * Ensures .gitignore has i18nsmith artifact entries.
+ * Runs silently in background on activation.
+ */
+async function ensureGitignoreEntries(): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    return;
+  }
+
+  try {
+    const result = await ensureGitignore(workspaceFolder.uri.fsPath);
+    if (result.updated && result.added.length > 0) {
+      logVerbose(`Added to .gitignore: ${result.added.join(', ')}`);
+    }
+  } catch (err) {
+    // Silently ignore - this is a convenience feature
+    logVerbose(`Failed to update .gitignore: ${err}`);
+  }
 }
