@@ -112,8 +112,9 @@ jobs:
           cd packages/vscode-extension
           # Install production deps using pnpm so workspace:* specifiers resolve.
           # This creates a local node_modules that vsce's npm checks can read.
-          echo "Installing production dependencies for extension (pnpm)"
-          pnpm -C packages/vscode-extension install --prod --prefer-frozen-lockfile
+          echo "Installing production dependencies for extension (pnpm, hoisted node_modules)"
+          # Use shamefully-hoist to create a flat node_modules layout that npm/vsce can inspect
+          pnpm -C packages/vscode-extension install --prod --shamefully-hoist --prefer-frozen-lockfile
           # Use @vscode/vsce to publish. The token is passed via --pat.
           npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
