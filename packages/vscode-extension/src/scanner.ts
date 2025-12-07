@@ -260,7 +260,7 @@ export class SmartScanner implements vscode.Disposable {
 
     const cmd = cliPath
       ? `node "${cliPath}" check --json --report "${reportPath}"`
-      : `npx @i18nsmith/cli check --json --report "${reportPath}"`;
+      : `npx i18nsmith@latest check --json --report "${reportPath}"`;
 
     this.log(`[Scanner] Running: ${cmd}`);
     this.log(`[Scanner] CWD: ${workspaceFolder.uri.fsPath}`);
@@ -322,7 +322,7 @@ export class SmartScanner implements vscode.Disposable {
                                stderr.includes('not in this registry');
             
             if (isNotFound && !cliPath) {
-              this.log(`[Scanner] @i18nsmith/cli not found. Install it with: npm install -D @i18nsmith/cli`);
+              this.log(`[Scanner] i18nsmith CLI not found. Install it with: npm install -D i18nsmith`);
               this.log(`[Scanner] Or set 'i18nsmith.cliPath' in settings to point to a local CLI.`);
             } else {
               this.log(`[Scanner] Error: ${errorMsg}`);

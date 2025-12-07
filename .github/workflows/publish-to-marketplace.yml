@@ -43,7 +43,7 @@ jobs:
           pnpm --filter "@i18nsmith/translation" run build
           pnpm --filter "@i18nsmith/transformer" run build
           pnpm --filter "@i18nsmith/translator-mock" run build
-          pnpm --filter "@i18nsmith/cli" run build
+          pnpm --filter "i18nsmith" run build
 
       - name: Verify built artifacts
         run: |

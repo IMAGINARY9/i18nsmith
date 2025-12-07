@@ -9,7 +9,7 @@
 ### 1.1. Repository Setup
 *   **Stack:** TypeScript, Node.js (latest LTS).
 *   **Monorepo:** `pnpm` workspaces to separate packages.
-*   **Packages:** `@i18nsmith/core`, `@i18nsmith/cli`, `@i18nsmith/transformer`, `@i18nsmith/translation`.
+*   **Packages:** `@i18nsmith/core`, `i18nsmith`, `@i18nsmith/transformer`, `@i18nsmith/translation`.
 *   **Testing:** `vitest` for unit tests.
 
 ### 1.2. Configuration Engine
@@ -34,7 +34,7 @@
 
 Run notes:
 - Build and run the CLI to scan a project:
-  - `pnpm --filter @i18nsmith/cli build`
+  - `pnpm --filter i18nsmith build`
   - `node packages/cli/dist/index.js scan --json`
 
 These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (key generation + transformer).
@@ -46,7 +46,7 @@ These Phase 1 artifacts provide the extraction pipeline required for Phase 2 (ke
 *   **Packages working together**
   *   `@i18nsmith/core`: still responsible for scanning + shared models. Gains a `KeyGenerator` contract and locale JSON helpers so Phase 3 can reuse them.
   *   `@i18nsmith/transformer`: consumes scanner output, asks the key generator for IDs, mutates the AST, and flushes locale JSON updates.
-  *   `@i18nsmith/cli`: orchestrates end-to-end (scan → transform) and handles interactive prompts / dry runs.
+  *   `i18nsmith`: orchestrates end-to-end (scan → transform) and handles interactive prompts / dry runs.
 *   **Primary data flow**
   1.  `Scanner.scan()` → `ScanSummary`.
   2.  `KeyGenerator.generate(text, ctx)` returns `{ key, hash }` for stable deduplication.

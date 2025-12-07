@@ -74,11 +74,11 @@ runs:
       run: |
         echo "::group::Installing i18nsmith"
         if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
-          pnpm add -D @i18nsmith/cli || npx @i18nsmith/cli --version
+          pnpm add -D i18nsmith || npx i18nsmith --version
         elif [ "${{ inputs.package-manager }}" = "yarn" ]; then
-          yarn add -D @i18nsmith/cli || npx @i18nsmith/cli --version
+          yarn add -D i18nsmith || npx i18nsmith --version
         else
-          npm install -D @i18nsmith/cli || npx @i18nsmith/cli --version
+          npm install -D i18nsmith || npx i18nsmith --version
         fi
         echo "::endgroup::"
 
@@ -93,7 +93,7 @@ runs:
         set +e  # Don't exit on error, capture exit code
         
         # Build command
-        CMD="npx i18nsmith ${{ inputs.command }}"
+  CMD="npx i18nsmith ${{ inputs.command }}"
         
         # Add --json for machine-readable output
         CMD="$CMD --json"

@@ -32,7 +32,7 @@ jobs:
           pnpm --filter "@i18nsmith/translation" run build
           pnpm --filter "@i18nsmith/transformer" run build
           pnpm --filter "@i18nsmith/translator-mock" run build
-          pnpm --filter "@i18nsmith/cli" run build
+          pnpm --filter "i18nsmith" run build
 
       - name: Build vscode-extension package
         run: pnpm --filter i18nsmith-vscode --parallel run compile

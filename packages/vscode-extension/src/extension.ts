@@ -974,7 +974,8 @@ function transformCliCommand(raw: string): string {
   if (cliPath) {
     return rest ? `node "${cliPath}" ${rest}` : `node "${cliPath}"`;
   }
-  return rest ? `npx i18nsmith ${rest}` : 'npx i18nsmith';
+  // Use explicit @latest on npx fallback to avoid stale cache issues
+  return rest ? `npx i18nsmith@latest ${rest}` : 'npx i18nsmith@latest';
 }
 
 function ensureInteractiveTerminal(cwd: string): vscode.Terminal {

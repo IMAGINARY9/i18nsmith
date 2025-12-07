@@ -16,7 +16,7 @@ The project is a monorepo managed by `pnpm` workspaces. This structure improves 
 | Package                      | Description                                                                        | Key Responsibilities                                                                                                  |
 | ---------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | **`@i18nsmith/core`**        | The heart of the library. Contains shared types, configuration management, scanner | - Define `I18nConfig` interface<br>- Implement the `Scanner` to traverse AST<br>- Syncer for locale management        |
-| **`@i18nsmith/cli`**         | The command-line interface. Provides commands like `init`, `scan`, `translate`     | - Parse commands and arguments<br>- Orchestrate calls to other packages<br>- Handle user interaction and feedback     |
+| **`i18nsmith`**         | The command-line interface. Provides commands like `init`, `scan`, `translate`     | - Parse commands and arguments<br>- Orchestrate calls to other packages<br>- Handle user interaction and feedback     |
 | **`@i18nsmith/transformer`** | Responsible for all code modifications. Replaces strings with i18n function calls  | - Receive identified strings from `Scanner`<br>- Generate stable keys<br>- Modify source files to insert i18n calls   |
 | **`@i18nsmith/translation`** | A collection of adapters for various translation services                          | - Define a common `Translator` interface<br>- Implement adapters for Google Translate, DeepL, etc.<br>- Fetch translations |
 
@@ -24,7 +24,7 @@ The project is a monorepo managed by `pnpm` workspaces. This structure improves 
 
 ## Detailed Module Structure
 
-### `@i18nsmith/cli` — Command-Line Interface
+### `i18nsmith` — Command-Line Interface
 
 The CLI is decomposed into focused command modules:
 
@@ -124,7 +124,7 @@ The `i18nsmith` process follows these steps:
 
 1.  **Initialization (`i18nsmith init`)**:
     - A user runs the `init` command.
-    - The `@i18nsmith/cli` package prompts the user for basic settings (source language, file paths, adapter, etc.).
+    - The `i18nsmith` package prompts the user for basic settings (source language, file paths, adapter, etc.).
     - A versioned `i18n.config.json` file (currently `version: 1`) is generated in the user's project root.
 
 2.  **Extraction & Transformation (`i18nsmith run`)**:

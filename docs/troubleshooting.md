@@ -265,10 +265,10 @@ Ensure the CLI is installed globally or use npx:
 
 ```bash
 # Install globally
-npm install -g @i18nsmith/cli
+npm install -g i18nsmith
 
 # Or use npx
-npx @i18nsmith/cli sync
+npx i18nsmith sync
 ```
 
 ### "Config file not found"

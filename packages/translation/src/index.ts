@@ -67,7 +67,7 @@ export async function loadTranslator(options: TranslatorLoadOptions): Promise<Tr
 		const cause = error instanceof Error ? error : undefined;
 		const isBuiltIn = specifier === '@i18nsmith/translator-mock';
 		const hint = isBuiltIn
-			? 'The mock translator should be bundled with @i18nsmith/cli. If you installed the CLI globally, try: pnpm add @i18nsmith/translator-mock'
+			? 'The mock translator should be bundled with i18nsmith. If you installed the CLI globally, try: pnpm add @i18nsmith/translator-mock'
 			: `Install the adapter: pnpm add ${specifier}`;
 		throw new TranslatorLoadError(
 			`Unable to load translator module "${specifier}". ${hint}`,
