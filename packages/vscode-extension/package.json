@@ -188,7 +188,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "node -e \"console.log('Skipping vscode:prepublish; extension already compiled by CI')\"",
     "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "watch": "npm run compile -- --watch",
     "lint": "eslint src --ext ts",

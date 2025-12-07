@@ -53,17 +53,18 @@ jobs:
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
 
-      - name: Package VSIX for smoke test
-        env:
-          npm_config_ignore_scripts: 'true'
+      - name: Prepare extension for packaging
         # Install production deps in the extension folder using a hoisted
         # node_modules layout so vsce's internal npm checks work reliably.
         run: |
           set -euo pipefail
           cd packages/vscode-extension
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
-          # Package using the pre-built artifacts; lifecycle scripts are disabled
-          # by the environment variable so esbuild (a devDep) is not required.
+
+      - name: Package VSIX for smoke test
+        run: |
+          set -euo pipefail
+          cd packages/vscode-extension
           npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
 
       - name: Smoke-test packaged VSIX
@@ -110,24 +111,19 @@ jobs:
           echo "Publisher is '$PUBLISHER'"
 
       - name: Publish to Marketplace (vsce)
-        if: ${{ github.event.release.prerelease == false }}
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
-          npm_config_ignore_scripts: 'true'
         run: |
           set -euo pipefail
           cd packages/vscode-extension
           # Install production deps with a hoisted node_modules layout so
           # vsce's npm list validation passes even in a pnpm workspace.
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
-          # Use @vscode/vsce to publish. Skip lifecycle scripts because we built
-          # the extension above; the token is passed via --pat.
+          # Use @vscode/vsce to publish. The token is passed via --pat.
           npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
       - name: Upload VSIX (artifact)
         if: always()
-        env:
-          npm_config_ignore_scripts: 'true'
         run: |
           set -euo pipefail
           cd packages/vscode-extension
