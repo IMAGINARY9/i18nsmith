@@ -60,7 +60,9 @@ jobs:
           set -euo pipefail
           cd packages/vscode-extension
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
-          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+          # Skip lifecycle scripts (we already built artifacts earlier) to avoid
+          # requiring devDependencies like esbuild during packaging.
+          npm_config_ignore_scripts=true npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
 
       - name: Smoke-test packaged VSIX
         # Minimal runtime check: unzip the VSIX and verify extension/package.json
@@ -114,15 +116,16 @@ jobs:
           # Install production deps with a hoisted node_modules layout so
           # vsce's npm list validation passes even in a pnpm workspace.
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
-          # Use @vscode/vsce to publish. The token is passed via --pat.
-          npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
+          # Use @vscode/vsce to publish. Skip lifecycle scripts because we built
+          # the extension above; the token is passed via --pat.
+          npm_config_ignore_scripts=true npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
       - name: Upload VSIX (artifact)
         if: always()
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+          npm_config_ignore_scripts=true npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
         continue-on-error: true
       - name: Upload artifact
         if: always()
