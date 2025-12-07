@@ -54,15 +54,17 @@ jobs:
         run: pnpm --filter i18nsmith-vscode run compile
 
       - name: Package VSIX for smoke test
+        env:
+          npm_config_ignore_scripts: 'true'
         # Install production deps in the extension folder using a hoisted
         # node_modules layout so vsce's internal npm checks work reliably.
         run: |
           set -euo pipefail
           cd packages/vscode-extension
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
-          # Skip lifecycle scripts (we already built artifacts earlier) to avoid
-          # requiring devDependencies like esbuild during packaging.
-          npm_config_ignore_scripts=true npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+          # Package using the pre-built artifacts; lifecycle scripts are disabled
+          # by the environment variable so esbuild (a devDep) is not required.
+          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
 
       - name: Smoke-test packaged VSIX
         # Minimal runtime check: unzip the VSIX and verify extension/package.json
@@ -110,6 +112,7 @@ jobs:
       - name: Publish to Marketplace (vsce)
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+          npm_config_ignore_scripts: 'true'
         run: |
           set -euo pipefail
           cd packages/vscode-extension
@@ -118,14 +121,16 @@ jobs:
           pnpm install --prod --shamefully-hoist --prefer-frozen-lockfile
           # Use @vscode/vsce to publish. Skip lifecycle scripts because we built
           # the extension above; the token is passed via --pat.
-          npm_config_ignore_scripts=true npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
+          npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
       - name: Upload VSIX (artifact)
         if: always()
+        env:
+          npm_config_ignore_scripts: 'true'
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          npm_config_ignore_scripts=true npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
+          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies
         continue-on-error: true
       - name: Upload artifact
         if: always()
