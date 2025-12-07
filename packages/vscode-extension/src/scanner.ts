@@ -212,6 +212,26 @@ export class SmartScanner implements vscode.Disposable {
   }
 
   /**
+   * Detect if we're inside the i18nsmith monorepo and return the local CLI path
+   */
+  private detectLocalMonorepo(): string | null {
+    const extensionPath = vscode.extensions.getExtension('ArturLavrov.i18nsmith-vscode')?.extensionPath;
+    if (!extensionPath) {
+      return null;
+    }
+
+    // If running in the monorepo, the extension is at packages/vscode-extension
+    // and the CLI is at packages/cli/dist/index.js
+    const possibleCliPath = path.join(extensionPath, '..', '..', 'cli', 'dist', 'index.js');
+    if (fs.existsSync(possibleCliPath)) {
+      this.log(`[Scanner] Detected local monorepo CLI at ${possibleCliPath}`);
+      return possibleCliPath;
+    }
+
+    return null;
+  }
+
+  /**
    * Execute the CLI and return results
    */
   private async runCli(): Promise<ScanResult> {
@@ -226,7 +246,16 @@ export class SmartScanner implements vscode.Disposable {
     }
 
     const config = vscode.workspace.getConfiguration('i18nsmith');
-    const cliPath = config.get<string>('cliPath', '');
+    let cliPath = config.get<string>('cliPath', '');
+
+    // If no explicit cliPath, try to detect local monorepo
+    if (!cliPath) {
+      const localMonorepo = this.detectLocalMonorepo();
+      if (localMonorepo) {
+        cliPath = localMonorepo;
+      }
+    }
+
     const reportPath = config.get<string>('reportPath', '.i18nsmith/check-report.json');
 
     const cmd = cliPath
@@ -284,12 +313,26 @@ export class SmartScanner implements vscode.Disposable {
 
           // Only treat as error if report doesn't exist AND there was an exec error
           if (error) {
-            this.log(`[Scanner] Error: ${error.message}`);
+            const errorMsg = error.message || '';
+            
+            // Check if this is a "not found" error (E404 from npm or npx)
+            const isNotFound = errorMsg.includes('E404') || 
+                               errorMsg.includes('not in this registry') ||
+                               stderr.includes('E404') ||
+                               stderr.includes('not in this registry');
+            
+            if (isNotFound && !cliPath) {
+              this.log(`[Scanner] i18nsmith CLI not found. Install it with: npm install -D i18nsmith`);
+              this.log(`[Scanner] Or set 'i18nsmith.cliPath' in settings to point to a local CLI.`);
+            } else {
+              this.log(`[Scanner] Error: ${errorMsg}`);
+            }
+
             resolve({
               success: false,
               timestamp,
               issueCount: 0,
-              error: error.message,
+              error: errorMsg,
             });
             return;
           }

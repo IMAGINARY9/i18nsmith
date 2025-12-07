@@ -3,7 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
-import { diagnoseWorkspace, I18nConfig, TranslationConfig } from '@i18nsmith/core';
+import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
 
@@ -175,6 +175,13 @@ async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promis
     if (detectedAdapter) {
       console.log(chalk.dim('  Adapter: ' + detectedAdapter));
     }
+
+    // Ensure .gitignore has i18nsmith artifacts
+    const gitignoreResult = await ensureGitignore(workspaceRoot);
+    if (gitignoreResult.updated) {
+      console.log(chalk.green(`✓ Updated .gitignore with i18nsmith artifacts`));
+    }
+
     console.log(chalk.blue('\nRun "i18nsmith check" to verify your setup.'));
   } catch (error) {
     console.error(chalk.red('Failed to write configuration file:'), error);
@@ -385,6 +392,12 @@ export function registerInit(program: Command) {
       try {
         await fs.writeFile(configPath, JSON.stringify(config, null, 2));
         console.log(chalk.green(`\nConfiguration created at ${configPath}`));
+
+        // Ensure .gitignore has i18nsmith artifacts
+        const gitignoreResult = await ensureGitignore(workspaceRoot);
+        if (gitignoreResult.updated) {
+          console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
+        }
 
         if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
           try {

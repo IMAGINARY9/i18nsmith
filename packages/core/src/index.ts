@@ -16,3 +16,4 @@ export * from './value-generator.js';
 export * from './translation-service.js';
 export * from './suspicious-key-renamer.js';
 export * from './backup.js';
+export * from './gitignore.js';
