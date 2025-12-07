@@ -110,6 +110,7 @@ jobs:
           echo "Publisher is '$PUBLISHER'"
 
       - name: Publish to Marketplace (vsce)
+        if: ${{ github.event.release.prerelease == false }}
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
           npm_config_ignore_scripts: 'true'
