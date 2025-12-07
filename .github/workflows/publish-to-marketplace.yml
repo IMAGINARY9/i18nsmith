@@ -109,6 +109,11 @@ jobs:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
         run: |
           cd packages/vscode-extension
+          # Ensure a minimal npm-produced node_modules exists for vsce's npm list checks.
+          # pnpm's workspace layout confuses npm list (extraneous/invalid packages),
+          # so install production deps locally in the extension folder first.
+          echo "Installing production dependencies for extension (local npm install)"
+          npm install --production --no-audit --no-fund
           # Use @vscode/vsce to publish. The token is passed via --pat.
           npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies
 
