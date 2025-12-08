@@ -35,3 +35,6 @@ external-projects/
 .local-testing/
 tmp-transformer-*
 *.local-transform-*
+
+# Ignore packaged VSIX artifacts
+*.vsix
