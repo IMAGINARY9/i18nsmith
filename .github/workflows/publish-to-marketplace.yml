@@ -17,6 +17,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: vsce-publish
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+      # Set repository variable CLI_PUBLISH_DRY_RUN=true to force npm publish dry-runs.
+      CLI_PUBLISH_DRY_RUN: ${{ vars.CLI_PUBLISH_DRY_RUN || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +54,30 @@ jobs:
         run: |
           test -f packages/core/dist/index.js || (echo "packages/core/dist/index.js missing" && ls -R packages/core && exit 1)
           test -f packages/transformer/dist/index.js || (echo "packages/transformer/dist/index.js missing" && ls -R packages/transformer && exit 1)
+
+      - name: Publish CLI to npm
+        # Skip if this version is already on npm, or dry-run when CLI_PUBLISH_DRY_RUN=true
+        run: |
+          set -euo pipefail
+          cd packages/cli
+          CLI_VERSION=$(node -p "require('./package.json').version")
+          echo "Detected CLI version: $CLI_VERSION"
+
+          if npm view i18nsmith@"$CLI_VERSION" >/dev/null 2>&1; then
+            echo "i18nsmith@$CLI_VERSION already published. Skipping npm publish."
+            exit 0
+          fi
+
+          DRY_RUN="${CLI_PUBLISH_DRY_RUN:-false}"
+          npm pkg fix || true
+
+          if [[ "${DRY_RUN,,}" == "true" ]]; then
+            echo "CLI_PUBLISH_DRY_RUN enabled; running npm publish --dry-run --tag next"
+            npm publish --access public --tag next --dry-run
+          else
+            echo "Publishing i18nsmith@$CLI_VERSION to npm"
+            npm publish --access public
+          fi
 
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
@@ -104,8 +133,6 @@ jobs:
           echo "Publisher is '$PUBLISHER'"
 
       - name: Publish to Marketplace (vsce)
-        env:
-          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
         run: |
           set -euo pipefail
           cd packages/vscode-extension
