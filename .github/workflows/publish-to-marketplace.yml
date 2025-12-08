@@ -72,6 +72,14 @@ jobs:
           DRY_RUN="${CLI_PUBLISH_DRY_RUN:-false}"
           npm pkg fix || true
 
+          # Ensure npm auth is configured using NODE_AUTH_TOKEN (set at job env)
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NODE_AUTH_TOKEN is not set; cannot authenticate to npm registry"; exit 1
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          # show whoami for debugging (non-fatal)
+          npm whoami || true
+
           if [[ "${DRY_RUN,,}" == "true" ]]; then
             echo "CLI_PUBLISH_DRY_RUN enabled; running npm publish --dry-run --tag next"
             npm publish --access public --tag next --dry-run
