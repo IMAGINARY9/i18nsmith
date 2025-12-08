@@ -36,6 +36,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -73,21 +74,9 @@ jobs:
 
           if [[ "${DRY_RUN,,}" == "true" ]]; then
             echo "CLI_PUBLISH_DRY_RUN enabled; running npm publish --dry-run --tag next"
-            # ensure auth is configured for dry-run as well
-            if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-              echo "NODE_AUTH_TOKEN is not set; cannot authenticate for npm dry-run"; exit 1
-            fi
-            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-            npm whoami || true
             npm publish --access public --tag next --dry-run
           else
             echo "Publishing i18nsmith@$CLI_VERSION to npm"
-            if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-              echo "NODE_AUTH_TOKEN is not set; aborting publish"; exit 1
-            fi
-            # Configure npm auth for this runner so `npm publish` is authenticated
-            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-            npm whoami
             npm publish --access public
           fi
 
