@@ -82,12 +82,16 @@ jobs:
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
 
+      - name: Install @vscode/vsce
+        # Globally install the modern @vscode/vsce to avoid any resolution of deprecated vsce
+        run: npm install -g @vscode/vsce
+
       - name: Package VSIX for smoke test
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          # Use --skip-license to avoid license prompt and --no-dependencies to skip bundling
-          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
+          # Use --skip-license to avoid license prompt and --no-dependencies to skip npm list check
+          vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
 
       - name: Smoke-test packaged VSIX
         # Minimal runtime check: unzip the VSIX and verify extension/package.json
@@ -136,16 +140,15 @@ jobs:
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          # Use @vscode/vsce to publish. The token is passed via --pat.
-          # --no-dependencies skips bundling, --skip-license avoids prompts
-          npx -y @vscode/vsce publish --pat "$VSCE_TOKEN" --no-dependencies --skip-license
+          # Use globally installed @vscode/vsce to publish; --no-dependencies skips npm list check
+          vsce publish --pat "$VSCE_TOKEN" --no-dependencies --skip-license
 
       - name: Upload VSIX (artifact)
         if: always()
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          npx -y @vscode/vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
+          vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
         continue-on-error: true
       - name: Upload artifact
         if: always()
