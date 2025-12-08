@@ -82,16 +82,13 @@ jobs:
       - name: Build extension
         run: pnpm --filter i18nsmith-vscode run compile
 
-      - name: Install @vscode/vsce
-        # Globally install the modern @vscode/vsce to avoid any resolution of deprecated vsce
-        run: npm install -g @vscode/vsce
-
       - name: Package VSIX for smoke test
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          # Use --skip-license to avoid license prompt and --no-dependencies to skip npm list check
-          vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
+          # Use pnpm dlx to run @vscode/vsce without polluting global installs.
+          # --no-dependencies skips the npm list checks that fail under pnpm workspaces.
+          pnpm dlx @vscode/vsce@3.1.0 package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
 
       - name: Smoke-test packaged VSIX
         # Minimal runtime check: unzip the VSIX and verify extension/package.json
@@ -135,20 +132,28 @@ jobs:
             echo "publisher field in packages/vscode-extension/package.json is empty. Aborting."; exit 1
           fi
           echo "Publisher is '$PUBLISHER'"
+          EXT_VERSION=$(node -e "console.log(require('./packages/vscode-extension/package.json').version || '')")
+          if [ -z "$EXT_VERSION" ]; then
+            echo "Extension version missing"; exit 1
+          fi
+          if [ "v$EXT_VERSION" != "$TAG" ]; then
+            echo "Tag $TAG does not match extension version v$EXT_VERSION. Aborting."; exit 1
+          fi
+          echo "Extension version matches tag: v$EXT_VERSION"
 
       - name: Publish to Marketplace (vsce)
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          # Use globally installed @vscode/vsce to publish; --no-dependencies skips npm list check
-          vsce publish --pat "$VSCE_TOKEN" --no-dependencies --skip-license
+          # Use pnpm dlx to ensure @vscode/vsce is resolved deterministically.
+          pnpm dlx @vscode/vsce@3.1.0 publish --pat "$VSCE_TOKEN" --no-dependencies --skip-license
 
       - name: Upload VSIX (artifact)
         if: always()
         run: |
           set -euo pipefail
           cd packages/vscode-extension
-          vsce package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
+          pnpm dlx @vscode/vsce@3.1.0 package --out ../../i18nsmith-vscode.vsix --no-dependencies --skip-license
         continue-on-error: true
       - name: Upload artifact
         if: always()
