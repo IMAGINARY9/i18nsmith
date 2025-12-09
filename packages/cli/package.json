@@ -15,14 +15,11 @@
     }
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@i18nsmith/core": "workspace:*",
-    "@i18nsmith/transformer": "workspace:*",
-    "@i18nsmith/translation": "workspace:*",
-    "@i18nsmith/translator-mock": "workspace:*",
     "chalk": "^5.0.0",
     "commander": "^11.0.0",
     "diff": "^8.0.2",
@@ -31,5 +28,12 @@
     "p-limit": "^7.2.0",
     "p-retry": "^7.1.0",
     "ts-morph": "^21.0.0"
+  },
+  "devDependencies": {
+    "@i18nsmith/core": "workspace:*",
+    "@i18nsmith/transformer": "workspace:*",
+    "@i18nsmith/translation": "workspace:*",
+    "@i18nsmith/translator-mock": "workspace:*",
+    "esbuild": "^0.25.0"
   }
 }
