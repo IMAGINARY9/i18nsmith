@@ -1,12 +1,18 @@
 import * as esbuild from 'esbuild';
-import { readFileSync } from 'fs';
+import { execSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
-
-// Externalize all runtime dependencies (chalk, commander, etc.)
-// Workspace dependencies (@i18nsmith/*) will be moved to devDependencies
-// and thus will NOT be in pkg.dependencies, so they will be bundled.
 const external = Object.keys(pkg.dependencies || {});
+
+console.log('Cleaning dist/');
+rmSync('dist', { recursive: true, force: true });
+mkdirSync('dist', { recursive: true });
+
+console.log('Emitting type declarations via tsc...');
+execSync('pnpm exec tsc -p tsconfig.json --emitDeclarationOnly', {
+  stdio: 'inherit',
+});
 
 console.log('Bundling CLI with external dependencies:', external);
 
@@ -15,11 +21,11 @@ await esbuild.build({
   bundle: true,
   platform: 'node',
   format: 'esm',
+  target: ['node18'],
   outfile: 'dist/index.js',
   external,
-  banner: {
-    js: '#!/usr/bin/env node',
-  },
-  sourcemap: true,
-  minify: false, // Keep readable for now, or minify if preferred
+  sourcemap: false,
+  minify: false,
 });
+
+console.log('CLI bundle built at dist/index.js');
