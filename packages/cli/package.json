@@ -1,6 +1,6 @@
 {
   "name": "i18nsmith",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "CLI for i18nsmith",
   "type": "module",
   "main": "dist/index.js",
@@ -11,7 +11,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
