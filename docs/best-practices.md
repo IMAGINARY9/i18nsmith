@@ -460,6 +460,59 @@ i18nsmith audit --unused
 
 ---
 
+## Text Extraction Best Practices
+
+### Layered Extraction Approach
+
+For robust automated text extraction, use a layered system that balances automation with control:
+
+#### Layer 1: Smart Heuristics (Default)
+Configure basic thresholds in `i18n.config.json`:
+```json
+"extraction": {
+  "minLetterCount": 2,
+  "minLetterRatio": 0.25
+}
+```
+This filters out symbols, emoji, and numeric strings automatically.
+
+#### Layer 2: Project-Wide Overrides
+Add patterns for common cases:
+```json
+"extraction": {
+  "preserveNewlines": false,
+  "decodeHtmlEntities": true,
+  "allowPatterns": ["^\\d+$"],
+  "denyPatterns": ["^[a-f0-9]{6,}$"]
+}
+```
+
+#### Layer 3: Source-Level Control
+Use attributes or comments for exceptions:
+```jsx
+<p data-i18n-skip>This should not be translated</p>
+<p data-i18n-force-extract>--</p>
+```
+```typescript
+const message = 'Skip this'; // i18n:skip
+```
+
+#### Layer 4: Confidence Buckets & Review Workflow *(Implemented)*
+
+The scanner provides telemetry for review:
+- **`highConfidence`**: Auto-transformable strings
+- **`needsReview`**: Borderline cases for manual review
+- **`skipped`**: Rejected strings with reasons
+
+Use the interactive reviewer:
+```bash
+i18nsmith review --limit 20 --scan-calls
+```
+
+This command lets you decide on borderline strings, automatically updating `allowPatterns` or `denyPatterns` in your config. Use `--json` for CI integration.
+
+---
+
 See also:
 - [Troubleshooting Guide](./troubleshooting.md)
 - [Configuration Reference](./configuration.md)
