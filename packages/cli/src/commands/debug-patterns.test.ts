@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { ensureCliBuilt } from '../test-helpers/ensure-cli-built';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +33,10 @@ function runCli(args: string[], options: { cwd?: string } = {}) {
 
 describe('debug-patterns command', () => {
   let tmpDir: string;
+
+  beforeAll(async () => {
+    await ensureCliBuilt(CLI_PATH);
+  });
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-debug-patterns-'));

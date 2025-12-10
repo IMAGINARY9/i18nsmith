@@ -1,11 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
+import { ensureCliBuilt } from '../test-helpers/ensure-cli-built';
+
+const CLI_PATH = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
 
 describe('sync --seed-target-locales', () => {
   let tempDir: string;
+
+  beforeAll(async () => {
+    await ensureCliBuilt(CLI_PATH);
+  });
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-seed-test-'));
@@ -55,9 +62,8 @@ export function App() {
   });
 
   const runCli = (args: string): string => {
-    const cliPath = path.resolve(__dirname, '..', '..', 'dist', 'index.js');
     try {
-      return execSync(`node ${cliPath} ${args}`, {
+      return execSync(`node ${CLI_PATH} ${args}`, {
         cwd: tempDir,
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],

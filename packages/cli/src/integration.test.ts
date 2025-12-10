@@ -3,17 +3,19 @@
  * These tests run the actual CLI commands against real file systems
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { ensureCliBuilt } from './test-helpers/ensure-cli-built';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Get the correct CLI path regardless of where tests are run from
+// During tests, __dirname points to src/, so we go up one level to find dist/
 const CLI_PATH = path.resolve(__dirname, '../dist/index.js');
 
 // Helper to run CLI commands
@@ -32,6 +34,11 @@ function runCli(
       FORCE_COLOR: '0',
     },
   });
+
+  // Log errors for debugging
+  if (result.error) {
+    console.error('CLI execution error:', result.error);
+  }
 
   const stdout = result.stdout ?? '';
   const stderr = result.stderr ?? '';
@@ -55,6 +62,10 @@ function extractJson<T>(output: string): T {
 
 describe('CLI Integration Tests', () => {
   let tmpDir: string;
+
+  beforeAll(async () => {
+    await ensureCliBuilt(CLI_PATH);
+  });
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-cli-integration-'));
