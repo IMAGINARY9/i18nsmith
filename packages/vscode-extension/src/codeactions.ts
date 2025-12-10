@@ -282,21 +282,6 @@ export async function addPlaceholderToLocale(key: string, workspaceRoot: string)
 /**
  * Set a nested value in an object using dot notation
  */
-function setNestedValue(obj: Record<string, any>, key: string, value: unknown): void {
-  const keys = key.split('.');
-  let current = obj;
-
-  for (let i = 0; i < keys.length - 1; i++) {
-    const currentKey = keys[i];
-    if (typeof current[currentKey] !== 'object' || current[currentKey] === null) {
-      current[currentKey] = {};
-    }
-    current = current[currentKey];
-  }
-
-  current[keys[keys.length - 1]] = value;
-}
-
 function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRoot?: string): string {
   // Use the shared KeyGenerator from core to honor workspace config (namespace, hash length, style)
   try {
@@ -357,6 +342,6 @@ function loadWorkspaceConfig(workspaceRoot?: string): LightweightWorkspaceConfig
 }
 
 function extractSuspiciousKeyFromMessage(message: string): string | null {
-  const match = message.match(/"([^\"]+)"/);
+  const match = message.match(/"([^"]+)"/);
   return match ? match[1] : null;
 }

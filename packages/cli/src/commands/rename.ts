@@ -3,11 +3,19 @@ import chalk from 'chalk';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { loadConfig, KeyRenamer, type KeyRenameSummary, type KeyRenameBatchSummary, type KeyRenameMapping } from '@i18nsmith/core';
+import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 
 interface ScanOptions {
   config: string;
   json?: boolean;
   report?: string;
+}
+
+interface RenameKeyOptions extends ScanOptions {
+  write?: boolean;
+  diff?: boolean;
+  previewOutput?: string;
+  applyPreview?: string;
 }
 
 interface RenameMapOptions extends ScanOptions {
@@ -29,13 +37,36 @@ export function registerRename(program: Command): void {
     .option('--json', 'Print raw JSON results', false)
     .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
     .option('--write', 'Write changes to disk (defaults to dry-run)', false)
-    .action(async (oldKey: string, newKey: string, options: ScanOptions & { write?: boolean }) => {
-      console.log(chalk.blue(options.write ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
+    .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
+    .option('--apply-preview <path>', 'Apply a previously saved rename preview JSON file safely')
+    .action(async (oldKey: string, newKey: string, options: RenameKeyOptions) => {
+      if (options.applyPreview) {
+        await applyPreviewFile('rename-key', options.applyPreview);
+        return;
+      }
+
+      const previewMode = Boolean(options.previewOutput);
+      const writeEnabled = Boolean(options.write) && !previewMode;
+      if (previewMode && options.write) {
+        console.log(chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.'));
+      }
+      options.write = writeEnabled;
+
+      console.log(chalk.blue(writeEnabled ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
 
       try {
         const config = await loadConfig(options.config);
         const renamer = new KeyRenamer(config);
-        const summary = await renamer.rename(oldKey, newKey, { write: options.write });
+        const summary = await renamer.rename(oldKey, newKey, {
+          write: options.write,
+          diff: previewMode,
+        });
+
+        if (previewMode && options.previewOutput) {
+          const savedPath = await writePreviewFile('rename-key', summary, options.previewOutput);
+          console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+          return;
+        }
 
         if (options.report) {
           const outputPath = path.resolve(process.cwd(), options.report);

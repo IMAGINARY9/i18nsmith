@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import inquirer from 'inquirer';
+import path from 'path';
 import type { Command } from 'commander';
 import {
   DEFAULT_PLACEHOLDER_FORMATS,
@@ -19,6 +20,7 @@ import type { TranslateCommandOptions, TranslateSummary, ProviderSettings } from
 import { emitTranslateOutput, maybePrintEstimate } from './reporter.js';
 import { handleCsvExport, handleCsvImport } from './csv-handler.js';
 import { executeTranslations } from './executor.js';
+import { applyPreviewFile, writePreviewFile } from '../../utils/preview.js';
 
 // Re-export types for external use
 export * from './types.js';
@@ -98,7 +100,14 @@ export function registerTranslate(program: Command): void {
     .option('--strict-placeholders', 'Fail if translated output has placeholder mismatches (for CI)', false)
     .option('--export <path>', 'Export missing translations to a CSV file for external translation')
     .option('--import <path>', 'Import translations from a CSV file and merge into locale files')
+    .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
+    .option('--apply-preview <path>', 'Apply a previously saved translate preview JSON file safely')
     .action(async (options: TranslateCommandOptions) => {
+      if (options.applyPreview) {
+        await applyPreviewFile('translate', options.applyPreview, ['--yes']);
+        return;
+      }
+
       // Handle CSV export mode
       if (options.export) {
         await handleCsvExport(options);
@@ -111,9 +120,14 @@ export function registerTranslate(program: Command): void {
         return;
       }
 
-      console.log(
-        chalk.blue(options.write ? 'Translating locale files...' : 'Planning translations (dry-run)...')
-      );
+      const previewMode = Boolean(options.previewOutput);
+      const writeEnabled = Boolean(options.write) && !previewMode;
+      if (previewMode && options.write) {
+        console.log(chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.'));
+      }
+      options.write = writeEnabled;
+
+      console.log(chalk.blue(writeEnabled ? 'Translating locale files...' : 'Planning translations (dry-run)...'));
 
       try {
         const config = await loadConfig(options.config);
@@ -142,6 +156,12 @@ export function registerTranslate(program: Command): void {
         };
 
         if (!options.write) {
+          if (previewMode && options.previewOutput) {
+            const savedPath = await writePreviewFile('translate', summary, options.previewOutput);
+            console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+            return;
+          }
+
           if (options.estimate && providerSettings.name !== 'manual') {
             await maybePrintEstimate(plan, providerSettings);
           }
