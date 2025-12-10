@@ -44,7 +44,9 @@ function readConfig(root: string): { localesDir: string; sourceLanguage: string 
       localesDir = cfg.localesDir || localesDir;
       sourceLanguage = cfg.sourceLanguage || sourceLanguage;
     }
-  } catch {}
+  } catch (error) {
+    console.warn('Failed to read i18nsmith config for definition provider:', error);
+  }
   return { localesDir, sourceLanguage };
 }
 

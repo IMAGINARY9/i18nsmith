@@ -13,11 +13,13 @@ import {
   createRenameMappingFile,
   type SyncSummary,
   type KeyRenameBatchSummary,
+  type SyncSelection,
 } from '@i18nsmith/core';
 import {
   printLocaleDiffs,
   writeLocaleDiffPatches,
 } from '../utils/diff-utils.js';
+import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 import { SYNC_EXIT_CODES } from '../utils/exit-codes.js';
 
 interface SyncCommandOptions {
@@ -49,6 +51,9 @@ interface SyncCommandOptions {
   shapeDelimiter?: string;
   seedTargetLocales?: boolean;
   seedValue?: string;
+  previewOutput?: string;
+  selectionFile?: string;
+  applyPreview?: string;
 }
 
 function collectAssumedKeys(value: string, previous: string[] = []) {
@@ -90,26 +95,66 @@ export function registerSync(program: Command) {
     .option('--shape-delimiter <char>', 'Delimiter for key nesting (default: ".")', '.')
     .option('--seed-target-locales', 'Add missing keys to target locale files with empty or placeholder values', false)
     .option('--seed-value <value>', 'Value to use when seeding target locales (default: empty string)', '')
+    .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
+    .option('--selection-file <path>', 'Path to JSON file with selected missing/unused keys to write (used with --write)')
+    .option('--apply-preview <path>', 'Apply a previously saved sync preview JSON file safely')
     .action(async (options: SyncCommandOptions) => {
+      if (options.applyPreview) {
+        const extraArgs: string[] = [];
+        if (options.selectionFile) {
+          extraArgs.push('--selection-file', options.selectionFile);
+        }
+        if (options.prune) {
+          extraArgs.push('--prune');
+        }
+        await applyPreviewFile('sync', options.applyPreview, extraArgs);
+        return;
+      }
+
       const interactive = Boolean(options.interactive);
       const diffEnabled = Boolean(options.diff || options.patchDir);
       const invalidateCache = Boolean(options.invalidateCache);
-      const diffRequested = diffEnabled || Boolean(options.json);
+      const previewMode = Boolean(options.previewOutput);
+      const diffRequested = diffEnabled || Boolean(options.json) || previewMode;
+
       if (interactive && options.json) {
         console.error(chalk.red('--interactive cannot be combined with --json output.'));
         process.exitCode = 1;
         return;
       }
 
-      console.log(
-        chalk.blue(
-          interactive
-            ? 'Interactive sync (dry-run first)...'
-            : options.write
-            ? 'Syncing locale files...'
-            : 'Checking locale drift...'
-        )
-      );
+      if (previewMode && interactive) {
+        console.error(chalk.red('--preview-output cannot be combined with --interactive.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      const writeEnabled = Boolean(options.write) && !previewMode;
+      if (previewMode && options.write) {
+        console.log(
+          chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.')
+        );
+      }
+      options.write = writeEnabled;
+
+      if (options.selectionFile && !options.write) {
+        console.error(chalk.red('--selection-file requires --write (or --apply-preview) to take effect.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      const selectionFromFile = options.selectionFile
+        ? await loadSelectionFile(options.selectionFile)
+        : undefined;
+
+      const banner = previewMode
+        ? 'Generating sync preview...'
+        : interactive
+        ? 'Interactive sync (dry-run first)...'
+        : writeEnabled
+        ? 'Syncing locale files...'
+        : 'Checking locale drift...';
+      console.log(chalk.blue(banner));
 
       try {
         const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
@@ -202,10 +247,16 @@ export function registerSync(program: Command) {
           validateInterpolations: options.validateInterpolations,
           emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
           assumedKeys: options.assume,
+          selection: selectionFromFile,
           diff: diffRequested,
           invalidateCache,
           targets: options.target,
         });
+
+        if (previewMode && options.previewOutput) {
+          const savedPath = await writePreviewFile('sync', summary, options.previewOutput);
+          console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+        }
 
         // Show backup info if created
         if (summary.backup) {
@@ -683,6 +734,49 @@ async function runInteractiveSync(syncer: Syncer, options: SyncCommandOptions) {
   if (options.patchDir) {
     await writeLocaleDiffPatches(writeSummary.diffs, options.patchDir);
   }
+}
+
+async function loadSelectionFile(filePath: string): Promise<SyncSelection> {
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+  let raw: string;
+  try {
+    raw = await fs.readFile(resolvedPath, 'utf8');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to read selection file at ${resolvedPath}: ${message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Selection file ${resolvedPath} contains invalid JSON: ${message}`);
+  }
+
+  const selection: SyncSelection = {};
+  const missing = (parsed as { missing?: unknown }).missing;
+  const unused = (parsed as { unused?: unknown }).unused;
+
+  if (Array.isArray(missing)) {
+    const normalized = missing.map((key) => String(key).trim()).filter(Boolean);
+    if (normalized.length) {
+      selection.missing = normalized;
+    }
+  }
+
+  if (Array.isArray(unused)) {
+    const normalized = unused.map((key) => String(key).trim()).filter(Boolean);
+    if (normalized.length) {
+      selection.unused = normalized;
+    }
+  }
+
+  if (!selection.missing?.length && !selection.unused?.length) {
+    throw new Error(`Selection file ${resolvedPath} must include at least one "missing" or "unused" entry.`);
+  }
+
+  return selection;
 }
 
 function printRenameBatchSummary(summary: KeyRenameBatchSummary) {

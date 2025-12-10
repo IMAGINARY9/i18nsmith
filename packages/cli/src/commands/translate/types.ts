@@ -19,6 +19,8 @@ export interface TranslateCommandOptions {
   strictPlaceholders?: boolean;
   export?: string;
   import?: string;
+  previewOutput?: string;
+  applyPreview?: string;
 }
 
 export interface TranslateLocaleResult extends TranslationWriteSummary {

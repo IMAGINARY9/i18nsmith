@@ -6,6 +6,7 @@ import { loadConfigWithMeta } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
 import type { TransformSummary } from '@i18nsmith/transformer';
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
+import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 
 interface TransformOptions {
   config?: string;
@@ -17,6 +18,8 @@ interface TransformOptions {
   diff?: boolean;
   patchDir?: string;
   migrateTextKeys?: boolean;
+  previewOutput?: string;
+  applyPreview?: string;
 }
 
 const collectTargetPatterns = (value: string | string[], previous: string[]) => {
@@ -83,11 +86,30 @@ export function registerTransform(program: Command) {
     .option('--patch-dir <path>', 'Write locale diffs to .patch files in the specified directory')
     .option('--target <pattern...>', 'Limit scanning to specific files or glob patterns', collectTargetPatterns, [])
     .option('--migrate-text-keys', 'Migrate existing t("Text") calls to structured keys')
+    .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
+    .option('--apply-preview <path>', 'Apply a previously saved transform preview JSON file safely')
     .action(async (options: TransformOptions) => {
+      if (options.applyPreview) {
+        await applyPreviewFile('transform', options.applyPreview);
+        return;
+      }
+
       const diffEnabled = Boolean(options.diff || options.patchDir);
-      console.log(
-        chalk.blue(options.write ? 'Running transform (write mode)...' : 'Planning transform (dry-run)...')
-      );
+      const previewMode = Boolean(options.previewOutput);
+      const diffRequested = diffEnabled || previewMode;
+      const writeEnabled = Boolean(options.write) && !previewMode;
+
+      if (previewMode && options.write) {
+        console.log(chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.'));
+      }
+      options.write = writeEnabled;
+
+      const banner = previewMode
+        ? 'Generating transform preview...'
+        : writeEnabled
+        ? 'Running transform (write mode)...'
+        : 'Planning transform (dry-run)...';
+      console.log(chalk.blue(banner));
 
       try {
         const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
@@ -103,9 +125,14 @@ export function registerTransform(program: Command) {
         const summary = await transformer.run({
           write: options.write,
           targets: options.target,
-          diff: diffEnabled,
+          diff: diffRequested,
           migrateTextKeys: options.migrateTextKeys,
         });
+
+        if (previewMode && options.previewOutput) {
+          const savedPath = await writePreviewFile('transform', summary, options.previewOutput);
+          console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+        }
 
         if (options.report) {
           const outputPath = path.resolve(process.cwd(), options.report);

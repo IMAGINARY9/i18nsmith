@@ -11,12 +11,12 @@ import { SmartScanner } from './scanner';
 import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
-import { SyncIntegration } from './sync-integration';
 import { DiffPeekProvider } from './diff-peek';
-import { loadConfigWithMeta, ensureGitignore } from '@i18nsmith/core';
-import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord } from '@i18nsmith/core';
-import { Transformer } from '@i18nsmith/transformer';
+import { ensureGitignore } from '@i18nsmith/core';
+import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord, KeyRenameSummary, SourceFileDiffEntry, TranslationPlan } from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
+import { PreviewManager } from './preview-manager';
+import { resolveCliCommand, quoteCliArg } from './cli-utils';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -34,9 +34,10 @@ let smartScanner: SmartScanner;
 let statusBarManager: StatusBarManager;
 let interactiveTerminal: vscode.Terminal | undefined;
 let checkIntegration: CheckIntegration;
-let syncIntegration: SyncIntegration | undefined;
 let diffPeekProvider: DiffPeekProvider;
 let verboseOutputChannel: vscode.OutputChannel;
+let cliOutputChannel: vscode.OutputChannel | undefined;
+let previewManager: PreviewManager | undefined;
 
 function logVerbose(message: string) {
   const config = vscode.workspace.getConfiguration('i18nsmith');
@@ -50,6 +51,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   verboseOutputChannel = vscode.window.createOutputChannel('i18nsmith (Verbose)');
   context.subscriptions.push(verboseOutputChannel);
+  cliOutputChannel = vscode.window.createOutputChannel('i18nsmith CLI');
+  context.subscriptions.push(cliOutputChannel);
+  previewManager = new PreviewManager(cliOutputChannel);
 
   // Ensure .gitignore has i18nsmith artifacts listed (non-blocking)
   ensureGitignoreEntries();
@@ -73,7 +77,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize check integration (core CheckRunner without CLI subprocess)
   checkIntegration = new CheckIntegration();
-  syncIntegration = new SyncIntegration();
   diffPeekProvider = new DiffPeekProvider();
 
   // Initialize diagnostics manager
@@ -211,8 +214,8 @@ async function checkCurrentFile() {
       cancellable: false,
     },
     async () => {
-      const summary = await checkIntegration.checkFile(workspaceFolder.uri.fsPath, editor.document.uri.fsPath);
-      const fileIssues = summary.actionableItems.filter((item: any) => item.filePath === editor.document.uri.fsPath);
+  const summary = await checkIntegration.checkFile(workspaceFolder.uri.fsPath, editor.document.uri.fsPath);
+  const fileIssues = summary.actionableItems.filter((item) => item.filePath === editor.document.uri.fsPath);
       if (fileIssues.length === 0) {
         vscode.window.showInformationMessage('No i18n issues found in this file');
       } else {
@@ -225,22 +228,7 @@ async function checkCurrentFile() {
 }
 
 async function renameSuspiciousKey(originalKey: string, newKey: string) {
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage('No workspace folder found');
-    return;
-  }
-
-  const command = `i18nsmith rename-key ${quoteCliArg(originalKey)} ${quoteCliArg(newKey)} --write --json`;
-  await runCliCommand(command);
-}
-
-function quoteCliArg(value: string): string {
-  if (!value) {
-    return '""';
-  }
-  const escaped = value.replace(/(["\\])/g, '\\$1');
-  return `"${escaped}"`;
+  await runRenameCommand({ from: originalKey, to: newKey });
 }
 
 export function deactivate() {
@@ -257,6 +245,13 @@ interface SyncSelectionResult {
   unused: string[];
 }
 
+interface TranslatePreviewSummary {
+  provider: string;
+  dryRun: boolean;
+  plan: TranslationPlan;
+  totalCharacters: number;
+}
+
 async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {}) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -264,26 +259,28 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     return;
   }
 
-  if (!syncIntegration) {
-    syncIntegration = new SyncIntegration();
-  }
-
+  const manager = ensurePreviewManager();
   logVerbose(`runSync: Starting preview for ${options.targets?.length ?? 'all'} target(s)`);
 
-  const preview = await vscode.window.withProgress(
+  const previewArgs = buildSyncPreviewArgs(options.targets);
+  const previewResult = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: options.dryRunOnly ? 'i18nsmith: Gathering sync preview…' : 'i18nsmith: Preparing sync…',
       cancellable: false,
     },
-    () => syncIntegration!.run(workspaceFolder.uri.fsPath, {
-      write: false,
-      diff: true,
-      targets: options.targets,
-    })
+    () =>
+  manager.run<SyncSummary>({
+        kind: 'sync',
+        args: previewArgs,
+        workspaceRoot: workspaceFolder.uri.fsPath,
+        label: options.targets?.length ? 'sync --target preview' : 'sync preview',
+      })
   );
 
-  const summary = preview.summary;
+  const summary = previewResult.payload.summary;
+  const relativePreviewPath = path.relative(workspaceFolder.uri.fsPath, previewResult.previewPath);
+  logVerbose(`runSync: Preview complete (${relativePreviewPath})`);
   const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
 
   logVerbose(`runSync: Preview complete - ${summary.missingKeys.length} missing, ${summary.unusedKeys.length} unused`);
@@ -344,20 +341,22 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     }
   }
 
-  logVerbose(`runSync: Applying ${selection.missing.length} missing, ${selection.unused.length} unused`);
+  logVerbose(`runSync: Applying ${selection.missing.length} missing, ${selection.unused.length} unused via CLI preview apply`);
 
-  const writeResult = await vscode.window.withProgress(
+  const selectionFilePath = await writeSyncSelectionFile(workspaceFolder.uri.fsPath, selection);
+  const applyCommand = buildSyncApplyCommand(
+    previewResult.previewPath,
+    selectionFilePath,
+    workspaceFolder.uri.fsPath
+  );
+
+  await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: 'i18nsmith: Applying locale changes…',
       cancellable: false,
     },
-    () => syncIntegration!.run(workspaceFolder.uri.fsPath, {
-      write: true,
-      prune: selection.unused.length > 0,
-      selection,
-      targets: options.targets,
-    })
+    () => runCliCommand(applyCommand)
   );
 
   const added = selection.missing.length;
@@ -374,6 +373,38 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
   hoverProvider.clearCache();
   await reportWatcher.refresh();
   await smartScanner.scan('sync-complete');
+}
+
+function buildSyncPreviewArgs(targets?: string[]): string[] {
+  if (!targets?.length) {
+    return [];
+  }
+
+  const args: string[] = [];
+  for (const target of targets) {
+    args.push('--target', quoteCliArg(target));
+  }
+  return args;
+}
+
+function buildSyncApplyCommand(previewPath: string, selectionPath: string, workspaceRoot: string): string {
+  const previewArg = normalizeTargetForCli(previewPath, workspaceRoot);
+  const selectionArg = normalizeTargetForCli(selectionPath, workspaceRoot);
+  return [
+    'i18nsmith sync',
+    '--apply-preview',
+    quoteCliArg(previewArg),
+    '--selection-file',
+    quoteCliArg(selectionArg),
+  ].join(' ');
+}
+
+async function writeSyncSelectionFile(workspaceRoot: string, selection: SyncSelectionResult): Promise<string> {
+  const previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
+  await fs.promises.mkdir(previewDir, { recursive: true });
+  const filePath = path.join(previewDir, `sync-selection-${Date.now()}.json`);
+  await fs.promises.writeFile(filePath, JSON.stringify(selection, null, 2), 'utf8');
+  return filePath;
 }
 
 function showSyncDryRunSummary(summary: SyncSummary) {
@@ -462,58 +493,75 @@ async function transformCurrentFile() {
     return;
   }
 
-  const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
-  const transformer = new Transformer(config, { workspaceRoot: projectRoot });
   const absolutePath = editor.document.uri.fsPath;
-  const relativePath = path.relative(projectRoot, absolutePath) || absolutePath;
+  const relativeTarget = normalizeTargetForCli(absolutePath, workspaceFolder.uri.fsPath);
+  await runTransformCommand({
+    targets: [relativeTarget],
+    label: path.basename(editor.document.uri.fsPath),
+    workspaceFolder,
+  });
+}
 
-  logVerbose(`transformCurrentFile: Starting preview for ${relativePath}`);
-  logVerbose(`transformCurrentFile: Project root: ${projectRoot}`);
-  logVerbose(`transformCurrentFile: Absolute path: ${absolutePath}`);
+interface TransformRunOptions {
+  targets?: string[];
+  label?: string;
+  workspaceFolder?: vscode.WorkspaceFolder;
+}
 
-  const preview: TransformSummary = await vscode.window.withProgress(
+interface TranslateRunOptions {
+  locales?: string[];
+  provider?: string;
+  force?: boolean;
+  skipEmpty?: boolean;
+  strictPlaceholders?: boolean;
+  estimate?: boolean;
+}
+
+async function runTransformCommand(options: TransformRunOptions = {}) {
+  const workspaceFolder = options.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const manager = ensurePreviewManager();
+  const baseArgs = buildTransformTargetArgs(options.targets ?? []);
+  const label = options.label ?? (options.targets?.length === 1 ? options.targets[0] : 'workspace');
+
+  logVerbose(`runTransformCommand: Starting preview for ${label}`);
+
+  const previewResult = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: 'i18nsmith: Analyzing transform candidates…',
       cancellable: false,
     },
-    () => transformer.run({
-      write: false,
-      targets: [absolutePath],  // Pass absolute path instead of relative
-      diff: true,
-    })
+    () =>
+      manager.run<TransformSummary>({
+        kind: 'transform',
+        args: baseArgs,
+        workspaceRoot: workspaceFolder.uri.fsPath,
+        label: `transform preview (${label})`,
+      })
   );
 
-  // Include both 'pending' (new keys) and 'existing' (keys exist but code not yet transformed) candidates
-  const transformable = preview.candidates.filter((candidate: TransformCandidate) => 
-    candidate.status === 'pending' || candidate.status === 'existing'
+  const preview = previewResult.payload.summary;
+  const transformable = preview.candidates.filter(
+    (candidate: TransformCandidate) => candidate.status === 'pending' || candidate.status === 'existing'
   );
-  
-  logVerbose(`transformCurrentFile: Preview complete - ${transformable.length} transformable candidates`);
-  logVerbose(`transformCurrentFile: Total candidates: ${preview.candidates.length}`);
-  logVerbose(`transformCurrentFile: Files scanned: ${preview.filesScanned}`);
-  logVerbose(`transformCurrentFile: Files changed: ${preview.filesChanged.length}`);
-  logVerbose(`transformCurrentFile: Skipped files: ${preview.skippedFiles.length}`);
-  if (preview.skippedFiles.length > 0) {
-    preview.skippedFiles.forEach((sf: { filePath: string; reason: string }) => {
-      logVerbose(`  - Skipped: ${sf.filePath} (${sf.reason})`);
-    });
-  }
-  if (preview.candidates.length > 0) {
-    preview.candidates.forEach((c: TransformCandidate) => {
-      logVerbose(`  - Candidate: "${c.text}" => "${c.suggestedKey}" [${c.status}] ${c.reason || '(no reason)'}`);
-    });
-  } else {
-    logVerbose('  - No candidates found by Scanner');
-  }
+
+  logVerbose(`runTransformCommand: Preview complete - ${transformable.length} transformable candidates`);
+  logVerbose(`runTransformCommand: Preview stored at ${previewResult.previewPath}`);
   
   if (!transformable.length) {
-    let message = 'No transformable strings found in this file.';
-    if (preview.filesScanned === 0) {
-      message += '\n\n⚠️ File was not scanned. This might be because:';
+    let message = options.targets?.length === 1
+      ? 'No transformable strings found in the selected target.'
+      : 'No transformable strings found.';
+    if (preview.filesScanned === 0 && options.targets?.length === 1) {
+      message += '\n\n⚠️ Target was not scanned. This might be because:';
       message += '\n• The file is not in your i18n.config.json "include" patterns';
       message += '\n• The file extension is not supported (.tsx, .jsx, .ts, .js)';
-      message += `\n\nFile: ${relativePath}`;
+      message += `\n\nTarget: ${options.targets[0]}`;
       message += `\n\nTry adding the file pattern to your include array in i18n.config.json`;
     } else if (preview.skippedFiles.length > 0) {
       const skipped = preview.skippedFiles[0];
@@ -531,65 +579,246 @@ async function transformCurrentFile() {
     : ['Apply', 'Dry Run Only'];
   
   const choice = await vscode.window.showInformationMessage(
-    `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}?`,
+    `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${label}?`,
     { modal: true, detail },
     ...buttons
   );
 
   if (!choice) {
-    logVerbose('transformCurrentFile: User cancelled');
+    logVerbose('runTransformCommand: User cancelled');
     return;
   }
 
   if (choice === 'Preview Diff') {
-    logVerbose('transformCurrentFile: Showing diff preview');
-    await diffPeekProvider.showDiffPeek(editor, preview.diffs, 'Transform Preview');
+    logVerbose('runTransformCommand: Showing diff preview');
+  await showTransformDiff(preview);
     
-    // Ask again after preview
     const applyChoice = await vscode.window.showInformationMessage(
-      `Apply transform to ${path.basename(editor.document.uri.fsPath)}?`,
+      `Apply transform to ${label}?`,
       { modal: true, detail },
       'Apply',
       'Cancel'
     );
     
     if (applyChoice !== 'Apply') {
-      logVerbose('transformCurrentFile: User cancelled after viewing diff');
+      logVerbose('runTransformCommand: User cancelled after viewing diff');
       return;
     }
   } else if (choice === 'Dry Run Only') {
-    logVerbose('transformCurrentFile: Dry run only, showing preview');
+    logVerbose('runTransformCommand: Dry run only, showing preview');
     vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
     return;
   }
 
-  logVerbose(`transformCurrentFile: Applying ${transformable.length} transformations`);
+  logVerbose(`runTransformCommand: Applying ${transformable.length} transformations via CLI`);
 
-  const writeSummary: TransformSummary = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'i18nsmith: Applying transform…',
-      cancellable: false,
-    },
-    () => transformer.run({
-      write: true,
-      targets: [absolutePath],  // Use absolute path here too
-      diff: true,
-    })
-  );
-
-  const applied = writeSummary.candidates.filter((candidate: TransformCandidate) => candidate.status === 'applied').length;
-  
-  logVerbose(`transformCurrentFile: Write complete - ${applied} applied`);
-  
-  vscode.window.showInformationMessage(
-    `Applied ${applied} transformation${applied === 1 ? '' : 's'} in ${path.basename(editor.document.uri.fsPath)}.`,
-    { detail: formatTransformPreview(writeSummary) }
-  );
+  await runCliCommand(buildTransformWriteCommand(baseArgs));
 
   hoverProvider.clearCache();
   await reportWatcher.refresh();
-  await smartScanner.scan('transform-file');
+  await smartScanner.scan('transform');
+}
+
+async function showTransformDiff(summary: TransformSummary) {
+  if (!summary.diffs || summary.diffs.length === 0) {
+    vscode.window.showInformationMessage('No diffs available for preview.');
+    return;
+  }
+
+  let editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    const doc = await vscode.workspace.openTextDocument({ content: '', language: 'plaintext' });
+    editor = await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a file to show diff previews.');
+    return;
+  }
+
+  await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Transform Preview');
+}
+
+async function runRenameCommand(options: { from: string; to: string }) {
+  const { from, to } = options;
+  if (!from || !to || from === to) {
+    vscode.window.showWarningMessage('Provide distinct keys to rename.');
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const manager = ensurePreviewManager();
+  const args = buildRenameArgs(from, to);
+
+  logVerbose(`runRenameCommand: Previewing rename ${from} → ${to}`);
+
+  const previewResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Evaluating rename…',
+      cancellable: false,
+    },
+    () =>
+      manager.run<KeyRenameSummary>({
+        kind: 'rename-key',
+        args,
+        workspaceRoot: workspaceFolder.uri.fsPath,
+        label: `rename-key preview (${from} → ${to})`,
+      })
+  );
+
+  const summary = previewResult.payload.summary;
+  if (!summary.occurrences) {
+    vscode.window.showWarningMessage(`No usages of "${from}" were detected.`);
+    return;
+  }
+
+  const detail = formatRenamePreview(summary, from, to);
+  const buttons = summary.diffs?.length ? ['Apply', 'Show Diff', 'Dry Run Only'] : ['Apply', 'Dry Run Only'];
+  const choice = await vscode.window.showInformationMessage(
+    `Rename ${from} → ${to}?`,
+    { modal: true, detail },
+    ...buttons
+  );
+
+  if (!choice) {
+    logVerbose('runRenameCommand: User cancelled');
+    return;
+  }
+
+  if (choice === 'Show Diff') {
+    await showSourceDiffPreview(summary.diffs ?? [], 'Rename Preview');
+    const applyChoice = await vscode.window.showInformationMessage(
+      `Apply rename ${from} → ${to}?`,
+      { modal: true, detail },
+      'Apply',
+      'Cancel'
+    );
+    if (applyChoice !== 'Apply') {
+      return;
+    }
+  } else if (choice === 'Dry Run Only') {
+    vscode.window.showInformationMessage('Preview only. Run again and choose Apply to write changes.', { detail });
+    return;
+  }
+
+  await runCliCommand(buildRenameWriteCommand(from, to));
+  hoverProvider.clearCache();
+  await reportWatcher.refresh();
+  await smartScanner.scan('rename');
+}
+
+function formatRenamePreview(summary: KeyRenameSummary, from: string, to: string): string {
+  const lines: string[] = [];
+  lines.push(`• ${summary.occurrences} source occurrence${summary.occurrences === 1 ? '' : 's'}`);
+  lines.push(`• ${summary.filesUpdated.length} source file${summary.filesUpdated.length === 1 ? '' : 's'} to update`);
+  if (summary.localePreview.length) {
+    const duplicates = summary.localePreview.filter((preview) => preview.duplicate);
+    const missing = summary.localePreview.filter((preview) => preview.missing);
+    if (duplicates.length) {
+      const sample = duplicates.slice(0, 3).map((preview) => preview.locale).join(', ');
+      lines.push(`• ${duplicates.length} locale${duplicates.length === 1 ? '' : 's'} already have "${to}" (${sample}${duplicates.length > 3 ? '…' : ''})`);
+    }
+    if (missing.length) {
+      const sample = missing.slice(0, 3).map((preview) => preview.locale).join(', ');
+      lines.push(`• ${missing.length} locale${missing.length === 1 ? '' : 's'} are missing "${from}" (${sample}${missing.length > 3 ? '…' : ''})`);
+    }
+  }
+  if (summary.actionableItems.length) {
+    const highPriority = summary.actionableItems.slice(0, 3).map((item) => `• ${item.message}`);
+    lines.push(...highPriority);
+  }
+  return lines.join('\n');
+}
+
+async function showSourceDiffPreview(diffs: SourceFileDiffEntry[], title: string) {
+  if (!diffs.length) {
+    vscode.window.showInformationMessage('No source diffs available.');
+    return;
+  }
+
+  const lines: string[] = [`# ${title}`, ''];
+  for (const diff of diffs) {
+    lines.push(`## ${diff.relativePath}`);
+    lines.push('```diff');
+    lines.push(diff.diff.trim());
+    lines.push('```');
+    lines.push('');
+  }
+
+  const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'markdown' });
+  await vscode.window.showTextDocument(doc, { preview: true });
+}
+
+async function runTranslateCommand(options: TranslateRunOptions = {}) {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const manager = ensurePreviewManager();
+  const baseArgs = buildTranslateArgs(options);
+
+  logVerbose('runTranslateCommand: Starting preview');
+
+  const previewResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Gathering translation preview…',
+      cancellable: false,
+    },
+    () =>
+      manager.run<TranslatePreviewSummary>({
+        kind: 'translate',
+        args: baseArgs,
+        workspaceRoot: workspaceFolder.uri.fsPath,
+        label: 'translate preview',
+      })
+  );
+
+  const summary = previewResult.payload.summary;
+  if (!summary.plan?.totalTasks) {
+    vscode.window.showInformationMessage('No missing translations detected.');
+    return;
+  }
+
+  const detail = formatTranslatePreview(summary);
+  const choice = await vscode.window.showInformationMessage(
+    `Translate ${summary.plan.totalTasks} key${summary.plan.totalTasks === 1 ? '' : 's'} via ${summary.provider}?`,
+    { modal: true, detail },
+    'Apply',
+    'Dry Run Only'
+  );
+
+  if (!choice) {
+    logVerbose('runTranslateCommand: User cancelled');
+    return;
+  }
+
+  if (choice === 'Dry Run Only') {
+    vscode.window.showInformationMessage('Preview only. Run again and choose Apply to write changes.', { detail });
+    return;
+  }
+
+  await runCliCommand(buildTranslateWriteCommand(baseArgs));
+  hoverProvider.clearCache();
+  await reportWatcher.refresh();
+  await smartScanner.scan('translate');
+}
+
+function formatTranslatePreview(summary: TranslatePreviewSummary): string {
+  const lines: string[] = [];
+  const localePlans = summary.plan?.locales ?? [];
+  lines.push(`• ${summary.plan.totalTasks} task${summary.plan.totalTasks === 1 ? '' : 's'}`);
+  lines.push(`• ${localePlans.length} locale${localePlans.length === 1 ? '' : 's'} (${localePlans.map((plan) => `${plan.locale}: ${plan.tasks.length}`).slice(0, 3).join(', ')}${localePlans.length > 3 ? '…' : ''})`);
+  lines.push(`• ${summary.totalCharacters ?? summary.plan.totalCharacters} characters`);
+  return lines.join('\n');
 }
 
 function formatTransformPreview(summary: TransformSummary, limit = 5): string {
@@ -653,18 +882,30 @@ async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, tex
   vscode.window.showInformationMessage(`Extracted as '${key}'`);
 }
 
-function getDriftStatistics(report: any): { missing: number; unused: number } | null {
-  if (!report?.sync) {
+type DiagnosticsReport = {
+  sync?: {
+    missingKeys?: unknown[];
+    unusedKeys?: unknown[];
+  };
+};
+
+function getDriftStatistics(report: unknown): { missing: number; unused: number } | null {
+  if (!report || typeof report !== 'object' || report === null) {
     return null;
   }
-  
-  const missing = Array.isArray(report.sync.missingKeys) ? report.sync.missingKeys.length : 0;
-  const unused = Array.isArray(report.sync.unusedKeys) ? report.sync.unusedKeys.length : 0;
-  
+
+  const drift = (report as DiagnosticsReport).sync;
+  if (!drift) {
+    return null;
+  }
+
+  const missing = Array.isArray(drift.missingKeys) ? drift.missingKeys.length : 0;
+  const unused = Array.isArray(drift.unusedKeys) ? drift.unusedKeys.length : 0;
+
   if (missing === 0 && unused === 0) {
     return null;
   }
-  
+
   return { missing, unused };
 }
 
@@ -830,10 +1071,13 @@ async function showQuickActions() {
     if (choice.command.startsWith('i18nsmith.')) {
       await vscode.commands.executeCommand(choice.command);
     } else {
-      await runCliCommand(choice.command, {
-        interactive: choice.interactive,
-        confirmMessage: choice.confirmMessage,
-      });
+      const handled = await tryHandlePreviewableCommand(choice.command);
+      if (!handled) {
+        await runCliCommand(choice.command, {
+          interactive: choice.interactive,
+          confirmMessage: choice.confirmMessage,
+        });
+      }
     }
     return;
   }
@@ -900,6 +1144,277 @@ function isInteractiveCliCommand(command: string): boolean {
   return /\b(scaffold-adapter|init)\b/.test(command);
 }
 
+type PreviewableCommand =
+  | {
+      kind: 'sync' | 'transform';
+      targets?: string[];
+    }
+  | {
+      kind: 'rename-key';
+      from: string;
+      to: string;
+    }
+  | {
+      kind: 'translate';
+      options: TranslateRunOptions;
+    };
+
+async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean> {
+  const parsed = parsePreviewableCommand(rawCommand);
+  if (!parsed) {
+    return false;
+  }
+
+  if (parsed.kind === 'sync') {
+    await runSync({ targets: parsed.targets });
+    return true;
+  }
+
+  if (parsed.kind === 'transform') {
+    await runTransformCommand({ targets: parsed.targets });
+    return true;
+  }
+
+  if (parsed.kind === 'rename-key') {
+    await runRenameCommand({ from: parsed.from, to: parsed.to });
+    return true;
+  }
+
+  if (parsed.kind === 'translate') {
+    await runTranslateCommand(parsed.options);
+    return true;
+  }
+
+  return false;
+}
+
+function parsePreviewableCommand(rawCommand: string): PreviewableCommand | null {
+  const tokens = tokenizeCliCommand(rawCommand);
+  if (!tokens.length) {
+    return null;
+  }
+
+  const cliIndex = tokens.findIndex((token) => token === 'i18nsmith');
+  if (cliIndex === -1 || cliIndex + 1 >= tokens.length) {
+    return null;
+  }
+
+  const kind = tokens[cliIndex + 1];
+  const args = tokens.slice(cliIndex + 2);
+
+  if (kind === 'sync' || kind === 'transform') {
+    const targets = parseTargetArgs(args);
+    return {
+      kind,
+      targets: targets.length ? targets : undefined,
+    };
+  }
+
+  if (kind === 'rename-key') {
+    const renameArgs = parseRenameArgs(args);
+    if (!renameArgs) {
+      return null;
+    }
+    return { kind: 'rename-key', ...renameArgs };
+  }
+
+  if (kind === 'translate') {
+    const translateOptions = parseTranslateOptions(args);
+    if (!translateOptions) {
+      return null;
+    }
+    return { kind: 'translate', options: translateOptions };
+  }
+
+  return null;
+}
+
+function parseTargetArgs(args: string[]): string[] {
+  const targets: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--target' && args[i + 1]) {
+      targets.push(args[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--target=')) {
+      const value = arg.slice('--target='.length);
+      if (value) {
+        targets.push(value);
+      }
+    }
+  }
+  return targets;
+}
+
+function parseRenameArgs(args: string[]): { from: string; to: string } | null {
+  const positionals = args.filter((arg) => !arg.startsWith('-'));
+  if (positionals.length < 2) {
+    return null;
+  }
+  const [from, to] = positionals;
+  if (!from || !to || from === to) {
+    return null;
+  }
+  return { from, to };
+}
+
+function parseTranslateOptions(args: string[]): TranslateRunOptions | null {
+  const options: TranslateRunOptions = {};
+  const locales: string[] = [];
+
+  const addLocales = (value: string) => {
+    value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .forEach((locale) => locales.push(locale));
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (!token.startsWith('-')) {
+      continue;
+    }
+
+    if (token === '--write' || token === '--yes' || token === '-y') {
+      continue;
+    }
+
+    if (token === '--force') {
+      options.force = true;
+      continue;
+    }
+
+    if (token === '--estimate') {
+      options.estimate = true;
+      continue;
+    }
+
+    if (token === '--strict-placeholders') {
+      options.strictPlaceholders = true;
+      continue;
+    }
+
+    if (token === '--no-skip-empty') {
+      options.skipEmpty = false;
+      continue;
+    }
+
+    if (token === '--locales') {
+      const value = args[i + 1];
+      if (!value || value.startsWith('-')) {
+        return null;
+      }
+      addLocales(value);
+      i += 1;
+      continue;
+    }
+
+    if (token.startsWith('--locales=')) {
+      addLocales(token.slice('--locales='.length));
+      continue;
+    }
+
+    if (token === '--provider') {
+      const value = args[i + 1];
+      if (!value || value.startsWith('-')) {
+        return null;
+      }
+      options.provider = value;
+      i += 1;
+      continue;
+    }
+
+    if (token.startsWith('--provider=')) {
+      options.provider = token.slice('--provider='.length);
+      continue;
+    }
+
+    if (token === '--preview-output' || token.startsWith('--preview-output=')) {
+      return null;
+    }
+
+    if (token === '--report' || token.startsWith('--report=')) {
+      return null;
+    }
+
+    if (token === '--json') {
+      return null;
+    }
+
+    if (token === '--export' || token.startsWith('--export=')) {
+      return null;
+    }
+
+    if (token === '--import' || token.startsWith('--import=')) {
+      return null;
+    }
+
+    if (token === '--config' || token === '-c' || token.startsWith('--config=')) {
+      return null;
+    }
+
+    // Unknown option - bail so we delegate to raw CLI execution
+    if (token.startsWith('-')) {
+      return null;
+    }
+  }
+
+  if (locales.length) {
+    options.locales = locales;
+  }
+
+  return options;
+}
+
+function tokenizeCliCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+
+  const pushToken = () => {
+    if (current.length) {
+      tokens.push(current);
+      current = '';
+    }
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (quote) {
+      if (char === quote) {
+        pushToken();
+        quote = null;
+      } else if (char === '\\' && i + 1 < command.length) {
+        i += 1;
+        current += command[i];
+      } else {
+        current += char;
+      }
+    } else {
+      if (char === '"' || char === "'") {
+        quote = char;
+        if (current.length) {
+          pushToken();
+        }
+      } else if (/\s/.test(char)) {
+        pushToken();
+      } else {
+        current += char;
+      }
+    }
+  }
+
+  if (quote) {
+    pushToken();
+  }
+
+  pushToken();
+  return tokens;
+}
+
 async function runCliCommand(
   rawCommand: string,
   options: { interactive?: boolean; confirmMessage?: string } = {}
@@ -917,7 +1432,7 @@ async function runCliCommand(
     }
   }
 
-  const command = transformCliCommand(rawCommand);
+  const command = resolveCliCommand(rawCommand);
 
   if (options.interactive) {
     const terminal = ensureInteractiveTerminal(workspaceFolder.uri.fsPath);
@@ -961,21 +1476,75 @@ async function runCliCommand(
   });
 }
 
-function transformCliCommand(raw: string): string {
-  const trimmed = raw.trim();
-  const tokens = trimmed.split(/\s+/);
-  if (tokens[0] !== 'i18nsmith') {
-    return trimmed;
+function ensurePreviewManager(): PreviewManager {
+  if (!cliOutputChannel) {
+    cliOutputChannel = vscode.window.createOutputChannel('i18nsmith CLI');
   }
+  if (!previewManager) {
+    previewManager = new PreviewManager(cliOutputChannel);
+  }
+  return previewManager;
+}
 
-  const rest = tokens.slice(1).join(' ');
-  const config = vscode.workspace.getConfiguration('i18nsmith');
-  const cliPath = config.get<string>('cliPath', '');
-  if (cliPath) {
-    return rest ? `node "${cliPath}" ${rest}` : `node "${cliPath}"`;
+function normalizeTargetForCli(absolutePath: string, workspaceRoot: string): string {
+  const relative = path.relative(workspaceRoot, absolutePath);
+  if (!relative || relative.startsWith('..')) {
+    return absolutePath;
   }
-  // Use explicit @latest on npx fallback to avoid stale cache issues
-  return rest ? `npx i18nsmith@latest ${rest}` : 'npx i18nsmith@latest';
+  return relative.split(path.sep).join(path.posix.sep);
+}
+
+function buildTransformTargetArgs(targets: string | string[]): string[] {
+  const list = Array.isArray(targets) ? targets : [targets];
+  const args: string[] = [];
+  for (const target of list) {
+    if (!target) {
+      continue;
+    }
+    args.push('--target', quoteCliArg(target));
+  }
+  return args;
+}
+
+function buildTransformWriteCommand(baseArgs: string[]): string {
+  const parts = ['i18nsmith transform', ...baseArgs, '--write', '--json'].filter(Boolean);
+  return parts.join(' ');
+}
+
+function buildRenameArgs(from: string, to: string): string[] {
+  return [quoteCliArg(from), quoteCliArg(to), '--diff'];
+}
+
+function buildRenameWriteCommand(from: string, to: string): string {
+  return ['i18nsmith rename-key', quoteCliArg(from), quoteCliArg(to), '--write', '--json'].join(' ');
+}
+
+function buildTranslateArgs(options: TranslateRunOptions): string[] {
+  const args: string[] = [];
+  if (options.locales?.length) {
+    args.push('--locales', ...options.locales.map((locale) => quoteCliArg(locale)));
+  }
+  if (options.provider) {
+    args.push('--provider', quoteCliArg(options.provider));
+  }
+  if (options.force) {
+    args.push('--force');
+  }
+  if (options.skipEmpty === false) {
+    args.push('--no-skip-empty');
+  }
+  if (options.strictPlaceholders) {
+    args.push('--strict-placeholders');
+  }
+  if (options.estimate) {
+    args.push('--estimate');
+  }
+  return args;
+}
+
+function buildTranslateWriteCommand(baseArgs: string[]): string {
+  const parts = ['i18nsmith translate', ...baseArgs, '--write', '--yes', '--json'];
+  return parts.join(' ');
 }
 
 function ensureInteractiveTerminal(cwd: string): vscode.Terminal {
@@ -986,7 +1555,6 @@ function ensureInteractiveTerminal(cwd: string): vscode.Terminal {
 }
 
 async function insertIgnoreComment(uri: vscode.Uri, line: number, rule: string) {
-  const doc = await vscode.workspace.openTextDocument(uri);
   const edit = new vscode.WorkspaceEdit();
   const insertPos = new vscode.Position(Math.max(0, line), 0);
   const comment = `// i18n-ignore-next-line ${rule}\n`;
@@ -1040,8 +1608,7 @@ async function renameKeyAtCursor() {
     validateInput: (v) => (v.trim() ? undefined : 'Key cannot be empty'),
   });
   if (!newKey || newKey === key) return;
-  const cmd = `i18nsmith rename-key ${quoteCliArg(key)} ${quoteCliArg(newKey)} --write --json`;
-  await runCliCommand(cmd);
+  await runRenameCommand({ from: key, to: newKey });
 }
 
 function findKeyAtCursor(document: vscode.TextDocument, position: vscode.Position): string | null {
