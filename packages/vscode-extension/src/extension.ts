@@ -6,17 +6,19 @@ import { ReportWatcher } from './watcher';
 import { I18nHoverProvider } from './hover';
 import * as fs from 'fs';
 import * as path from 'path';
-import { I18nCodeActionProvider, addPlaceholderToLocale } from './codeactions';
+import * as os from 'os';
+import { I18nCodeActionProvider } from './codeactions';
 import { SmartScanner } from './scanner';
 import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { DiffPeekProvider } from './diff-peek';
-import { ensureGitignore } from '@i18nsmith/core';
+import { ensureGitignore, loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
 import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord, KeyRenameSummary, SourceFileDiffEntry, TranslationPlan } from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
 import { resolveCliCommand, quoteCliArg } from './cli-utils';
+import { executePreviewPlan, type PlannedChange } from './preview-flow';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -38,6 +40,7 @@ let diffPeekProvider: DiffPeekProvider;
 let verboseOutputChannel: vscode.OutputChannel;
 let cliOutputChannel: vscode.OutputChannel | undefined;
 let previewManager: PreviewManager | undefined;
+const fsp = fs.promises;
 
 function logVerbose(message: string) {
   const config = vscode.workspace.getConfiguration('i18nsmith');
@@ -138,9 +141,7 @@ export function activate(context: vscode.ExtensionContext) {
       statusBarManager.refresh();
     }),
     vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
-      await addPlaceholderToLocale(key, workspaceRoot);
-      hoverProvider.clearCache();
-      reportWatcher.refresh();
+      await addPlaceholderWithPreview(key, workspaceRoot);
     }),
     vscode.commands.registerCommand('i18nsmith.extractKey', async (uri: vscode.Uri, range: vscode.Range, text: string) => {
       await extractKeyFromSelection(uri, range, text);
@@ -840,8 +841,8 @@ function formatTransformPreview(summary: TransformSummary, limit = 5): string {
 
 async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, text: string) {
   const document = await vscode.workspace.openTextDocument(uri);
-  // Generate a key from the text (simple slug)
-  const suggestedKey = text
+  const selectionText = document.getText(range) || text;
+  const normalizedSelection = selectionText
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .trim()
@@ -850,7 +851,7 @@ async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, tex
 
   const key = await vscode.window.showInputBox({
     prompt: 'Enter the translation key',
-    value: `common.${suggestedKey}`,
+    value: `common.${normalizedSelection}`,
     placeHolder: 'e.g., common.greeting',
   });
 
@@ -858,28 +859,289 @@ async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, tex
     return;
   }
 
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri) ?? vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     vscode.window.showErrorMessage('No workspace folder found');
     return;
   }
 
-  // Add to locale file
-  await addPlaceholderToLocale(key, workspaceFolder.uri.fsPath);
+  let meta: Awaited<ReturnType<typeof loadConfigWithMeta>>;
+  try {
+    meta = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to load i18nsmith config: ${error}`);
+    return;
+  }
 
-  const wrapInJsx = shouldWrapSelectionInJsx(document, range, text);
+  const literalValue = normalizeSelectedLiteral(selectionText || text);
+  const wrapInJsx = shouldWrapSelectionInJsx(document, range, selectionText);
   const replacement = wrapInJsx ? `{t('${key}')}` : `t('${key}')`;
 
-  // Replace the selection with the translated call
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(document.uri, range, replacement);
-  await vscode.workspace.applyEdit(edit);
+  const sourceChange = await createSourceFilePreviewChange(document, range, replacement, workspaceFolder.uri.fsPath);
 
-  // Clear cache and refresh
+  const localeValues = new Map<string, string>();
+  const sourceLocale = meta.config.sourceLanguage ?? 'en';
+  localeValues.set(sourceLocale, literalValue);
+  const placeholderSeed = meta.config.sync?.seedValue ?? `[TODO: ${key}]`;
+  for (const locale of meta.config.targetLanguages ?? []) {
+    if (!locale || localeValues.has(locale)) {
+      continue;
+    }
+    localeValues.set(locale, placeholderSeed);
+  }
+
+  const localePlan = await createLocalePreviewPlan(meta, key, localeValues, { primaryLocale: sourceLocale });
+  if (!localePlan) {
+    await sourceChange.cleanup();
+    vscode.window.showWarningMessage(`Key '${key}' already exists in the configured locale files.`);
+    return;
+  }
+
+  const cleanupTasks = [sourceChange.cleanup, localePlan.cleanup];
+  const detailLines = [
+    `Key: ${key}`,
+    `Source file: ${sourceChange.relativePath}`,
+    `Locales: ${Array.from(localeValues.keys()).join(', ')}`,
+    ...localePlan.detailLines.slice(1),
+  ];
+
+  const applied = await executePreviewPlan({
+    title: 'Extract selection as translation key',
+    detail: detailLines.join('\n'),
+    changes: [sourceChange.change, ...localePlan.changes],
+    cleanup: async () => {
+      await Promise.all(cleanupTasks.map((fn) => fn().catch(() => {})));
+    },
+  });
+
+  if (!applied) {
+    return;
+  }
+
+  hoverProvider.clearCache();
+  reportWatcher.refresh();
+  vscode.window.showInformationMessage(`Extracted as '${key}'`);
+}
+
+async function addPlaceholderWithPreview(key: string, workspaceRoot?: string): Promise<void> {
+  const workspacePath = workspaceRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspacePath) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  let meta: Awaited<ReturnType<typeof loadConfigWithMeta>>;
+  try {
+    meta = await loadConfigWithMeta(undefined, { cwd: workspacePath });
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to load i18nsmith config: ${error}`);
+    return;
+  }
+
+  const sourceLocale = meta.config.sourceLanguage ?? 'en';
+  const targetLocales = meta.config.targetLanguages ?? [];
+  const locales = Array.from(new Set([sourceLocale, ...targetLocales].filter(Boolean))) as string[];
+
+  if (!locales.length) {
+    vscode.window.showWarningMessage('No locales defined in i18n.config.json.');
+    return;
+  }
+
+  const placeholderValue = meta.config.sync?.seedValue ?? `[TODO: ${key}]`;
+  const localeValues = new Map<string, string>();
+  for (const locale of locales) {
+    localeValues.set(locale, placeholderValue);
+  }
+
+  const localePlan = await createLocalePreviewPlan(meta, key, localeValues, { primaryLocale: sourceLocale });
+  if (!localePlan) {
+    vscode.window.showInformationMessage(`Key '${key}' already exists in the configured locale files.`);
+    return;
+  }
+
+  const detail = [`Key: ${key}`, ...localePlan.detailLines].join('\n');
+  const applied = await executePreviewPlan({
+    title: `Add placeholder for ${key}`,
+    detail,
+    changes: localePlan.changes,
+    cleanup: localePlan.cleanup,
+  });
+
+  if (!applied) {
+    return;
+  }
+
   hoverProvider.clearCache();
   reportWatcher.refresh();
 
-  vscode.window.showInformationMessage(`Extracted as '${key}'`);
+  if (localePlan.primaryLocalePath) {
+    const doc = await vscode.workspace.openTextDocument(localePlan.primaryLocalePath);
+    await vscode.window.showTextDocument(doc);
+  }
+
+  vscode.window.showInformationMessage(`Placeholder added for '${key}'`);
+}
+
+function normalizeSelectedLiteral(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return input;
+  }
+
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === '\'' || quote === '`') && trimmed.endsWith(quote)) {
+    return trimmed.slice(1, -1);
+  }
+
+  return input;
+}
+
+interface SourcePreviewPlan {
+  change: PlannedChange;
+  cleanup: () => Promise<void>;
+  relativePath: string;
+}
+
+async function createSourceFilePreviewChange(
+  document: vscode.TextDocument,
+  range: vscode.Range,
+  replacement: string,
+  workspaceRoot?: string
+): Promise<SourcePreviewPlan> {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-extract-source-'));
+  const baseName = path.basename(document.uri.fsPath) || 'source';
+  const beforePath = path.join(tempDir, `before-${baseName}`);
+  const afterPath = path.join(tempDir, `after-${baseName}`);
+  const beforeText = document.getText();
+  const startOffset = document.offsetAt(range.start);
+  const endOffset = document.offsetAt(range.end);
+  const afterText = beforeText.slice(0, startOffset) + replacement + beforeText.slice(endOffset);
+
+  await fsp.writeFile(beforePath, beforeText, 'utf8');
+  await fsp.writeFile(afterPath, afterText, 'utf8');
+
+  const relativePath = workspaceRoot ? path.relative(workspaceRoot, document.uri.fsPath) : document.uri.fsPath;
+
+  const change: PlannedChange = {
+    label: relativePath,
+    beforeUri: vscode.Uri.file(beforePath),
+    afterUri: vscode.Uri.file(afterPath),
+    summary: 'Source',
+    apply: async () => {
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(document.uri, range, replacement);
+      const success = await vscode.workspace.applyEdit(edit);
+      if (!success) {
+        throw new Error('Failed to update source file.');
+      }
+    },
+  };
+
+  const cleanup = async () => {
+    await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  };
+
+  return { change, cleanup, relativePath };
+}
+
+interface LocalePreviewPlanResult {
+  changes: PlannedChange[];
+  cleanup: () => Promise<void>;
+  detailLines: string[];
+  primaryLocalePath?: string;
+}
+
+async function createLocalePreviewPlan(
+  meta: Awaited<ReturnType<typeof loadConfigWithMeta>>,
+  key: string,
+  localeValues: Map<string, string>,
+  options: { primaryLocale?: string } = {}
+): Promise<LocalePreviewPlanResult | null> {
+  if (!localeValues.size) {
+    return null;
+  }
+
+  const localesDir = path.join(meta.projectRoot, meta.config.localesDir ?? 'locales');
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-locale-preview-'));
+  const previewLocalesDir = path.join(tempRoot, 'locales');
+  await fsp.mkdir(previewLocalesDir, { recursive: true });
+
+  const store = new LocaleStore(previewLocalesDir, {
+    format: meta.config.locales?.format ?? 'auto',
+    delimiter: meta.config.locales?.delimiter ?? '.',
+    sortKeys: meta.config.locales?.sortKeys ?? 'alphabetical',
+  });
+
+  const beforeSnapshots = new Map<string, string>();
+
+  for (const locale of localeValues.keys()) {
+    const originalPath = path.join(localesDir, `${locale}.json`);
+    let originalContent: string;
+    try {
+      originalContent = await fsp.readFile(originalPath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        originalContent = '{}\n';
+      } else {
+        await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+        throw error;
+      }
+    }
+
+    beforeSnapshots.set(locale, originalContent);
+    const previewPath = path.join(previewLocalesDir, `${locale}.json`);
+    await fsp.mkdir(path.dirname(previewPath), { recursive: true });
+    await fsp.writeFile(previewPath, originalContent, 'utf8');
+  }
+
+  for (const [locale, value] of localeValues) {
+    await store.upsert(locale, key, value);
+  }
+  await store.flush();
+
+  const changes: PlannedChange[] = [];
+  const detailLines: string[] = ['Locale files:'];
+
+  for (const locale of localeValues.keys()) {
+    const previewPath = path.join(previewLocalesDir, `${locale}.json`);
+    const afterContent = await fsp.readFile(previewPath, 'utf8');
+    const beforeContent = beforeSnapshots.get(locale) ?? '{}\n';
+    if (beforeContent === afterContent) {
+      continue;
+    }
+
+    const beforePath = path.join(previewLocalesDir, `${locale}.before.json`);
+    await fsp.writeFile(beforePath, beforeContent, 'utf8');
+
+    const targetPath = path.join(localesDir, `${locale}.json`);
+    const relativeLabel = path.relative(meta.projectRoot, targetPath);
+    detailLines.push(`• ${relativeLabel}`);
+
+    changes.push({
+      label: relativeLabel,
+      beforeUri: vscode.Uri.file(beforePath),
+      afterUri: vscode.Uri.file(previewPath),
+      summary: locale,
+      apply: async () => {
+        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+        await fsp.writeFile(targetPath, afterContent, 'utf8');
+      },
+    });
+  }
+
+  if (!changes.length) {
+    await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    return null;
+  }
+
+  const cleanup = async () => {
+    await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  };
+
+  const primaryLocale = options.primaryLocale;
+  const primaryLocalePath = primaryLocale ? path.join(localesDir, `${primaryLocale}.json`) : undefined;
+
+  return { changes, cleanup, detailLines, primaryLocalePath };
 }
 
 type DiagnosticsReport = {
