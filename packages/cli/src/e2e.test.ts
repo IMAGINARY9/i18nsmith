@@ -9,6 +9,7 @@ import path from 'path';
 import os from 'os';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { ensureCliBuilt } from './test-helpers/ensure-cli-built';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,17 +85,8 @@ function extractJson<T>(output: string): T {
   return JSON.parse(jsonMatch[0]);
 }
 
-beforeAll(() => {
-  const cliRoot = path.resolve(__dirname, '..');
-  const result = spawnSync('pnpm', ['build'], {
-    cwd: cliRoot,
-    stdio: 'inherit',
-    env: { ...process.env },
-  });
-
-  if (result.status !== 0) {
-    throw new Error('Failed to build CLI before running E2E tests');
-  }
+beforeAll(async () => {
+  await ensureCliBuilt(CLI_PATH);
 });
 
 describe('E2E Fixture Tests', () => {
