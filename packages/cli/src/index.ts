@@ -15,6 +15,7 @@ import { registerBackup } from './commands/backup.js';
 import { registerRename } from './commands/rename.js';
 import { registerInstallHooks } from './commands/install-hooks.js';
 import { registerConfig } from './commands/config.js';
+import { registerReview } from './commands/review.js';
 
 export const program = new Command();
 
@@ -38,6 +39,7 @@ registerBackup(program);
 registerRename(program);
 registerInstallHooks(program);
 registerConfig(program);
+registerReview(program);
 
 
 program.parse();

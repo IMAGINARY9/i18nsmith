@@ -154,6 +154,23 @@ export interface I18nConfig {
    */
   minTextLength?: number;
   /**
+   * Extraction-related configuration (heuristics for detecting translatable text)
+   */
+  extraction?: {
+    /** Minimum number of unicode letters required to consider text translatable (default: 1) */
+    minLetterCount?: number;
+    /** Minimum ratio of letters to total characters to consider text translatable (default: 0.25) */
+    minLetterRatio?: number;
+    /** Preserve newline characters when normalizing text (default: false) */
+    preserveNewlines?: boolean;
+    /** Decode HTML entities like &amp;, &apos;, &#10; before processing (default: true) */
+    decodeHtmlEntities?: boolean;
+    /** Regex patterns that should always be treated as translatable (bypass heuristics) */
+    allowPatterns?: string[];
+    /** Regex patterns that should always be skipped (override heuristics) */
+    denyPatterns?: string[];
+  };
+  /**
    * Translation service configuration
    */
   translation?: TranslationConfig;

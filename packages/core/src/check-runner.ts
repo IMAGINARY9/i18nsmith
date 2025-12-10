@@ -77,7 +77,16 @@ export class CheckRunner {
 
     // Scan for hardcoded text candidates (unless explicitly disabled)
     const scanHardcoded = options.scanHardcoded ?? true;
-    let scan: ScanSummary = { filesScanned: 0, filesExamined: [], candidates: [] };
+    let scan: ScanSummary = {
+      filesScanned: 0,
+      filesExamined: [],
+      candidates: [],
+      buckets: {
+        highConfidence: [],
+        needsReview: [],
+        skipped: [],
+      },
+    };
     if (scanHardcoded) {
       const scanner = new Scanner(this.config, { workspaceRoot: this.workspaceRoot });
       scan = options.targets?.length
@@ -144,13 +153,6 @@ function candidateToActionable(candidate: ScanCandidate): ActionableItem {
   };
 }
 
-interface SuggestedCommandContext {
-  report: DiagnosisReport;
-  sync: SyncSummary;
-  scan: ScanSummary;
-  config: I18nConfig;
-}
-
 function buildSuggestedCommands(
   report: DiagnosisReport,
   sync: SyncSummary,
@@ -158,7 +160,6 @@ function buildSuggestedCommands(
   config: I18nConfig,
   workspaceRoot: string
 ): CheckSuggestedCommand[] {
-  const ctx: SuggestedCommandContext = { report, sync, scan, config };
   const items: CheckSuggestedCommand[] = [];
   const diagKinds = new Set(report.actionableItems.map((item) => item.kind));
 
@@ -172,8 +173,6 @@ function buildSuggestedCommands(
   const hasCustomAdapter = !isDefaultAdapter;
   
   // Adapter files exist that we detected
-  const hasExistingAdapter = report.adapterFiles.length > 0;
-  
   // Runtime package is installed (react-i18next, i18next, etc.)
   const hasRuntimePackage = report.runtimePackages.length > 0;
   
