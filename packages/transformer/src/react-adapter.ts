@@ -174,6 +174,21 @@ export function ensureUseTranslationBinding(fn: FunctionLike, hookName: string) 
   body.insertStatements(0, `const { t } = ${hookName}();`);
 }
 
+export function ensureClientDirective(sourceFile: SourceFile) {
+  const statements = sourceFile.getStatements();
+  const hasClientDirective = statements.some((statement) => {
+    if (isDirectiveStatement(statement)) {
+      const text = statement.getText();
+      return text.includes('use client');
+    }
+    return false;
+  });
+
+  if (!hasClientDirective) {
+    sourceFile.insertStatements(0, "'use client';");
+  }
+}
+
 export function findNearestFunctionScope(node: Node): FunctionLike | undefined {
   return node.getFirstAncestor((ancestor) =>
     Node.isFunctionDeclaration(ancestor) ||
