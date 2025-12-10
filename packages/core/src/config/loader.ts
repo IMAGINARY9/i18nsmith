@@ -7,6 +7,7 @@ import path from 'path';
 import type { I18nConfig, LoadConfigResult } from './types.js';
 import { normalizeConfig } from './normalizer.js';
 import { DEFAULT_CONFIG_FILENAME } from './defaults.js';
+import { inferConfig } from './inference.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // File System Utilities
@@ -48,7 +49,7 @@ async function findUp(filename: string, cwd: string): Promise<string | null> {
 /**
  * Load and parse a config file from a specific path.
  */
-async function loadConfigFromPath(resolvedPath: string): Promise<I18nConfig> {
+async function readConfigFile(resolvedPath: string): Promise<Partial<I18nConfig>> {
   let fileContents: string;
 
   try {
@@ -70,7 +71,7 @@ async function loadConfigFromPath(resolvedPath: string): Promise<I18nConfig> {
     );
   }
 
-  return normalizeConfig(parsed);
+  return parsed;
 }
 
 /**
@@ -105,8 +106,10 @@ export async function loadConfigWithMeta(
     }
   }
 
-  const config = await loadConfigFromPath(resolvedPath);
+  const rawConfig = await readConfigFile(resolvedPath);
   const projectRoot = path.dirname(resolvedPath);
+  const enriched = await inferConfig(rawConfig, { projectRoot });
+  const config = normalizeConfig(enriched);
 
   return {
     config,

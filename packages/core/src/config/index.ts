@@ -67,3 +67,5 @@ export {
   loadConfig,
   loadConfigWithMeta,
 } from './loader.js';
+
+export { inferConfig } from './inference.js';
