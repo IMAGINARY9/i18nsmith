@@ -215,6 +215,41 @@ describe('Transformer', () => {
     expect(updatedFile).not.toContain('react-i18next');
   });
 
+  it('preserves package name imports', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-package-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Component.tsx');
+    const initial = `export const Component = () => <span>Package test</span>;`;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+      translationAdapter: {
+        module: 'react-i18next',
+        hookName: 'useTranslation',
+      },
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toContain('from "react-i18next"');
+    expect(updatedFile).not.toContain('../');
+  });
+
   it('migrates text-as-key call expressions and preserves existing locale values', async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-migrate-calls-'));
     const srcDir = path.join(tempDir, 'src');

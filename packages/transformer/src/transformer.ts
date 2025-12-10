@@ -18,6 +18,7 @@ import {
 } from '@i18nsmith/core';
 import {
   detectExistingTranslationImport,
+  ensureClientDirective,
   ensureUseTranslationBinding,
   ensureUseTranslationImport,
   findNearestFunctionScope,
@@ -154,6 +155,7 @@ export class Transformer {
 
           if (write) {
             ensureUseTranslationBinding(scope, adapterForFile.hookName);
+            ensureClientDirective(sourceFile);
             this.applyCandidate(candidate);
             candidate.status = 'applied';
             filesChanged.set(candidate.filePath, sourceFile);
@@ -400,11 +402,16 @@ export class Transformer {
     return Array.from(variants).filter(Boolean);
   }
 
-  private getRelativeModulePath(absoluteModulePath: string, sourceFilePath: string): string {
+  private getRelativeModulePath(moduleSpecifier: string, sourceFilePath: string): string {
+    // If it's an alias (starts with @/) or a package name (no ./ or /), return as is
+    if (moduleSpecifier.startsWith('@/') || (!moduleSpecifier.startsWith('.') && !path.isAbsolute(moduleSpecifier))) {
+      return moduleSpecifier;
+    }
+
     // Convert the module path to absolute path (whether it starts with . or not)
-    const absoluteModuleFullPath = path.isAbsolute(absoluteModulePath) 
-      ? absoluteModulePath 
-      : path.resolve(this.workspaceRoot, absoluteModulePath);
+    const absoluteModuleFullPath = path.isAbsolute(moduleSpecifier) 
+      ? moduleSpecifier 
+      : path.resolve(this.workspaceRoot, moduleSpecifier);
     
     // Convert to relative path from the source file's directory
     const sourceDir = path.dirname(sourceFilePath);
