@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { KeyGenerator, loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
+import { KeyGenerator } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -248,34 +248,6 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     return null;
-  }
-}
-
-/**
- * Add a placeholder key to the source locale file
- */
-export async function addPlaceholderToLocale(key: string, workspaceRoot: string): Promise<void> {
-  try {
-    const { config, projectRoot } = await loadConfigWithMeta(undefined, { cwd: workspaceRoot });
-    const localesDir = path.join(projectRoot, config.localesDir ?? 'locales');
-    const store = new LocaleStore(localesDir, {
-      format: config.locales?.format ?? 'auto',
-      delimiter: config.locales?.delimiter ?? '.',
-      sortKeys: config.locales?.sortKeys ?? 'alphabetical',
-    });
-
-    const sourceLanguage = config.sourceLanguage ?? 'en';
-    const seed = config.sync?.seedValue ?? `[TODO: ${key}]`;
-    await store.upsert(sourceLanguage, key, seed);
-    await store.flush();
-
-    vscode.window.showInformationMessage(`Added placeholder for '${key}' to ${sourceLanguage}.json`);
-
-    const localePath = path.join(localesDir, `${sourceLanguage}.json`);
-    const doc = await vscode.workspace.openTextDocument(localePath);
-    await vscode.window.showTextDocument(doc);
-  } catch (error) {
-    vscode.window.showErrorMessage(`Failed to add placeholder: ${error}`);
   }
 }
 
