@@ -16,6 +16,8 @@ export interface PreviewPlan {
 }
 
 export async function executePreviewPlan(plan: PreviewPlan): Promise<boolean> {
+  console.log("[i18nsmith] executePreviewPlan called with title:", plan.title);
+
   if (!plan.changes.length) {
     vscode.window.showInformationMessage(`${plan.title}: no changes required.`);
     if (plan.cleanup) {
@@ -30,8 +32,7 @@ export async function executePreviewPlan(plan: PreviewPlan): Promise<boolean> {
     const previewChoice = await vscode.window.showInformationMessage(
       `${plan.title} – review ${plan.changes.length} file${plan.changes.length === 1 ? '' : 's'}`,
       { modal: true, detail },
-      'Preview Changes',
-      'Cancel'
+      'Preview Changes'
     );
 
     if (previewChoice !== 'Preview Changes') {
@@ -51,8 +52,7 @@ export async function executePreviewPlan(plan: PreviewPlan): Promise<boolean> {
     const applyChoice = await vscode.window.showInformationMessage(
       `Apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}?`,
       { modal: true, detail },
-      'Apply Changes',
-      'Cancel'
+      'Apply Changes'
     );
 
     if (applyChoice !== 'Apply Changes') {

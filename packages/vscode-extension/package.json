@@ -41,7 +41,7 @@
       },
       {
         "command": "i18nsmith.sync",
-        "title": "i18nsmith: Sync Locales (Dry Run)"
+        "title": "i18nsmith: Sync Locales (Preview & Apply)"
       },
       {
         "command": "i18nsmith.syncFile",

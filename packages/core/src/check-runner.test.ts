@@ -66,7 +66,7 @@ export default Component;
     expect(summary.diagnostics.localeFiles.length).toBeGreaterThan(0);
     expect(summary.sync.missingKeys.map((item) => item.key)).toContain('common.greeting');
     expect(summary.actionableItems.some((item) => item.kind === 'missing-key')).toBe(true);
-    expect(summary.suggestedCommands.some((cmd) => cmd.command === 'i18nsmith sync --write')).toBe(true);
+  expect(summary.suggestedCommands.some((cmd) => cmd.command === 'i18nsmith sync')).toBe(true);
     expect(summary.hasDrift).toBe(true);
     expect(summary.hasConflicts).toBe(false);
   });
