@@ -193,7 +193,7 @@ function buildSuggestedCommands(
     const relevantFiles = [...new Set(scan.candidates.map((c) => c.filePath))].slice(0, 5);
     add({
       label: 'Extract hardcoded text',
-      command: 'i18nsmith transform --write',
+      command: 'i18nsmith transform',
       reason: `${scan.candidates.length} hardcoded string${scan.candidates.length === 1 ? '' : 's'} found that should be translated`,
       severity: 'warn',
       category: 'extraction',
@@ -202,7 +202,7 @@ function buildSuggestedCommands(
     });
   }
 
-  // Only suggest sync --write if it will actually do something
+  // Only suggest sync actions if they will actually do something
   const hasMissingKeys = sync.missingKeys.length > 0;
   const hasUnusedKeys = sync.unusedKeys.length > 0;
   
@@ -210,7 +210,7 @@ function buildSuggestedCommands(
     const missingKeyFiles = [...new Set(sync.missingKeys.flatMap((k) => k.references.map((r) => r.filePath)))].slice(0, 5);
     add({
       label: 'Apply locale fixes',
-      command: 'i18nsmith sync --write --prune',
+      command: 'i18nsmith sync --prune',
       reason: `${sync.missingKeys.length} missing key(s) to add, ${sync.unusedKeys.length} unused key(s) to remove`,
       severity: 'error',
       category: 'sync',
@@ -221,7 +221,7 @@ function buildSuggestedCommands(
     const relevantFiles = [...new Set(sync.missingKeys.flatMap((k) => k.references.map((r) => r.filePath)))].slice(0, 5);
     add({
       label: 'Add missing keys',
-      command: 'i18nsmith sync --write',
+      command: 'i18nsmith sync',
       reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files`,
       severity: 'error',
       category: 'sync',
@@ -231,7 +231,7 @@ function buildSuggestedCommands(
   } else if (hasUnusedKeys) {
     add({
       label: 'Prune unused keys',
-      command: 'i18nsmith sync --write --prune',
+      command: 'i18nsmith sync --prune',
       reason: `${sync.unusedKeys.length} key(s) in locale files but not used in code`,
       severity: 'warn',
       category: 'sync',
@@ -242,7 +242,7 @@ function buildSuggestedCommands(
   if (sync.placeholderIssues.length) {
     add({
       label: 'Fix placeholder mismatches',
-      command: 'i18nsmith sync --write --validate-interpolations',
+      command: 'i18nsmith sync --validate-interpolations',
       reason: `${sync.placeholderIssues.length} placeholder mismatch(es) detected across locales`,
       severity: 'error',
       category: 'validation',
@@ -258,7 +258,7 @@ function buildSuggestedCommands(
       // User has a translation provider configured, suggest auto-translate
       add({
         label: 'Fill empty translations',
-        command: 'i18nsmith translate --write --yes',
+        command: 'i18nsmith translate',
         reason: `${sync.emptyValueViolations.length} empty translation value(s) in ${emptyLocales.join(', ')}`,
         severity: 'warn',
         category: 'translation',
@@ -280,7 +280,7 @@ function buildSuggestedCommands(
   if (diagKinds.has('diagnostics-missing-source-locale') || diagKinds.has('diagnostics-missing-target-locales')) {
     add({
       label: 'Create missing locale files',
-      command: 'i18nsmith sync --write --seed-target-locales',
+      command: 'i18nsmith sync --seed-target-locales',
       reason: 'One or more locale files are missing from the locales directory',
       severity: 'error',
       category: 'setup',
@@ -345,7 +345,7 @@ function buildSuggestedCommands(
       const suggestedKey = buildSuspiciousKeySuggestion(warning, config, workspaceRoot);
       add({
         label: `Rename suspicious key "${warning.key}"`,
-        command: `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(suggestedKey)} --write`,
+        command: `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(suggestedKey)}`,
         reason: `Suspicious key format (${warning.reason}). Rename to ${suggestedKey} for consistency.`,
         severity: 'info',
         category: 'quality',

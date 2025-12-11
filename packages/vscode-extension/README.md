@@ -39,12 +39,13 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) —
 
 ### Sync just the active file (`i18nsmith.syncFile`)
 1. Open the source file you want to audit in VS Code.
-2. Run **Command Palette → “i18nsmith: Sync Current File”** (also available via editor context menu or Quick Actions).
-3. The extension runs a **dry-run Syncer** scoped to that file and shows a QuickPick grouped by:
-  - `$(diff-added)` entries for missing keys (pre-selected).
-  - `$(diff-removed)` entries for unused keys (opt-in by toggling).
-4. Adjust selections as needed, then confirm. The extension re-runs Syncer with `write: true`, applies the chosen additions/removals, and refreshes diagnostics/hover caches automatically.
-5. Use the Output channel for verbose logs if you enabled verbose logging.
+2. Run **Command Palette → "i18nsmith: Sync Current File"** (also available via editor context menu or Quick Actions).
+3. The extension runs a **preview sync** scoped to that file and shows a QuickPick grouped by:
+  - **Missing keys** (pre-selected for addition): Shows count and sample references
+  - **Unused keys** (opt-in by toggling): Shows affected locales
+4. Adjust selections as needed, then confirm. The extension shows a **mandatory diff preview** of the locale file changes, then asks for final confirmation before applying.
+5. Changes are applied via CLI `--apply-preview`, diagnostics/hover caches refresh automatically.
+6. Use the Output channel for verbose logs if you enabled verbose logging.
 
 ### Transform the active file (`i18nsmith.transformFile`)
 1. Place the cursor in the file you want to migrate and open the **Command Palette → “i18nsmith: Transform Current File.”**
@@ -57,13 +58,11 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) —
 
 Both **Sync** and **Transform** workflows support inline diff previews:
 
-- **When available**: After selecting changes to apply, you'll see a **"Preview Diff"** button
-- **What it shows**: A formatted view of locale file changes in a separate editor tab:
-  - Summary statistics (additions, updates, removals)
-  - Per-locale unified diffs showing exact JSON changes
-  - Easy-to-read format with syntax highlighting
-- **Workflow**: Preview → Confirm → Apply, or skip preview and apply directly
-- **Use case**: Review large changesets before committing to ensure correctness
+- **Sync Current File**: After selecting changes in the QuickPick, a diff peek view automatically opens showing the exact locale file changes. Confirm to apply or cancel to abort.
+- **Transform Current File**: Shows a diff preview of source code and locale changes before applying.
+- **Extract Selection**: Opens diff tabs for every modified file (source + locales) with full context.
+- **What it shows**: Unified diffs with syntax highlighting, additions/removals clearly marked.
+- **Workflow**: Preview → Confirm → Apply (no "skip preview" option for safety)
 
 ## Quick Actions Menu
 
@@ -133,7 +132,7 @@ npm run watch
 
 ## Bundle Size
 
-Latest dev build (esbuild) recorded a **17.6 MB** `dist/extension.js` when running `pnpm --filter i18nsmith-vscode run compile` on 2025‑12‑02 after embedding Syncer + Transformer integrations.
+Latest dev build (esbuild) recorded a **12.2 MB** `dist/extension.js` when running `pnpm --filter i18nsmith-vscode run compile` on 2025‑12‑11 after embedding Syncer + Transformer integrations.
 
 ## How It Works
 

@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { I18nCodeActionProvider } from './codeactions';
-import { SmartScanner } from './scanner';
+import { SmartScanner, type ScanResult } from './scanner';
 import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
@@ -22,7 +22,8 @@ import { executePreviewPlan, type PlannedChange } from './preview-flow';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
-  builtin?: 'extract-selection' | 'run-check' | 'sync-dry-run' | 'refresh' | 'show-output';
+  previewIntent?: PreviewableCommand;
+  builtin?: 'extract-selection' | 'run-check' | 'refresh' | 'show-output';
   interactive?: boolean;
   confirmMessage?: string;
 }
@@ -47,6 +48,125 @@ function logVerbose(message: string) {
   if (config.get<boolean>('enableVerboseLogging', false)) {
     verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
   }
+}
+
+async function refreshDiagnosticsWithMessage(source: 'command' | 'quick-action' = 'command') {
+  hoverProvider.clearCache();
+  await reportWatcher.refresh();
+  statusBarManager.refresh();
+
+  const message = buildDiagnosticsRefreshMessage();
+  if (message) {
+    vscode.window.setStatusBarMessage(message, source === 'command' ? 5000 : 3500);
+  }
+}
+
+function buildDiagnosticsRefreshMessage(): string | null {
+  const report = diagnosticsManager?.getReport?.();
+  if (!report) {
+    return '$(symbol-event) i18nsmith: Diagnostics refreshed.';
+  }
+
+  const actionableItems =
+    (report.actionableItems?.length ?? 0) +
+    (report.diagnostics?.actionableItems?.length ?? 0) +
+    (report.sync?.actionableItems?.length ?? 0);
+  const suggestions = report.suggestedCommands?.length ?? 0;
+  const missing = report.sync?.missingKeys?.length ?? 0;
+  const unused = report.sync?.unusedKeys?.length ?? 0;
+
+  const parts: string[] = ['$(symbol-event) i18nsmith: Diagnostics refreshed'];
+  parts.push(`• ${actionableItems} issue${actionableItems === 1 ? '' : 's'}`);
+  if (suggestions) {
+    parts.push(`• ${suggestions} suggestion${suggestions === 1 ? '' : 's'}`);
+  }
+  if (missing || unused) {
+    parts.push(`• Drift: ${missing} missing / ${unused} unused`);
+  }
+  return parts.join('  ');
+}
+
+async function runHealthCheckWithSummary(options: { revealOutput?: boolean } = {}) {
+  if (!smartScanner) {
+    return;
+  }
+
+  if (options.revealOutput) {
+    smartScanner.showOutput();
+  }
+
+  const result = await smartScanner.scan('manual');
+  await reportWatcher?.refresh();
+  await showHealthCheckSummary(result);
+}
+
+async function showHealthCheckSummary(result: ScanResult | null) {
+  if (!smartScanner) {
+    return;
+  }
+
+  const summary = buildHealthCheckSummary(result);
+  if (!summary) {
+    return;
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    summary.title,
+    { detail: summary.detail },
+    'View Quick Actions',
+    'Show Output'
+  );
+
+  if (choice === 'View Quick Actions') {
+    await vscode.commands.executeCommand('i18nsmith.actions');
+    return;
+  }
+
+  if (choice === 'Show Output') {
+    smartScanner.showOutput();
+  }
+}
+
+function buildHealthCheckSummary(result: ScanResult | null): { title: string; detail: string } | null {
+  const report = diagnosticsManager?.getReport?.();
+  const actionableItems = [
+    ...(report?.actionableItems ?? []),
+    ...(report?.diagnostics?.actionableItems ?? []),
+    ...(report?.sync?.actionableItems ?? []),
+  ];
+
+  const filesWithIssues = new Set(
+    actionableItems
+      .map((item) => item.filePath)
+      .filter((filePath): filePath is string => Boolean(filePath))
+  );
+
+  const missingKeys = report?.sync?.missingKeys?.length ?? 0;
+  const unusedKeys = report?.sync?.unusedKeys?.length ?? 0;
+  const suggestionCount = report?.suggestedCommands?.length ?? 0;
+  const issueCount = actionableItems.length || result?.issueCount || 0;
+
+  const title = issueCount
+    ? `i18nsmith health check: ${issueCount} issue${issueCount === 1 ? '' : 's'} detected`
+    : 'i18nsmith health check: No issues detected';
+
+  const details: string[] = [];
+  details.push(`• ${issueCount} actionable item${issueCount === 1 ? '' : 's'}`);
+  if (filesWithIssues.size) {
+    details.push(`• ${filesWithIssues.size} file${filesWithIssues.size === 1 ? '' : 's'} with diagnostics`);
+  }
+  if (missingKeys || unusedKeys) {
+    details.push(`• Locale drift: ${missingKeys} missing / ${unusedKeys} unused keys`);
+  }
+  if (suggestionCount) {
+    details.push(`• ${suggestionCount} recommended action${suggestionCount === 1 ? '' : 's'} ready in Quick Actions`);
+  }
+  if (result?.timestamp) {
+    details.push(`• Completed at ${result.timestamp.toLocaleTimeString()}`);
+  }
+  details.push('Select “View Quick Actions” to start fixing the highest-priority issues.');
+
+  return { title, detail: details.join('\n') };
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -126,8 +246,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Register commands
   context.subscriptions.push(
     vscode.commands.registerCommand('i18nsmith.check', async () => {
-      smartScanner.showOutput();
-      await smartScanner.scan('manual');
+      await runHealthCheckWithSummary({ revealOutput: true });
     }),
     vscode.commands.registerCommand('i18nsmith.sync', async () => {
       await runSync({ dryRunOnly: false });
@@ -135,10 +254,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.syncFile', async () => {
       await syncCurrentFile();
     }),
-    vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', () => {
-      hoverProvider.clearCache();
-      reportWatcher.refresh();
-      statusBarManager.refresh();
+    vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', async () => {
+      await refreshDiagnosticsWithMessage('command');
     }),
     vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
       await addPlaceholderWithPreview(key, workspaceRoot);
@@ -180,6 +297,8 @@ export function activate(context: vscode.ExtensionContext) {
       await transformCurrentFile();
     })
   );
+
+  console.log('[i18nsmith] Commands registered successfully');
 
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((terminal) => {
@@ -229,6 +348,7 @@ async function checkCurrentFile() {
 }
 
 async function renameSuspiciousKey(originalKey: string, newKey: string) {
+  console.log("[i18nsmith] renameSuspiciousKey called with:", { originalKey, newKey });
   await runRenameCommand({ from: originalKey, to: newKey });
 }
 
@@ -310,35 +430,30 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
 
   // Show diff preview if available
   if (summary.diffs && summary.diffs.length > 0) {
-    const previewChoice = await vscode.window.showInformationMessage(
-      `Ready to apply ${selection.missing.length + selection.unused.length} locale changes`,
-      'Preview Diff',
-      'Apply Now',
-      'Cancel'
-    );
-
-    if (previewChoice === 'Cancel' || !previewChoice) {
-      logVerbose('runSync: User cancelled after selection');
-      return;
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+      await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Sync Preview');
     }
 
-    if (previewChoice === 'Preview Diff') {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Sync Preview');
-        
-        // Ask again after showing preview
-        const applyChoice = await vscode.window.showInformationMessage(
-          `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
-          'Apply',
-          'Cancel'
-        );
-        
-        if (applyChoice !== 'Apply') {
-          logVerbose('runSync: User cancelled after viewing diff preview');
-          return;
-        }
-      }
+    const applyChoice = await vscode.window.showInformationMessage(
+      `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
+      'Apply'
+    );
+    
+    if (applyChoice !== 'Apply') {
+      logVerbose('runSync: User cancelled after viewing diff preview');
+      return;
+    }
+  } else {
+    // Fallback if no diffs available
+    const applyChoice = await vscode.window.showInformationMessage(
+      `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
+      'Apply'
+    );
+    
+    if (applyChoice !== 'Apply') {
+      logVerbose('runSync: User cancelled');
+      return;
     }
   }
 
@@ -431,6 +546,15 @@ function showSyncDryRunSummary(summary: SyncSummary) {
 async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelectionResult | null> {
   const items: SyncQuickPickItem[] = [];
 
+  if (summary.missingKeys.length) {
+    items.push({
+      label: `Missing keys (${summary.missingKeys.length}) — toggle entries to add locales`,
+      kind: vscode.QuickPickItemKind.Separator,
+      bucket: 'missing',
+      key: '',
+    } as SyncQuickPickItem);
+  }
+
   summary.missingKeys.forEach((record: MissingKeyRecord) => {
     const sample = record.references[0];
     items.push({
@@ -442,6 +566,15 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
       key: record.key,
     });
   });
+
+  if (summary.unusedKeys.length) {
+    items.push({
+      label: `Unused keys (${summary.unusedKeys.length}) — toggle entries to prune`,
+      kind: vscode.QuickPickItemKind.Separator,
+      bucket: 'unused',
+      key: '',
+    } as SyncQuickPickItem);
+  }
 
   summary.unusedKeys.forEach((record: UnusedKeyRecord) => {
     items.push({
@@ -574,7 +707,8 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
     return;
   }
 
-  const detail = formatTransformPreview(preview);
+  const multiPassTip = 'Tip: Transform runs are incremental. After applying, rerun the command to keep processing remaining candidates.';
+  const detail = `${formatTransformPreview(preview)}\n\n${multiPassTip}`;
   const buttons = preview.diffs && preview.diffs.length > 0
     ? ['Apply', 'Preview Diff', 'Dry Run Only']
     : ['Apply', 'Dry Run Only'];
@@ -597,8 +731,7 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
     const applyChoice = await vscode.window.showInformationMessage(
       `Apply transform to ${label}?`,
       { modal: true, detail },
-      'Apply',
-      'Cancel'
+      'Apply'
     );
     
     if (applyChoice !== 'Apply') {
@@ -618,6 +751,10 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
   hoverProvider.clearCache();
   await reportWatcher.refresh();
   await smartScanner.scan('transform');
+
+  vscode.window.showInformationMessage(
+    `Applied ${transformable.length} safe transform${transformable.length === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`
+  );
 }
 
 async function showTransformDiff(summary: TransformSummary) {
@@ -697,8 +834,7 @@ async function runRenameCommand(options: { from: string; to: string }) {
     const applyChoice = await vscode.window.showInformationMessage(
       `Apply rename ${from} → ${to}?`,
       { modal: true, detail },
-      'Apply',
-      'Cancel'
+      'Apply'
     );
     if (applyChoice !== 'Apply') {
       return;
@@ -840,6 +976,8 @@ function formatTransformPreview(summary: TransformSummary, limit = 5): string {
 }
 
 async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, text: string) {
+  console.log("[i18nsmith] extractKeyFromSelection called with:", { uri: uri.fsPath, range, text });
+
   const document = await vscode.workspace.openTextDocument(uri);
   const selectionText = document.getText(range) || text;
   const normalizedSelection = selectionText
@@ -1171,6 +1309,36 @@ function getDriftStatistics(report: unknown): { missing: number; unused: number 
   return { missing, unused };
 }
 
+function formatPreviewIntentDetail(intent: PreviewableCommand, originalCommand: string): string {
+  const lines: string[] = [];
+  if (intent.kind === 'sync') {
+    lines.push('Preview & apply locale fixes via VS Code sync flow.');
+    if (intent.targets?.length) {
+      lines.push(`Targets: ${intent.targets.join(', ')}`);
+    } else {
+      lines.push('Targets: Workspace');
+    }
+  } else if (intent.kind === 'transform') {
+    lines.push('Preview transform candidates with diff controls before applying changes.');
+    if (intent.targets?.length) {
+      lines.push(`Targets: ${intent.targets.join(', ')}`);
+    }
+  } else if (intent.kind === 'rename-key') {
+    lines.push(`Preview rename flow for ${intent.from} → ${intent.to}.`);
+  } else if (intent.kind === 'translate') {
+    lines.push('Preview translation estimates and apply via translate flow.');
+    if (intent.options.locales?.length) {
+      lines.push(`Locales: ${intent.options.locales.join(', ')}`);
+    }
+    if (intent.options.provider) {
+      lines.push(`Provider: ${intent.options.provider}`);
+    }
+  }
+
+  lines.push(`Original CLI: ${originalCommand}`);
+  return lines.join('\n');
+}
+
 async function showQuickActions() {
   await ensureFreshDiagnosticsForQuickActions();
 
@@ -1205,18 +1373,20 @@ async function showQuickActions() {
   if (suggestedCommands.length) {
     for (const sc of suggestedCommands) {
       const interactive = isInteractiveCliCommand(sc.command);
+      const previewIntent = parsePreviewableCommand(sc.command) ?? undefined;
+      const detail = previewIntent
+        ? formatPreviewIntentDetail(previewIntent, sc.command)
+        : sc.command;
       if (!hasApplySuggestion && /sync\b[\s\S]*--write/.test(sc.command)) {
         hasApplySuggestion = true;
       }
       picks.push({
         label: `$(rocket) ${sc.label}`,
         description: sc.reason || '',
-        detail: sc.command,
-        command: sc.command,
-        interactive,
-        confirmMessage: interactive
-          ? 'This command may scaffold files or install dependencies. Continue?'
-          : undefined,
+        detail,
+        previewIntent,
+        command: previewIntent ? undefined : sc.command,
+        interactive: previewIntent ? false : interactive,
       });
     }
     picks.push({ label: 'Recommended actions', kind: vscode.QuickPickItemKind.Separator });
@@ -1242,7 +1412,7 @@ async function showQuickActions() {
 
   if (!hasApplySuggestion) {
     // Build description with drift stats if available
-    let syncDescription = 'Run i18nsmith sync --write to add/remove locale keys';
+  let syncDescription = 'Review detected drift, then selectively apply locale fixes';
     if (driftStats) {
       const parts: string[] = [];
       if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
@@ -1271,7 +1441,7 @@ async function showQuickActions() {
     },
     {
       label: '$(wand) Transform current file to use i18nsmith',
-      description: 'Run transformer on active file with preview',
+      description: 'Preview safe transforms (rerun after apply to continue)',
       command: 'i18nsmith.transformFile',
     },
     {
@@ -1281,21 +1451,7 @@ async function showQuickActions() {
     }
   );
 
-  // Add sync dry-run with drift stats if available
-  let dryRunDescription = 'Run i18nsmith sync --dry-run';
-  if (driftStats) {
-    const parts: string[] = [];
-    if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
-    if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
-    dryRunDescription = `Preview ${parts.join(', ')} — ${dryRunDescription}`;
-  }
-  
   picks.push(
-    {
-      label: '$(cloud-download) Sync Locales (dry-run)',
-      description: dryRunDescription,
-      builtin: 'sync-dry-run',
-    },
     {
       label: '$(refresh) Refresh Diagnostics',
       description: 'Reload diagnostics from report',
@@ -1328,6 +1484,11 @@ async function showQuickActions() {
     return;
   }
 
+  if (choice.previewIntent) {
+    await executePreviewIntent(choice.previewIntent);
+    return;
+  }
+
   if (choice.command) {
     // Check if it's a VS Code command or a CLI command
     if (choice.command.startsWith('i18nsmith.')) {
@@ -1354,18 +1515,11 @@ async function showQuickActions() {
       break;
     }
     case 'run-check': {
-      smartScanner.showOutput();
-      await smartScanner.scan('manual');
-      break;
-    }
-    case 'sync-dry-run': {
-      await runSync({ dryRunOnly: true });
+      await runHealthCheckWithSummary();
       break;
     }
     case 'refresh': {
-      hoverProvider.clearCache();
-      reportWatcher.refresh();
-      statusBarManager.refresh();
+      await refreshDiagnosticsWithMessage('quick-action');
       break;
     }
     case 'show-output': {
@@ -1427,27 +1581,29 @@ async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean>
     return false;
   }
 
-  if (parsed.kind === 'sync') {
-    await runSync({ targets: parsed.targets });
-    return true;
+  await executePreviewIntent(parsed);
+  return true;
+}
+
+async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
+  if (intent.kind === 'sync') {
+    await runSync({ targets: intent.targets });
+    return;
   }
 
-  if (parsed.kind === 'transform') {
-    await runTransformCommand({ targets: parsed.targets });
-    return true;
+  if (intent.kind === 'transform') {
+    await runTransformCommand({ targets: intent.targets });
+    return;
   }
 
-  if (parsed.kind === 'rename-key') {
-    await runRenameCommand({ from: parsed.from, to: parsed.to });
-    return true;
+  if (intent.kind === 'rename-key') {
+    await runRenameCommand({ from: intent.from, to: intent.to });
+    return;
   }
 
-  if (parsed.kind === 'translate') {
-    await runTranslateCommand(parsed.options);
-    return true;
+  if (intent.kind === 'translate') {
+    await runTranslateCommand(intent.options);
   }
-
-  return false;
 }
 
 function parsePreviewableCommand(rawCommand: string): PreviewableCommand | null {
@@ -1687,14 +1843,27 @@ async function runCliCommand(
     return;
   }
 
-  if (options.confirmMessage) {
-    const answer = await vscode.window.showWarningMessage(options.confirmMessage, { modal: true }, 'Continue');
-    if (answer !== 'Continue') {
+  const command = resolveCliCommand(rawCommand);
+
+  if (options.confirmMessage || options.interactive) {
+    const detailLines: string[] = [];
+    if (options.confirmMessage) {
+      detailLines.push(options.confirmMessage);
+    }
+    if (options.interactive) {
+      detailLines.push('This command may scaffold files or install dependencies and will run in the i18nsmith terminal.');
+    }
+    detailLines.push('', `Command: ${command}`);
+    const confirmLabel = options.interactive ? 'Run Command' : 'Continue';
+    const choice = await vscode.window.showWarningMessage(
+      options.interactive ? 'Run interactive i18nsmith command?' : 'Run i18nsmith command?',
+      { modal: true, detail: detailLines.join('\n') },
+      confirmLabel
+    );
+    if (choice !== confirmLabel) {
       return;
     }
   }
-
-  const command = resolveCliCommand(rawCommand);
 
   if (options.interactive) {
     const terminal = ensureInteractiveTerminal(workspaceFolder.uri.fsPath);

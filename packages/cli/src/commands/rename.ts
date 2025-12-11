@@ -37,6 +37,7 @@ export function registerRename(program: Command): void {
     .option('--json', 'Print raw JSON results', false)
     .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
     .option('--write', 'Write changes to disk (defaults to dry-run)', false)
+    .option('--diff', 'Display unified diffs for files that would change', false)
     .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
     .option('--apply-preview <path>', 'Apply a previously saved rename preview JSON file safely')
     .action(async (oldKey: string, newKey: string, options: RenameKeyOptions) => {
@@ -59,7 +60,7 @@ export function registerRename(program: Command): void {
         const renamer = new KeyRenamer(config);
         const summary = await renamer.rename(oldKey, newKey, {
           write: options.write,
-          diff: previewMode,
+          diff: options.diff || previewMode,
         });
 
         if (previewMode && options.previewOutput) {
