@@ -13,7 +13,7 @@ import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { DiffPeekProvider } from './diff-peek';
-import { ensureGitignore, loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
+import { ensureGitignore, loadConfigWithMeta, LocaleStore, SUSPICIOUS_KEY_REASON_DESCRIPTIONS } from '@i18nsmith/core';
 import type {
   SyncSummary,
   MissingKeyRecord,
@@ -22,6 +22,8 @@ import type {
   SourceFileDiffEntry,
   TranslationPlan,
   I18nConfig,
+  DynamicKeyWarning,
+  SuspiciousKeyReason,
 } from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
@@ -63,6 +65,7 @@ let diffPeekProvider: DiffPeekProvider;
 let verboseOutputChannel: vscode.OutputChannel;
 let cliOutputChannel: vscode.OutputChannel | undefined;
 let previewManager: PreviewManager | undefined;
+let lastSyncDynamicWarnings: DynamicKeyWarning[] = [];
 const fsp = fs.promises;
 
 function logVerbose(message: string) {
@@ -382,17 +385,24 @@ export function deactivate() {
 }
 
 interface SyncQuickPickItem extends vscode.QuickPickItem {
-  bucket: 'missing' | 'unused';
+  bucket: 'missing' | 'unused' | 'blocked';
   key: string;
 }
 
 interface WhitelistQuickPickItem extends vscode.QuickPickItem {
   suggestion: WhitelistSuggestion;
+  normalized: string;
 }
 
 type WritableConfig = Partial<I18nConfig> & {
   sync?: I18nConfig['sync'];
 };
+
+interface DynamicWhitelistSnapshot {
+  configPath: string;
+  config: WritableConfig;
+  normalizedEntries: Set<string>;
+}
 
 interface SyncSelectionResult {
   missing: string[];
@@ -433,6 +443,7 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
   );
 
   const summary = previewResult.payload.summary;
+  lastSyncDynamicWarnings = sanitizeDynamicWarnings(summary.dynamicKeyWarnings ?? [], workspaceFolder.uri.fsPath);
   const relativePreviewPath = path.relative(workspaceFolder.uri.fsPath, previewResult.previewPath);
   logVerbose(`runSync: Preview complete (${relativePreviewPath})`);
   const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
@@ -599,7 +610,17 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
     } as SyncQuickPickItem);
   }
 
-  summary.missingKeys.forEach((record: MissingKeyRecord) => {
+  const suspiciousReasonByKey = new Map<string, string>();
+  (summary.suspiciousKeys ?? []).forEach((warning) => {
+    if (!suspiciousReasonByKey.has(warning.key)) {
+      suspiciousReasonByKey.set(warning.key, warning.reason);
+    }
+  });
+
+  const autoMissing = summary.missingKeys.filter((record) => !record.suspicious);
+  const blockedMissing = summary.missingKeys.filter((record) => record.suspicious);
+
+  autoMissing.forEach((record: MissingKeyRecord) => {
     const sample = record.references[0];
     items.push({
       label: `$(diff-added) ${record.key}`,
@@ -610,6 +631,28 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
       key: record.key,
     });
   });
+
+  if (blockedMissing.length) {
+    items.push({
+      label: 'Keys requiring manual fixes',
+      kind: vscode.QuickPickItemKind.Separator,
+      bucket: 'blocked',
+      key: '',
+    } as SyncQuickPickItem);
+
+    blockedMissing.forEach((record) => {
+      const sample = record.references[0];
+      const reason = suspiciousReasonByKey.get(record.key);
+      items.push({
+        label: `$(circle-slash) ${record.key}`,
+        description: sample ? `${sample.filePath}:${sample.position.line}` : 'auto-add disabled',
+        detail: describeSuspiciousKeyReason(reason),
+        picked: false,
+        bucket: 'blocked',
+        key: record.key,
+      });
+    });
+  }
 
   if (summary.unusedKeys.length) {
     items.push({
@@ -633,7 +676,9 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
 
   const selection = await vscode.window.showQuickPick(items, {
     canPickMany: true,
-    placeHolder: 'Select locale changes to apply (toggle entries to include or exclude)',
+    placeHolder: blockedMissing.length
+      ? 'Select locale changes to apply. Keys with 🚫 must be renamed before they can be added automatically.'
+      : 'Select locale changes to apply (toggle entries to include or exclude)',
   });
 
   if (!selection) {
@@ -642,8 +687,28 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
 
   const missing = selection.filter((item) => item.bucket === 'missing').map((item) => item.key);
   const unused = selection.filter((item) => item.bucket === 'unused').map((item) => item.key);
+  const blocked = selection.filter((item) => item.bucket === 'blocked');
+
+  if (!missing.length && !unused.length && blocked.length) {
+    vscode.window.showWarningMessage(
+      'Selected keys must be renamed before they can be applied automatically. Use "Rename key" to continue.'
+    );
+    return null;
+  }
 
   return { missing, unused };
+}
+
+function describeSuspiciousKeyReason(reason?: string): string {
+  if (!reason) {
+    return 'Rename this key to a structured identifier before auto-applying.';
+  }
+
+  if (reason in SUSPICIOUS_KEY_REASON_DESCRIPTIONS) {
+    return SUSPICIOUS_KEY_REASON_DESCRIPTIONS[reason as SuspiciousKeyReason];
+  }
+
+  return `Rename this key before auto-applying (reason: ${reason}).`;
 }
 
 async function whitelistDynamicKeys() {
@@ -653,11 +718,7 @@ async function whitelistDynamicKeys() {
     return;
   }
 
-  const report = diagnosticsManager?.getReport?.();
-  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[] } | undefined;
-  const warnings = Array.isArray(syncSection?.dynamicKeyWarnings)
-    ? (syncSection.dynamicKeyWarnings as unknown as Parameters<typeof deriveWhitelistSuggestions>[0])
-    : [];
+  const warnings = await collectDynamicKeyWarnings(workspaceFolder);
 
   if (!warnings.length) {
     vscode.window.showInformationMessage('No dynamic key warnings are available to whitelist.');
@@ -670,7 +731,30 @@ async function whitelistDynamicKeys() {
     return;
   }
 
-  const picks: WhitelistQuickPickItem[] = suggestions.map((suggestion) => {
+  const whitelistSnapshot = await loadDynamicWhitelistSnapshot(workspaceFolder.uri.fsPath);
+  if (!whitelistSnapshot) {
+    return;
+  }
+
+  const normalizedWhitelist = new Set(whitelistSnapshot.normalizedEntries);
+  const eligibleSuggestions = suggestions
+    .map((suggestion) => {
+      const normalized = normalizeManualAssumption(suggestion.assumption);
+      if (!normalized || normalizedWhitelist.has(normalized)) {
+        return null;
+      }
+      return { suggestion, normalized };
+    })
+    .filter((entry): entry is { suggestion: WhitelistSuggestion; normalized: string } => Boolean(entry));
+
+  if (!eligibleSuggestions.length) {
+    vscode.window.showInformationMessage(
+      'All dynamic key warnings are already whitelisted. Run "i18nsmith sync" again if warnings persist.'
+    );
+    return;
+  }
+
+  const picks: WhitelistQuickPickItem[] = eligibleSuggestions.map(({ suggestion, normalized }) => {
     const icon = suggestion.bucket === 'globs' ? '$(symbol-wildcard)' : '$(symbol-key)';
     const relativePath = path.relative(workspaceFolder.uri.fsPath, suggestion.filePath);
     return {
@@ -679,6 +763,7 @@ async function whitelistDynamicKeys() {
       detail: `Expression: ${suggestion.expression}`,
       picked: true,
       suggestion,
+      normalized,
     };
   });
 
@@ -692,7 +777,15 @@ async function whitelistDynamicKeys() {
     return;
   }
 
-  const additions = selection.map((item) => item.suggestion);
+  const pendingNormalized = new Set(normalizedWhitelist);
+  const additions: WhitelistSuggestion[] = [];
+  for (const item of selection) {
+    if (pendingNormalized.has(item.normalized)) {
+      continue;
+    }
+    pendingNormalized.add(item.normalized);
+    additions.push(item.suggestion);
+  }
   const customEntry = await vscode.window.showInputBox({
     prompt: 'Add custom key/glob (optional). Leave empty to skip.',
     placeHolder: 'e.g., errors.runtime.*',
@@ -702,14 +795,19 @@ async function whitelistDynamicKeys() {
   if (customEntry?.trim()) {
     const normalized = normalizeManualAssumption(customEntry);
     if (normalized) {
-      additions.push({
-        id: `manual-${Date.now()}`,
-        expression: customEntry,
-        assumption: normalized,
-        bucket: normalized.includes('*') ? 'globs' : 'assumptions',
-        filePath: workspaceFolder.uri.fsPath,
-        position: { line: 0, column: 0 },
-      });
+      if (pendingNormalized.has(normalized)) {
+        vscode.window.showInformationMessage('Custom entry already exists in the whitelist.');
+      } else {
+        pendingNormalized.add(normalized);
+        additions.push({
+          id: `manual-${Date.now()}`,
+          expression: customEntry,
+          assumption: normalized,
+          bucket: normalized.includes('*') ? 'globs' : 'assumptions',
+          filePath: workspaceFolder.uri.fsPath,
+          position: { line: 0, column: 0 },
+        });
+      }
     }
   }
 
@@ -718,10 +816,16 @@ async function whitelistDynamicKeys() {
     return;
   }
 
-  const persistResult = await persistDynamicKeyAssumptions(workspaceFolder.uri.fsPath, additions);
+  const persistResult = await persistDynamicKeyAssumptions(
+    workspaceFolder.uri.fsPath,
+    additions,
+    whitelistSnapshot
+  );
   if (!persistResult) {
     return;
   }
+
+  lastSyncDynamicWarnings = [];
 
   const { globsAdded, assumptionsAdded } = persistResult;
   if (!globsAdded && !assumptionsAdded) {
@@ -742,27 +846,144 @@ async function whitelistDynamicKeys() {
   await smartScanner.scan('whitelist-dynamic');
 }
 
+async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder): Promise<DynamicKeyWarning[]> {
+  if (lastSyncDynamicWarnings.length) {
+    return lastSyncDynamicWarnings;
+  }
+
+  const diagnosticsWarnings = getDiagnosticsDynamicWarnings(workspaceFolder.uri.fsPath);
+  if (diagnosticsWarnings.length) {
+    return diagnosticsWarnings;
+  }
+
+  return await readLatestSyncPreviewDynamicWarnings(workspaceFolder.uri.fsPath);
+}
+
+function getDiagnosticsDynamicKeySection(report: unknown): unknown {
+  if (!report || typeof report !== 'object') {
+    return undefined;
+  }
+  const syncSection = (report as { sync?: unknown }).sync;
+  if (!syncSection || typeof syncSection !== 'object') {
+    return undefined;
+  }
+  return syncSection;
+}
+
+function getDiagnosticsDynamicWarnings(workspaceRoot: string): DynamicKeyWarning[] {
+  const report = diagnosticsManager?.getReport?.();
+  const syncSection = getDiagnosticsDynamicKeySection(report) as { dynamicKeyWarnings?: unknown } | undefined;
+  if (!syncSection || !Array.isArray(syncSection.dynamicKeyWarnings)) {
+    return [];
+  }
+  return sanitizeDynamicWarnings(syncSection.dynamicKeyWarnings, workspaceRoot);
+}
+
+async function readLatestSyncPreviewDynamicWarnings(workspaceRoot: string): Promise<DynamicKeyWarning[]> {
+  const previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsp.readdir(previewDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const candidates = entries
+    .filter((entry) => entry.isFile() && entry.name.startsWith('sync-preview-') && entry.name.endsWith('.json'))
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+
+  for (const file of candidates) {
+    const filePath = path.join(previewDir, file);
+    try {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(raw) as { summary?: { dynamicKeyWarnings?: unknown } };
+      if (!parsed?.summary?.dynamicKeyWarnings) {
+        continue;
+      }
+      const sanitized = sanitizeDynamicWarnings(parsed.summary.dynamicKeyWarnings, workspaceRoot);
+      if (sanitized.length) {
+        return sanitized;
+      }
+    } catch (error) {
+      logVerbose(`Failed to read dynamic warnings from ${filePath}: ${(error as Error).message}`);
+    }
+  }
+
+  return [];
+}
+
+function sanitizeDynamicWarnings(rawWarnings: unknown, workspaceRoot: string): DynamicKeyWarning[] {
+  if (!Array.isArray(rawWarnings)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalized: DynamicKeyWarning[] = [];
+
+  for (const entry of rawWarnings) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const filePathValue = (entry as { filePath?: unknown }).filePath;
+    if (typeof filePathValue !== 'string' || !filePathValue.trim()) {
+      continue;
+    }
+
+    const absolutePath = path.isAbsolute(filePathValue)
+      ? filePathValue
+      : path.join(workspaceRoot, filePathValue);
+
+    const expressionValue = (entry as { expression?: unknown }).expression;
+    const normalizedExpression = typeof expressionValue === 'string' ? expressionValue : '';
+
+    const positionValue = (entry as { position?: { line?: unknown; column?: unknown } }).position ?? {};
+    const lineNumber = Number((positionValue as { line?: unknown }).line ?? 0);
+    const columnNumber = Number((positionValue as { column?: unknown }).column ?? 0);
+
+    const reasonValue = (entry as { reason?: unknown }).reason;
+    const normalizedReason =
+      typeof reasonValue === 'string' && isDynamicKeyReason(reasonValue)
+        ? reasonValue
+        : 'expression';
+
+    const dedupeKey = `${absolutePath}:${lineNumber}:${columnNumber}:${normalizedExpression}:${normalizedReason}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    normalized.push({
+      filePath: absolutePath,
+      expression: normalizedExpression,
+      reason: normalizedReason,
+      position: {
+        line: Number.isFinite(lineNumber) ? lineNumber : 0,
+        column: Number.isFinite(columnNumber) ? columnNumber : 0,
+      },
+    });
+  }
+
+  return normalized;
+}
+
+function isDynamicKeyReason(value: string): value is DynamicKeyWarning['reason'] {
+  return value === 'template' || value === 'binary' || value === 'expression';
+}
+
 async function persistDynamicKeyAssumptions(
   workspaceRoot: string,
-  selections: WhitelistSuggestion[]
+  selections: WhitelistSuggestion[],
+  snapshot?: DynamicWhitelistSnapshot
 ): Promise<{ globsAdded: number; assumptionsAdded: number } | null> {
-  const configPath = path.join(workspaceRoot, 'i18n.config.json');
-  let raw: string;
-  try {
-    raw = await fsp.readFile(configPath, 'utf8');
-  } catch (error) {
-    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${(error as Error).message}`);
+  const state = snapshot ?? (await loadDynamicWhitelistSnapshot(workspaceRoot));
+  if (!state) {
     return null;
   }
 
-  let config: WritableConfig;
-  try {
-    config = JSON.parse(raw);
-  } catch (error) {
-    vscode.window.showErrorMessage(`Invalid i18n.config.json: ${(error as Error).message}`);
-    return null;
-  }
-
+  const { config, configPath } = state;
   config.sync = config.sync ?? {};
 
   const globEntries = selections.filter((item) => item.bucket === 'globs').map((item) => item.assumption);
@@ -786,6 +1007,44 @@ async function persistDynamicKeyAssumptions(
     globsAdded: globMerge.added.length,
     assumptionsAdded: assumptionMerge.added.length,
   };
+}
+
+async function loadDynamicWhitelistSnapshot(
+  workspaceRoot: string
+): Promise<DynamicWhitelistSnapshot | null> {
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
+  let raw: string;
+  try {
+    raw = await fsp.readFile(configPath, 'utf8');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${(error as Error).message}`);
+    return null;
+  }
+
+  let config: WritableConfig;
+  try {
+    config = JSON.parse(raw);
+  } catch (error) {
+    vscode.window.showErrorMessage(`Invalid i18n.config.json: ${(error as Error).message}`);
+    return null;
+  }
+
+  config.sync = config.sync ?? {};
+
+  const normalizedEntries = new Set<string>();
+  collectNormalizedWhitelistEntries(config.sync.dynamicKeyGlobs, normalizedEntries);
+  collectNormalizedWhitelistEntries(config.sync.dynamicKeyAssumptions, normalizedEntries);
+
+  return { configPath, config, normalizedEntries };
+}
+
+function collectNormalizedWhitelistEntries(values: string[] | undefined, target: Set<string>) {
+  for (const value of values ?? []) {
+    const normalized = normalizeManualAssumption(value);
+    if (normalized) {
+      target.add(normalized);
+    }
+  }
 }
 
 async function syncCurrentFile() {
