@@ -13,7 +13,13 @@ import { StatusBarManager } from './statusbar';
 import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { DiffPeekProvider } from './diff-peek';
-import { ensureGitignore, loadConfigWithMeta, LocaleStore, SUSPICIOUS_KEY_REASON_DESCRIPTIONS } from '@i18nsmith/core';
+import {
+  ensureGitignore,
+  KeyGenerator,
+  loadConfigWithMeta,
+  LocaleStore,
+  SUSPICIOUS_KEY_REASON_DESCRIPTIONS,
+} from '@i18nsmith/core';
 import type {
   SyncSummary,
   MissingKeyRecord,
@@ -23,6 +29,7 @@ import type {
   TranslationPlan,
   I18nConfig,
   DynamicKeyWarning,
+  SuspiciousKeyWarning,
   SuspiciousKeyReason,
 } from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
@@ -40,7 +47,13 @@ import {
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
   previewIntent?: PreviewableCommand;
-  builtin?: 'extract-selection' | 'run-check' | 'refresh' | 'show-output' | 'whitelist-dynamic';
+  builtin?:
+    | 'extract-selection'
+    | 'run-check'
+    | 'refresh'
+    | 'show-output'
+    | 'whitelist-dynamic'
+    | 'rename-suspicious';
   interactive?: boolean;
   confirmMessage?: string;
 }
@@ -66,6 +79,7 @@ let verboseOutputChannel: vscode.OutputChannel;
 let cliOutputChannel: vscode.OutputChannel | undefined;
 let previewManager: PreviewManager | undefined;
 let lastSyncDynamicWarnings: DynamicKeyWarning[] = [];
+let lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
 const fsp = fs.promises;
 
 function logVerbose(message: string) {
@@ -291,8 +305,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.actions', async () => {
       await showQuickActions();
     }),
-    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (originalKey: string, newKey: string) => {
-      await renameSuspiciousKey(originalKey, newKey);
+    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (warning: SuspiciousKeyWarning) => {
+      await renameSuspiciousKey(warning);
+    }),
+    vscode.commands.registerCommand('i18nsmith.renameAllSuspiciousKeys', async () => {
+      await renameAllSuspiciousKeys();
     }),
     vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
       await insertIgnoreComment(uri, line, 'suspicious-key');
@@ -375,9 +392,49 @@ async function checkCurrentFile() {
   );
 }
 
-async function renameSuspiciousKey(originalKey: string, newKey: string) {
-  console.log("[i18nsmith] renameSuspiciousKey called with:", { originalKey, newKey });
-  await runRenameCommand({ from: originalKey, to: newKey });
+async function renameSuspiciousKey(warning: SuspiciousKeyWarning) {
+  if (!warning || typeof warning.key !== 'string') {
+    vscode.window.showErrorMessage('Invalid suspicious key reference.');
+    return;
+  }
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  let meta: Awaited<ReturnType<typeof loadConfigWithMeta>>;
+  try {
+    meta = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to load i18nsmith config: ${(error as Error).message}`);
+    return;
+  }
+
+  const existingKeys = await collectExistingTranslationKeys(meta);
+  const sanitized = sanitizeSuspiciousWarnings([warning], workspaceFolder.uri.fsPath);
+  if (!sanitized.length) {
+    vscode.window.showWarningMessage('Unable to normalize suspicious key details.');
+    return;
+  }
+
+  const renameReport = buildSuspiciousRenameReport(sanitized, meta, existingKeys);
+  const proposal = renameReport.safeProposals[0];
+
+  if (!proposal) {
+    if (renameReport.conflictProposals.length) {
+      vscode.window.showWarningMessage(
+        `Cannot auto-rename “${warning.key}” because “${renameReport.conflictProposals[0].proposedKey}” already exists.`
+      );
+    } else {
+      vscode.window.showInformationMessage(`No auto-rename suggestion available for “${warning.key}”.`);
+    }
+    return;
+  }
+
+  await runRenameCommand({ from: proposal.originalKey, to: proposal.proposedKey });
+  lastSyncSuspiciousWarnings = [];
 }
 
 export function deactivate() {
@@ -444,6 +501,7 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
 
   const summary = previewResult.payload.summary;
   lastSyncDynamicWarnings = sanitizeDynamicWarnings(summary.dynamicKeyWarnings ?? [], workspaceFolder.uri.fsPath);
+  lastSyncSuspiciousWarnings = sanitizeSuspiciousWarnings(summary.suspiciousKeys ?? [], workspaceFolder.uri.fsPath);
   const relativePreviewPath = path.relative(workspaceFolder.uri.fsPath, previewResult.previewPath);
   logVerbose(`runSync: Preview complete (${relativePreviewPath})`);
   const hasDrift = summary.missingKeys.length > 0 || summary.unusedKeys.length > 0;
@@ -846,6 +904,86 @@ async function whitelistDynamicKeys() {
   await smartScanner.scan('whitelist-dynamic');
 }
 
+async function renameAllSuspiciousKeys() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found.');
+    return;
+  }
+
+  const warnings = await collectSuspiciousKeyWarnings(workspaceFolder);
+  if (!warnings.length) {
+    vscode.window.showInformationMessage('No suspicious keys detected. Run "i18nsmith sync" to refresh diagnostics.');
+    return;
+  }
+
+  let meta: Awaited<ReturnType<typeof loadConfigWithMeta>>;
+  try {
+    meta = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
+  } catch (error) {
+    vscode.window.showErrorMessage(`Failed to load i18nsmith config: ${(error as Error).message}`);
+    return;
+  }
+
+  const existingKeys = await collectExistingTranslationKeys(meta);
+  const renameReport = buildSuspiciousRenameReport(warnings, meta, existingKeys);
+
+  if (!renameReport.safeProposals.length) {
+    if (renameReport.conflictProposals.length) {
+      vscode.window.showWarningMessage(
+        'All suspicious keys conflict with existing keys. Review the rename plan and resolve conflicts manually.'
+      );
+      await showSuspiciousRenamePlan(renameReport);
+    } else {
+      vscode.window.showInformationMessage('No auto-rename suggestions were generated for the detected keys.');
+    }
+    return;
+  }
+
+  const summaryDetail = formatSuspiciousRenameSummary(renameReport);
+  let choice = await vscode.window.showInformationMessage(
+    `Rename ${renameReport.safeProposals.length} suspicious key${renameReport.safeProposals.length === 1 ? '' : 's'}?`,
+    { modal: true, detail: summaryDetail },
+    'Rename All',
+    'Review Plan'
+  );
+
+  if (!choice) {
+    return;
+  }
+
+  if (choice === 'Review Plan') {
+    await showSuspiciousRenamePlan(renameReport);
+    choice = await vscode.window.showInformationMessage(
+      `Apply ${renameReport.safeProposals.length} rename${renameReport.safeProposals.length === 1 ? '' : 's'} now?`,
+      { modal: true, detail: summaryDetail },
+      'Rename All'
+    );
+    if (choice !== 'Rename All') {
+      return;
+    }
+  }
+
+  const mapEntries = renameReport.safeProposals.map((proposal) => ({
+    from: proposal.originalKey,
+    to: proposal.proposedKey,
+  }));
+
+  const { mapPath, cleanup } = await writeRenameMapFile(mapEntries);
+  const command = buildRenameKeysCommand(mapPath, true);
+  try {
+    const result = await runCliCommand(command);
+    if (result?.success) {
+      lastSyncSuspiciousWarnings = [];
+      vscode.window.showInformationMessage(
+        `Applied ${renameReport.safeProposals.length} auto-renamed key${renameReport.safeProposals.length === 1 ? '' : 's'}.`
+      );
+    }
+  } finally {
+    await cleanup();
+  }
+}
+
 async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder): Promise<DynamicKeyWarning[]> {
   if (lastSyncDynamicWarnings.length) {
     return lastSyncDynamicWarnings;
@@ -971,6 +1109,330 @@ function sanitizeDynamicWarnings(rawWarnings: unknown, workspaceRoot: string): D
 
 function isDynamicKeyReason(value: string): value is DynamicKeyWarning['reason'] {
   return value === 'template' || value === 'binary' || value === 'expression';
+}
+
+async function collectExistingTranslationKeys(
+  meta: Awaited<ReturnType<typeof loadConfigWithMeta>>
+): Promise<Set<string>> {
+  const localesDir = path.join(meta.projectRoot, meta.config.localesDir ?? 'locales');
+  const keySet = new Set<string>();
+  let files: fs.Dirent[];
+  try {
+    files = await fsp.readdir(localesDir, { withFileTypes: true });
+  } catch (error) {
+    logVerbose(`collectExistingTranslationKeys: ${String((error as Error).message || error)}`);
+    return keySet;
+  }
+
+  for (const entry of files) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue;
+    }
+    const filePath = path.join(localesDir, entry.name);
+    try {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      flattenLocaleKeys(parsed, '', keySet);
+    } catch (error) {
+      logVerbose(`collectExistingTranslationKeys: skipping ${entry.name} (${(error as Error).message})`);
+    }
+  }
+
+  return keySet;
+}
+
+function flattenLocaleKeys(node: unknown, prefix: string, target: Set<string>) {
+  if (typeof node === 'string') {
+    if (prefix) {
+      target.add(prefix);
+    }
+    return;
+  }
+
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+
+  for (const [segment, value] of Object.entries(node as Record<string, unknown>)) {
+    const next = prefix ? `${prefix}.${segment}` : segment;
+    if (typeof value === 'string') {
+      target.add(next);
+    } else {
+      flattenLocaleKeys(value, next, target);
+    }
+  }
+}
+
+type ExtensionSuspiciousRenameProposal = {
+  originalKey: string;
+  proposedKey: string;
+  reason: string;
+  filePath: string;
+  position: { line: number; column: number };
+  conflictsWith?: string;
+  targetExists?: boolean;
+};
+
+interface ExtensionSuspiciousRenameReport {
+  totalSuspicious: number;
+  safeProposals: ExtensionSuspiciousRenameProposal[];
+  conflictProposals: ExtensionSuspiciousRenameProposal[];
+  skippedKeys: string[];
+}
+
+function buildSuspiciousRenameReport(
+  warnings: SuspiciousKeyWarning[],
+  meta: Awaited<ReturnType<typeof loadConfigWithMeta>>,
+  existingKeys: Set<string>
+): ExtensionSuspiciousRenameReport {
+  const generator = new KeyGenerator({
+    namespace: meta.config.keyGeneration?.namespace,
+    hashLength: meta.config.keyGeneration?.shortHashLen,
+  });
+
+  const localesDir = path.join(meta.projectRoot, meta.config.localesDir ?? 'locales');
+  const seenKeys = new Set<string>();
+  const usedTargets = new Map<string, string>();
+  const safeProposals: ExtensionSuspiciousRenameProposal[] = [];
+  const conflictProposals: ExtensionSuspiciousRenameProposal[] = [];
+  const skippedKeys: string[] = [];
+
+  for (const warning of warnings) {
+    const key = warning.key?.trim();
+    if (!key || seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+
+    const baseText = key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
+    const contextPath = warning.filePath?.startsWith(localesDir) ? '' : warning.filePath ?? '';
+
+    let proposedKey: string;
+    try {
+      proposedKey = generator.generate(baseText || key, {
+        filePath: contextPath || meta.projectRoot,
+        kind: 'jsx-text',
+      }).key;
+    } catch (error) {
+      logVerbose(`buildSuspiciousRenameReport: failed to normalize ${key}: ${(error as Error).message}`);
+      skippedKeys.push(key);
+      continue;
+    }
+
+    if (!proposedKey || proposedKey === key) {
+      skippedKeys.push(key);
+      continue;
+    }
+
+    const proposal: ExtensionSuspiciousRenameProposal = {
+      originalKey: key,
+      proposedKey,
+      reason: warning.reason ?? 'suspicious-key',
+      filePath: warning.filePath,
+      position: warning.position ?? { line: 0, column: 0 },
+    };
+
+    const duplicateSource = usedTargets.get(proposedKey);
+    if (duplicateSource) {
+      proposal.conflictsWith = duplicateSource;
+      conflictProposals.push(proposal);
+      continue;
+    }
+
+    if (existingKeys.has(proposedKey)) {
+      proposal.conflictsWith = proposedKey;
+      proposal.targetExists = true;
+    }
+
+    safeProposals.push(proposal);
+    usedTargets.set(proposedKey, key);
+  }
+
+  return {
+    totalSuspicious: seenKeys.size,
+    safeProposals,
+    conflictProposals,
+    skippedKeys,
+  };
+}
+
+function formatSuspiciousRenameSummary(report: ExtensionSuspiciousRenameReport): string {
+  const lines: string[] = [];
+  lines.push(`• Detected ${report.totalSuspicious} suspicious key${report.totalSuspicious === 1 ? '' : 's'}`);
+  lines.push(`• Ready to rename: ${report.safeProposals.length}`);
+  if (report.conflictProposals.length) {
+    lines.push(`• Conflicts requiring manual attention: ${report.conflictProposals.length}`);
+  }
+  const existingTargetCount = report.safeProposals.filter((proposal) => proposal.targetExists).length;
+  if (existingTargetCount) {
+    lines.push(
+      `• ${existingTargetCount} target${existingTargetCount === 1 ? '' : 's'} already exist (locales will need merging)`
+    );
+  }
+  if (report.skippedKeys.length) {
+    lines.push(`• Skipped (already normalized): ${report.skippedKeys.length}`);
+  }
+  if (report.safeProposals.length) {
+    lines.push('', 'Preview:');
+    report.safeProposals.slice(0, 5).forEach((proposal) => {
+      lines.push(`  • ${proposal.originalKey} → ${proposal.proposedKey}`);
+    });
+    if (report.safeProposals.length > 5) {
+      lines.push(`  …and ${report.safeProposals.length - 5} more`);
+    }
+  }
+  return lines.join('\n');
+}
+
+async function showSuspiciousRenamePlan(report: ExtensionSuspiciousRenameReport) {
+  const lines: string[] = ['# Suspicious key rename plan', ''];
+  lines.push(`## Ready (${report.safeProposals.length})`, '');
+  if (report.safeProposals.length) {
+    for (const proposal of report.safeProposals) {
+      const note = proposal.targetExists ? ' (target exists)' : '';
+      lines.push(`- ${proposal.originalKey} → ${proposal.proposedKey} (${proposal.reason})${note}`);
+    }
+  } else {
+    lines.push('_No safe proposals._');
+  }
+
+  lines.push('', `## Conflicts (${report.conflictProposals.length})`, '');
+  if (report.conflictProposals.length) {
+    for (const conflict of report.conflictProposals) {
+      const location = `${conflict.filePath}:${conflict.position.line}`;
+      const target = conflict.conflictsWith ? ` (conflicts with ${conflict.conflictsWith})` : '';
+      lines.push(`- ${conflict.originalKey} → ${conflict.proposedKey}${target} @ ${location}`);
+    }
+  } else {
+    lines.push('_No conflicts detected._');
+  }
+
+  if (report.skippedKeys.length) {
+    lines.push('', `## Skipped (${report.skippedKeys.length})`, '');
+    report.skippedKeys.forEach((key) => lines.push(`- ${key}`));
+  }
+
+  const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'markdown' });
+  await vscode.window.showTextDocument(doc, { preview: true });
+}
+
+async function writeRenameMapFile(mappings: Array<{ from: string; to: string }>): Promise<{ mapPath: string; cleanup: () => Promise<void> }> {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'i18nsmith-rename-map-'));
+  const mapPath = path.join(tempDir, 'rename-map.json');
+  await fsp.writeFile(mapPath, JSON.stringify(mappings, null, 2) + '\n', 'utf8');
+  return {
+    mapPath,
+    cleanup: async () => {
+      await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    },
+  };
+}
+
+function buildRenameKeysCommand(mapPath: string, write: boolean): string {
+  const parts = ['i18nsmith rename-keys', '--map', quoteCliArg(mapPath), '--json'];
+  if (write) {
+    parts.push('--write');
+  }
+  return parts.join(' ');
+}
+
+async function collectSuspiciousKeyWarnings(workspaceFolder: vscode.WorkspaceFolder): Promise<SuspiciousKeyWarning[]> {
+  if (lastSyncSuspiciousWarnings.length) {
+    return lastSyncSuspiciousWarnings;
+  }
+
+  const report = diagnosticsManager?.getReport?.();
+  const syncSection = getDiagnosticsDynamicKeySection(report) as { suspiciousKeys?: unknown } | undefined;
+  if (syncSection && Array.isArray(syncSection.suspiciousKeys)) {
+    return sanitizeSuspiciousWarnings(syncSection.suspiciousKeys, workspaceFolder.uri.fsPath);
+  }
+
+  return await readLatestSyncPreviewSuspiciousWarnings(workspaceFolder.uri.fsPath);
+}
+
+async function readLatestSyncPreviewSuspiciousWarnings(workspaceRoot: string): Promise<SuspiciousKeyWarning[]> {
+  const previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsp.readdir(previewDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const candidates = entries
+    .filter((entry) => entry.isFile() && entry.name.startsWith('sync-preview-') && entry.name.endsWith('.json'))
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+
+  for (const file of candidates) {
+    const filePath = path.join(previewDir, file);
+    try {
+      const raw = await fsp.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(raw) as { summary?: { suspiciousKeys?: unknown } };
+      if (!parsed?.summary?.suspiciousKeys) {
+        continue;
+      }
+      const sanitized = sanitizeSuspiciousWarnings(parsed.summary.suspiciousKeys, workspaceRoot);
+      if (sanitized.length) {
+        return sanitized;
+      }
+    } catch (error) {
+      logVerbose(`Failed to read suspicious warnings from ${filePath}: ${(error as Error).message}`);
+    }
+  }
+
+  return [];
+}
+
+function sanitizeSuspiciousWarnings(rawWarnings: unknown, workspaceRoot: string): SuspiciousKeyWarning[] {
+  if (!Array.isArray(rawWarnings)) {
+    return [];
+  }
+
+  const normalized: SuspiciousKeyWarning[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of rawWarnings) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const keyValue = (entry as { key?: unknown }).key;
+    const filePathValue = (entry as { filePath?: unknown }).filePath;
+    const reasonValue = (entry as { reason?: unknown }).reason;
+    const positionValue = (entry as { position?: { line?: unknown; column?: unknown } }).position ?? {};
+
+    if (typeof keyValue !== 'string' || !keyValue.trim()) {
+      continue;
+    }
+    if (typeof filePathValue !== 'string' || !filePathValue.trim()) {
+      continue;
+    }
+
+    const absolutePath = path.isAbsolute(filePathValue)
+      ? filePathValue
+      : path.join(workspaceRoot, filePathValue);
+    const lineNumber = Number((positionValue as { line?: unknown }).line ?? 0);
+    const columnNumber = Number((positionValue as { column?: unknown }).column ?? 0);
+    const dedupeKey = `${keyValue}::${absolutePath}:${lineNumber}:${columnNumber}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    normalized.push({
+      key: keyValue,
+      filePath: absolutePath,
+      position: {
+        line: Number.isFinite(lineNumber) ? lineNumber : 0,
+        column: Number.isFinite(columnNumber) ? columnNumber : 0,
+      },
+      reason: typeof reasonValue === 'string' ? reasonValue : 'contains-spaces',
+    });
+  }
+
+  return normalized;
 }
 
 async function persistDynamicKeyAssumptions(
@@ -1256,8 +1718,11 @@ async function runRenameCommand(options: { from: string; to: string }) {
   );
 
   const summary = previewResult.payload.summary;
-  if (!summary.occurrences) {
-    vscode.window.showWarningMessage(`No usages of "${from}" were detected.`);
+  const hasLocaleEntries = (summary.localePreview ?? []).some((preview) => !preview.missing);
+  if (!summary.occurrences && !hasLocaleEntries) {
+    vscode.window.showWarningMessage(
+      `"${from}" was not found in source files or locale files. Add the key or run sync before renaming.`
+    );
     return;
   }
 
@@ -1299,6 +1764,11 @@ function formatRenamePreview(summary: KeyRenameSummary, from: string, to: string
   const lines: string[] = [];
   lines.push(`• ${summary.occurrences} source occurrence${summary.occurrences === 1 ? '' : 's'}`);
   lines.push(`• ${summary.filesUpdated.length} source file${summary.filesUpdated.length === 1 ? '' : 's'} to update`);
+
+  const hasLocaleEntries = (summary.localePreview ?? []).some((preview) => !preview.missing);
+  if (!summary.occurrences && hasLocaleEntries) {
+    lines.push('• No source usages detected — locale files will still be renamed');
+  }
 
   if (summary.localePreview.length) {
     const duplicates = summary.localePreview.filter((preview) => preview.duplicate);
@@ -1803,9 +2273,12 @@ async function showQuickActions() {
   // Show drift statistics summary if available
   const report = diagnosticsManager?.getReport?.();
   const driftStats = getDriftStatistics(report);
-  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[] } | undefined;
+  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[]; suspiciousKeys?: unknown[] } | undefined;
   const dynamicWarningCount = Array.isArray(syncSection?.dynamicKeyWarnings)
     ? syncSection.dynamicKeyWarnings.length
+    : 0;
+  const suspiciousWarningCount = Array.isArray(syncSection?.suspiciousKeys)
+    ? syncSection.suspiciousKeys.length
     : 0;
   if (driftStats) {
     const totalDrift = driftStats.missing + driftStats.unused;
@@ -1896,6 +2369,15 @@ async function showQuickActions() {
       description: `${dynamicWarningCount} runtime expression${dynamicWarningCount === 1 ? '' : 's'} flagged`,
       detail: 'Add assumptions to i18n.config.json to silence false unused warnings',
       builtin: 'whitelist-dynamic',
+    });
+  }
+
+  if (suspiciousWarningCount) {
+    picks.push({
+      label: '$(sparkle) Rename suspicious keys',
+      description: `${suspiciousWarningCount} key${suspiciousWarningCount === 1 ? '' : 's'} flagged as raw text`,
+      detail: 'Generate normalized names and apply them via rename-keys in one flow',
+      builtin: 'rename-suspicious',
     });
   }
 
@@ -1999,6 +2481,10 @@ async function showQuickActions() {
     }
     case 'whitelist-dynamic': {
       await whitelistDynamicKeys();
+      break;
+    }
+    case 'rename-suspicious': {
+      await renameAllSuspiciousKeys();
       break;
     }
   }
