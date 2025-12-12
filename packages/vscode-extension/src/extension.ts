@@ -14,18 +14,40 @@ import { I18nDefinitionProvider } from './definition';
 import { CheckIntegration } from './check-integration';
 import { DiffPeekProvider } from './diff-peek';
 import { ensureGitignore, loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
-import type { SyncSummary, MissingKeyRecord, UnusedKeyRecord, KeyRenameSummary, SourceFileDiffEntry, TranslationPlan } from '@i18nsmith/core';
+import type {
+  SyncSummary,
+  MissingKeyRecord,
+  UnusedKeyRecord,
+  KeyRenameSummary,
+  SourceFileDiffEntry,
+  TranslationPlan,
+  I18nConfig,
+} from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
-import { resolveCliCommand, quoteCliArg } from './cli-utils';
+import { resolveCliCommand } from './cli-utils';
+import { buildSyncApplyCommand, normalizeTargetForCli, quoteCliArg } from './command-helpers';
 import { executePreviewPlan, type PlannedChange } from './preview-flow';
+import {
+  deriveWhitelistSuggestions,
+  mergeAssumptions,
+  normalizeManualAssumption,
+  type WhitelistSuggestion,
+} from './dynamic-key-whitelist';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
   previewIntent?: PreviewableCommand;
-  builtin?: 'extract-selection' | 'run-check' | 'refresh' | 'show-output';
+  builtin?: 'extract-selection' | 'run-check' | 'refresh' | 'show-output' | 'whitelist-dynamic';
   interactive?: boolean;
   confirmMessage?: string;
+}
+
+interface CliRunResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  warnings: string[];
 }
 
 const QUICK_ACTION_SCAN_STALE_MS = 4000;
@@ -295,6 +317,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.transformFile', async () => {
       await transformCurrentFile();
+    }),
+    vscode.commands.registerCommand('i18nsmith.whitelistDynamicKeys', async () => {
+      await whitelistDynamicKeys();
     })
   );
 
@@ -360,6 +385,14 @@ interface SyncQuickPickItem extends vscode.QuickPickItem {
   bucket: 'missing' | 'unused';
   key: string;
 }
+
+interface WhitelistQuickPickItem extends vscode.QuickPickItem {
+  suggestion: WhitelistSuggestion;
+}
+
+type WritableConfig = Partial<I18nConfig> & {
+  sync?: I18nConfig['sync'];
+};
 
 interface SyncSelectionResult {
   missing: string[];
@@ -475,6 +508,8 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     () => runCliCommand(applyCommand)
   );
 
+  await refreshLocaleFilesFromConfig(workspaceFolder.uri.fsPath);
+
   const added = selection.missing.length;
   const removed = selection.unused.length;
   const parts = [];
@@ -503,24 +538,33 @@ function buildSyncPreviewArgs(targets?: string[]): string[] {
   return args;
 }
 
-function buildSyncApplyCommand(previewPath: string, selectionPath: string, workspaceRoot: string): string {
-  const previewArg = normalizeTargetForCli(previewPath, workspaceRoot);
-  const selectionArg = normalizeTargetForCli(selectionPath, workspaceRoot);
-  return [
-    'i18nsmith sync',
-    '--apply-preview',
-    quoteCliArg(previewArg),
-    '--selection-file',
-    quoteCliArg(selectionArg),
-  ].join(' ');
-}
-
 async function writeSyncSelectionFile(workspaceRoot: string, selection: SyncSelectionResult): Promise<string> {
   const previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
   await fs.promises.mkdir(previewDir, { recursive: true });
   const filePath = path.join(previewDir, `sync-selection-${Date.now()}.json`);
   await fs.promises.writeFile(filePath, JSON.stringify(selection, null, 2), 'utf8');
   return filePath;
+}
+
+async function refreshLocaleFilesFromConfig(workspaceRoot: string): Promise<void> {
+  try {
+    const meta = await loadConfigWithMeta(undefined, { cwd: workspaceRoot });
+    const localesDir = path.join(meta.projectRoot, meta.config.localesDir ?? 'locales');
+    const entries = await fsp.readdir(localesDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) {
+        continue;
+      }
+      const targetUri = vscode.Uri.file(path.join(localesDir, entry.name));
+      try {
+        await vscode.workspace.fs.stat(targetUri);
+      } catch {
+        // ignore - file may have been removed
+      }
+    }
+  } catch (error) {
+    logVerbose(`refreshLocaleFilesFromConfig failed: ${(error as Error).message}`);
+  }
 }
 
 function showSyncDryRunSummary(summary: SyncSummary) {
@@ -600,6 +644,148 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
   const unused = selection.filter((item) => item.bucket === 'unused').map((item) => item.key);
 
   return { missing, unused };
+}
+
+async function whitelistDynamicKeys() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found.');
+    return;
+  }
+
+  const report = diagnosticsManager?.getReport?.();
+  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[] } | undefined;
+  const warnings = Array.isArray(syncSection?.dynamicKeyWarnings)
+    ? (syncSection.dynamicKeyWarnings as unknown as Parameters<typeof deriveWhitelistSuggestions>[0])
+    : [];
+
+  if (!warnings.length) {
+    vscode.window.showInformationMessage('No dynamic key warnings are available to whitelist.');
+    return;
+  }
+
+  const suggestions = deriveWhitelistSuggestions(warnings);
+  if (!suggestions.length) {
+    vscode.window.showInformationMessage('Dynamic key warnings are already addressed.');
+    return;
+  }
+
+  const picks: WhitelistQuickPickItem[] = suggestions.map((suggestion) => {
+    const icon = suggestion.bucket === 'globs' ? '$(symbol-wildcard)' : '$(symbol-key)';
+    const relativePath = path.relative(workspaceFolder.uri.fsPath, suggestion.filePath);
+    return {
+      label: `${icon} ${suggestion.assumption}`,
+      description: `${relativePath}:${suggestion.position.line + 1}`,
+      detail: `Expression: ${suggestion.expression}`,
+      picked: true,
+      suggestion,
+    };
+  });
+
+  const selection = await vscode.window.showQuickPick(picks, {
+    canPickMany: true,
+    placeHolder: 'Select dynamic keys to whitelist (toggle to exclude any entries)',
+    matchOnDetail: true,
+  });
+
+  if (!selection || !selection.length) {
+    return;
+  }
+
+  const additions = selection.map((item) => item.suggestion);
+  const customEntry = await vscode.window.showInputBox({
+    prompt: 'Add custom key/glob (optional). Leave empty to skip.',
+    placeHolder: 'e.g., errors.runtime.*',
+    ignoreFocusOut: true,
+  });
+
+  if (customEntry?.trim()) {
+    const normalized = normalizeManualAssumption(customEntry);
+    if (normalized) {
+      additions.push({
+        id: `manual-${Date.now()}`,
+        expression: customEntry,
+        assumption: normalized,
+        bucket: normalized.includes('*') ? 'globs' : 'assumptions',
+        filePath: workspaceFolder.uri.fsPath,
+        position: { line: 0, column: 0 },
+      });
+    }
+  }
+
+  if (!additions.length) {
+    vscode.window.showWarningMessage('No dynamic keys were selected to whitelist.');
+    return;
+  }
+
+  const persistResult = await persistDynamicKeyAssumptions(workspaceFolder.uri.fsPath, additions);
+  if (!persistResult) {
+    return;
+  }
+
+  const { globsAdded, assumptionsAdded } = persistResult;
+  if (!globsAdded && !assumptionsAdded) {
+    vscode.window.showInformationMessage('Selected dynamic keys were already whitelisted.');
+    return;
+  }
+
+  const parts: string[] = [];
+  if (assumptionsAdded) {
+    parts.push(`${assumptionsAdded} key${assumptionsAdded === 1 ? '' : 's'}`);
+  }
+  if (globsAdded) {
+    parts.push(`${globsAdded} glob${globsAdded === 1 ? '' : 's'}`);
+  }
+
+  vscode.window.showInformationMessage(`Added ${parts.join(' and ')} to i18n.config.json.`);
+  await refreshDiagnosticsWithMessage('quick-action');
+  await smartScanner.scan('whitelist-dynamic');
+}
+
+async function persistDynamicKeyAssumptions(
+  workspaceRoot: string,
+  selections: WhitelistSuggestion[]
+): Promise<{ globsAdded: number; assumptionsAdded: number } | null> {
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
+  let raw: string;
+  try {
+    raw = await fsp.readFile(configPath, 'utf8');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${(error as Error).message}`);
+    return null;
+  }
+
+  let config: WritableConfig;
+  try {
+    config = JSON.parse(raw);
+  } catch (error) {
+    vscode.window.showErrorMessage(`Invalid i18n.config.json: ${(error as Error).message}`);
+    return null;
+  }
+
+  config.sync = config.sync ?? {};
+
+  const globEntries = selections.filter((item) => item.bucket === 'globs').map((item) => item.assumption);
+  const assumptionEntries = selections
+    .filter((item) => item.bucket === 'assumptions')
+    .map((item) => item.assumption);
+
+  const globMerge = mergeAssumptions(config.sync.dynamicKeyGlobs, globEntries);
+  const assumptionMerge = mergeAssumptions(config.sync.dynamicKeyAssumptions, assumptionEntries);
+
+  if (!globMerge.added.length && !assumptionMerge.added.length) {
+    return { globsAdded: 0, assumptionsAdded: 0 };
+  }
+
+  config.sync.dynamicKeyGlobs = globMerge.next;
+  config.sync.dynamicKeyAssumptions = assumptionMerge.next;
+
+  await fsp.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+
+  return {
+    globsAdded: globMerge.added.length,
+    assumptionsAdded: assumptionMerge.added.length,
+  };
 }
 
 async function syncCurrentFile() {
@@ -854,22 +1040,35 @@ function formatRenamePreview(summary: KeyRenameSummary, from: string, to: string
   const lines: string[] = [];
   lines.push(`• ${summary.occurrences} source occurrence${summary.occurrences === 1 ? '' : 's'}`);
   lines.push(`• ${summary.filesUpdated.length} source file${summary.filesUpdated.length === 1 ? '' : 's'} to update`);
+
   if (summary.localePreview.length) {
     const duplicates = summary.localePreview.filter((preview) => preview.duplicate);
     const missing = summary.localePreview.filter((preview) => preview.missing);
+
     if (duplicates.length) {
       const sample = duplicates.slice(0, 3).map((preview) => preview.locale).join(', ');
-      lines.push(`• ${duplicates.length} locale${duplicates.length === 1 ? '' : 's'} already have "${to}" (${sample}${duplicates.length > 3 ? '…' : ''})`);
+      lines.push(
+        `• ${duplicates.length} locale${duplicates.length === 1 ? '' : 's'} already contain “${to}” (${sample}${
+          duplicates.length > 3 ? '…' : ''
+        })`
+      );
     }
+
     if (missing.length) {
       const sample = missing.slice(0, 3).map((preview) => preview.locale).join(', ');
-      lines.push(`• ${missing.length} locale${missing.length === 1 ? '' : 's'} are missing "${from}" (${sample}${missing.length > 3 ? '…' : ''})`);
+      lines.push(
+        `• ${missing.length} locale${missing.length === 1 ? '' : 's'} missing “${from}” (${sample}${
+          missing.length > 3 ? '…' : ''
+        })`
+      );
     }
   }
+
   if (summary.actionableItems.length) {
     const highPriority = summary.actionableItems.slice(0, 3).map((item) => `• ${item.message}`);
     lines.push(...highPriority);
   }
+
   return lines.join('\n');
 }
 
@@ -1345,6 +1544,10 @@ async function showQuickActions() {
   // Show drift statistics summary if available
   const report = diagnosticsManager?.getReport?.();
   const driftStats = getDriftStatistics(report);
+  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[] } | undefined;
+  const dynamicWarningCount = Array.isArray(syncSection?.dynamicKeyWarnings)
+    ? syncSection.dynamicKeyWarnings.length
+    : 0;
   if (driftStats) {
     const totalDrift = driftStats.missing + driftStats.unused;
     logVerbose(`showQuickActions: Drift detected - ${driftStats.missing} missing, ${driftStats.unused} unused (total: ${totalDrift})`);
@@ -1425,6 +1628,15 @@ async function showQuickActions() {
       description: syncDescription,
       detail: 'i18nsmith: Sync workspace',
       command: 'i18nsmith.sync',
+    });
+  }
+
+  if (dynamicWarningCount) {
+    picks.push({
+      label: '$(shield) Whitelist dynamic keys',
+      description: `${dynamicWarningCount} runtime expression${dynamicWarningCount === 1 ? '' : 's'} flagged`,
+      detail: 'Add assumptions to i18n.config.json to silence false unused warnings',
+      builtin: 'whitelist-dynamic',
     });
   }
 
@@ -1524,6 +1736,10 @@ async function showQuickActions() {
     }
     case 'show-output': {
       smartScanner.showOutput();
+      break;
+    }
+    case 'whitelist-dynamic': {
+      await whitelistDynamicKeys();
       break;
     }
   }
@@ -1861,7 +2077,7 @@ async function runCliCommand(
       confirmLabel
     );
     if (choice !== confirmLabel) {
-      return;
+      return undefined;
     }
   }
 
@@ -1872,14 +2088,14 @@ async function runCliCommand(
     vscode.window.showInformationMessage(
       'Command started in the integrated terminal. Refresh diagnostics once it completes.'
     );
-    return;
+    return undefined;
   }
 
   const out = vscode.window.createOutputChannel('i18nsmith');
   out.show();
   out.appendLine(`$ ${command}`);
 
-  await new Promise<void>((resolve) => {
+  return await new Promise<CliRunResult>((resolve) => {
     exec(command, { cwd: workspaceFolder.uri.fsPath }, async (err: Error | null, stdout: string, stderr: string) => {
       if (stdout) {
         out.appendLine(stdout);
@@ -1887,9 +2103,11 @@ async function runCliCommand(
       if (stderr) {
         out.appendLine(`[stderr] ${stderr}`);
       }
+      const warnings = extractCliWarnings(stdout);
       if (err) {
         out.appendLine(`[error] ${err.message}`);
         vscode.window.showErrorMessage(`Command failed: ${err.message}`);
+        resolve({ success: false, stdout, stderr, warnings });
       } else {
         const summary = summarizeCliJson(stdout);
         if (summary) {
@@ -1897,12 +2115,26 @@ async function runCliCommand(
         } else {
           vscode.window.showInformationMessage('Command completed');
         }
+        if (warnings.length) {
+          const whitelistAction = 'Whitelist dynamic keys';
+          const outputAction = 'Open Output';
+          const actions = warnings.some((warning) => /dynamic translation key/.test(warning))
+            ? [whitelistAction, outputAction]
+            : [outputAction];
+          vscode.window.showWarningMessage(warnings[0], ...actions).then((choice) => {
+            if (choice === outputAction) {
+              out.show(true);
+            } else if (choice === whitelistAction) {
+              vscode.commands.executeCommand('i18nsmith.whitelistDynamicKeys');
+            }
+          });
+        }
         await reportWatcher?.refresh();
         if (smartScanner) {
           await smartScanner.scan('suggested-command');
         }
+        resolve({ success: true, stdout, stderr, warnings });
       }
-      resolve();
     });
   });
 }
@@ -1915,14 +2147,6 @@ function ensurePreviewManager(): PreviewManager {
     previewManager = new PreviewManager(cliOutputChannel);
   }
   return previewManager;
-}
-
-function normalizeTargetForCli(absolutePath: string, workspaceRoot: string): string {
-  const relative = path.relative(workspaceRoot, absolutePath);
-  if (!relative || relative.startsWith('..')) {
-    return absolutePath;
-  }
-  return relative.split(path.sep).join(path.posix.sep);
 }
 
 function buildTransformTargetArgs(targets: string | string[]): string[] {
@@ -2062,33 +2286,78 @@ function findKeyAtCursor(document: vscode.TextDocument, position: vscode.Positio
 }
 
 function summarizeCliJson(stdout: string): string | null {
-  const text = stdout?.trim();
-  if (!text) return null;
-  // Try parse last JSON object in output
-  const lastBrace = text.lastIndexOf('{');
-  if (lastBrace === -1) return null;
-  try {
-    const obj = JSON.parse(text.slice(lastBrace));
-    // Heuristics for common summaries
-    if (obj?.sync) {
-      const s = obj.sync;
-      const added = s.added?.length ?? s.added ?? 0;
-      const removed = s.removed?.length ?? s.removed ?? 0;
-      const updated = s.updated?.length ?? s.updated ?? 0;
-      return `Sync completed: ${added} added, ${updated} updated, ${removed} removed`;
-    }
-    if (obj?.result?.renamed || obj?.renamed) {
-      const r = obj.result?.renamed ?? obj.renamed;
-      if (Array.isArray(r)) return `Renamed ${r.length} key(s)`;
-      return `Rename completed`;
-    }
-    if (obj?.status === 'ok' && obj?.message) {
-      return obj.message;
-    }
-  } catch {
-    // ignore
+  const obj = parseLastCliJson(stdout);
+  if (!obj) return null;
+
+  if (isRecord(obj.sync)) {
+    const sync = obj.sync;
+    const added = coerceCount(sync['added']);
+    const removed = coerceCount(sync['removed']);
+    const updated = coerceCount(sync['updated']);
+    return `Sync completed: ${added} added, ${updated} updated, ${removed} removed`;
+  }
+  if (isRecord(obj.result) && obj.result['renamed']) {
+    const renamed = obj.result['renamed'];
+    if (Array.isArray(renamed)) return `Renamed ${renamed.length} key(s)`;
+    return 'Rename completed';
+  }
+  if (obj['renamed']) {
+    const renamed = obj['renamed'];
+    if (Array.isArray(renamed)) return `Renamed ${renamed.length} key(s)`;
+    return 'Rename completed';
+  }
+  if (obj['status'] === 'ok' && typeof obj['message'] === 'string') {
+    return obj['message'] as string;
   }
   return null;
+}
+
+function extractCliWarnings(stdout: string): string[] {
+  const obj = parseLastCliJson(stdout);
+  if (!obj) {
+    return [];
+  }
+
+  const warnings: string[] = [];
+  const sync = isRecord(obj.sync) ? obj.sync : obj;
+  const dynamicWarningsValue = sync['dynamicKeyWarnings'];
+  const dynamicWarnings = Array.isArray(dynamicWarningsValue) ? dynamicWarningsValue : [];
+  if (dynamicWarnings.length) {
+    const message =
+      dynamicWarnings.length === 1
+        ? '1 dynamic translation key detected. Use “Whitelist dynamic keys” to ignore known runtime patterns.'
+        : `${dynamicWarnings.length} dynamic translation keys detected. Use “Whitelist dynamic keys” to ignore known runtime patterns.`;
+    warnings.push(message);
+  }
+  return warnings;
+}
+
+function parseLastCliJson(stdout: string): Record<string, unknown> | null {
+  const text = stdout?.trim();
+  if (!text) {
+    return null;
+  }
+  const lastBrace = text.lastIndexOf('{');
+  if (lastBrace === -1) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text.slice(lastBrace));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function coerceCount(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  return typeof value === 'number' ? value : 0;
 }
 
 function shouldWrapSelectionInJsx(
