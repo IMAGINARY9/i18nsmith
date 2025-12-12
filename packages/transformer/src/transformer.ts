@@ -46,6 +46,9 @@ export class Transformer {
   private readonly defaultWrite: boolean;
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
+  // Per-run dedupe state. Must be cleared at the beginning of each run.
+  // Keeping it on the instance caused subsequent runs to mislabel candidates as duplicates
+  // and could lead to confusing multi-pass behavior/reporting.
   private readonly seenHashes = new Map<string, string>();
   private readonly translationAdapter: { module: string; hookName: string };
 
@@ -69,6 +72,9 @@ export class Transformer {
   }
 
   public async run(runOptions: TransformRunOptions = {}): Promise<TransformSummary> {
+    // Reset per-run state
+    this.seenHashes.clear();
+
     const write = runOptions.write ?? this.defaultWrite;
     const generateDiffs = runOptions.diff ?? false;
 
@@ -185,12 +191,26 @@ export class Transformer {
       }
 
       if (write) {
+        const changedFiles = Array.from(filesChanged.values());
+
         await Promise.all(
-          Array.from(filesChanged.values()).map(async (file) => {
+          changedFiles.map(async (file) => {
             await file.save();
             await formatFileWithPrettier(file.getFilePath());
           })
         );
+
+        // Important for iterative runs: ts-morph keeps SourceFile ASTs in memory.
+        // After we mutate+format on disk, the in-memory AST can drift from disk,
+        // which can cause the next scan to see a different shape and produce new
+        // candidates in waves. Refresh ensures scan always reflects the current file.
+        for (const file of changedFiles) {
+          try {
+            file.refreshFromFileSystemSync();
+          } catch {
+            // Best-effort refresh; ignore if file was removed or inaccessible.
+          }
+        }
       }
     }
 
@@ -275,8 +295,9 @@ export class Transformer {
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;
 
-      // Extract only serializable fields from ScannerNodeCandidate (exclude node, sourceFile)
-      const { node: _node, sourceFile: _sourceFile, ...serializableCandidate } = candidate;
+  // Extract only serializable fields from ScannerNodeCandidate (exclude node, sourceFile)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { node, sourceFile, ...serializableCandidate } = candidate;
 
       // Pre-flight validation: check if generated key is suspicious
       const validation = this.keyValidator.validate(generated.key, candidate.text);

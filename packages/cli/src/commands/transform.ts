@@ -32,10 +32,24 @@ const collectTargetPatterns = (value: string | string[], previous: string[]) => 
 };
 
 function printTransformSummary(summary: TransformSummary) {
+  const counts = summary.candidates.reduce(
+    (acc, c) => {
+      acc.total += 1;
+      if (c.status === 'applied') acc.applied += 1;
+      else if (c.status === 'pending') acc.pending += 1;
+      else if (c.status === 'duplicate') acc.duplicate += 1;
+      else if (c.status === 'existing') acc.existing += 1;
+      else if (c.status === 'skipped') acc.skipped += 1;
+      return acc;
+    },
+    { total: 0, applied: 0, pending: 0, duplicate: 0, existing: 0, skipped: 0 }
+  );
+
   console.log(
     chalk.green(
       `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'}; ` +
-        `${summary.candidates.length} candidate${summary.candidates.length === 1 ? '' : 's'} processed.`
+        `${counts.total} candidate${counts.total === 1 ? '' : 's'} found ` +
+        `(applied: ${counts.applied}, pending: ${counts.pending}, duplicates: ${counts.duplicate}, existing: ${counts.existing}, skipped: ${counts.skipped}).`
     )
   );
 
@@ -52,6 +66,17 @@ function printTransformSummary(summary: TransformSummary) {
   }));
 
   console.table(preview);
+
+  const pending = summary.candidates.filter((candidate) => candidate.status === 'pending').length;
+  if (pending > 0) {
+    console.log(
+      chalk.yellow(
+        `\n${pending} candidate${pending === 1 ? '' : 's'} still pending. ` +
+          `This can happen when candidates are filtered for safety (e.g., not in a React scope). ` +
+          `Re-run with --write after reviewing skipped reasons if you want to keep iterating.`
+      )
+    );
+  }
 
   if (summary.filesChanged.length) {
     console.log(chalk.blue(`Files changed (${summary.filesChanged.length}):`));
