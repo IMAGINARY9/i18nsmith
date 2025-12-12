@@ -144,6 +144,50 @@ describe('E2E Fixture Tests', () => {
       
       expect(parsed).toHaveProperty('diagnostics');
     });
+
+    it('applies preview selections to add missing keys and prune unused keys', async () => {
+      const appFile = path.join(fixtureDir, 'src', 'App.tsx');
+      const localeFile = path.join(fixtureDir, 'locales', 'en.json');
+      const previewDir = path.join(fixtureDir, '.i18nsmith', 'previews');
+      const previewPath = path.join(previewDir, 'integration-preview.json');
+      const selectionPath = path.join(previewDir, 'integration-selection.json');
+
+      const appContent = await fs.readFile(appFile, 'utf8');
+      const injected = appContent.replace(
+        '</div>',
+        "      <p>{t('integration.preview-missing')}</p>\n    </div>"
+      );
+      await fs.writeFile(appFile, injected, 'utf8');
+
+      const locale = JSON.parse(await fs.readFile(localeFile, 'utf8'));
+      locale['unused.preview.key'] = 'Preview-only key';
+      await fs.writeFile(localeFile, JSON.stringify(locale, null, 2));
+
+      const previewResult = runCli(['sync', '--preview-output', previewPath], { cwd: fixtureDir });
+      expect(previewResult.exitCode).toBe(0);
+
+      const payload = JSON.parse(await fs.readFile(previewPath, 'utf8')) as {
+        summary: { missingKeys: { key: string }[]; unusedKeys: { key: string }[] };
+      };
+      const selection = {
+        missing: payload.summary.missingKeys.map((entry) => entry.key),
+        unused: payload.summary.unusedKeys.map((entry) => entry.key),
+      };
+      expect(selection.missing).toContain('integration.preview-missing');
+      expect(selection.unused).toContain('unused.preview.key');
+      await fs.mkdir(previewDir, { recursive: true });
+      await fs.writeFile(selectionPath, JSON.stringify(selection, null, 2));
+
+      const applyResult = runCli(
+        ['sync', '--apply-preview', previewPath, '--selection-file', selectionPath, '--prune', '--yes'],
+        { cwd: fixtureDir }
+      );
+      expect(applyResult.exitCode).toBe(0);
+
+      const finalLocale = JSON.parse(await fs.readFile(localeFile, 'utf8'));
+      expect(finalLocale).toHaveProperty('integration.preview-missing');
+      expect(finalLocale).not.toHaveProperty('unused.preview.key');
+    });
   });
 
   describe('suspicious-keys fixture', () => {

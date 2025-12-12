@@ -21,11 +21,3 @@ export function resolveCliCommand(raw: string): string {
 
   return rest ? 'npx i18nsmith@latest ' + rest : 'npx i18nsmith@latest';
 }
-
-export function quoteCliArg(value: string): string {
-  if (!value) {
-    return '""';
-  }
-  const escaped = value.replace(/(["\\])/g, '\\$1');
-  return `"${escaped}"`;
-}

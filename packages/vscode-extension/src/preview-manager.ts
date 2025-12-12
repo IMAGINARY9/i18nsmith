@@ -3,7 +3,8 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { promises as fs } from 'fs';
-import { quoteCliArg, resolveCliCommand } from './cli-utils';
+import { resolveCliCommand } from './cli-utils';
+import { quoteCliArg } from './command-helpers';
 
 const execAsync = promisify(exec);
 
