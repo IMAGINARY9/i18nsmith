@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createHash } from 'crypto';
 import { KeyGenerator } from '@i18nsmith/core';
+import type { SuspiciousKeyWarning } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
 
 /**
@@ -82,7 +82,8 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const suggestedKey = buildSuspiciousKeySuggestion(key, document.uri.fsPath, workspaceRoot);
+    const warning = buildSuspiciousKeyWarning(key, document, diagnostic);
+    const suggestedKey = buildSuspiciousKeySuggestion(key, workspaceRoot);
 
     const action = new vscode.CodeAction(
       `Refactor suspicious key to "${suggestedKey}"`,
@@ -93,7 +94,7 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     action.command = {
       command: 'i18nsmith.renameSuspiciousKey',
       title: 'Rename suspicious key',
-      arguments: [key, suggestedKey],
+      arguments: [warning],
     };
 
     return action;
@@ -254,33 +255,46 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 /**
  * Set a nested value in an object using dot notation
  */
-function buildSuspiciousKeySuggestion(key: string, filePath: string, workspaceRoot?: string): string {
-  // Use the shared KeyGenerator from core to honor workspace config (namespace, hash length, style)
+function buildSuspiciousKeySuggestion(key: string, workspaceRoot?: string): string {
   try {
-    if (workspaceRoot) {
-      const config = loadWorkspaceConfig(workspaceRoot);
-      const hashLength = config.keyGeneration?.shortHashLen ?? 6;
-      const namespace = config.keyGeneration?.namespace ?? 'common';
-      const generator = new KeyGenerator({ namespace, hashLength });
-      const { key: generated } = generator.generate(key, { filePath, kind: 'call-expression' });
-      return generated;
-    }
+    const config = loadWorkspaceConfig(workspaceRoot);
+    const generator = new KeyGenerator({
+      namespace: config.keyGeneration?.namespace,
+      hashLength: config.keyGeneration?.shortHashLen,
+    });
+    const baseText = key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
+    const generated = generator.generate(baseText || key, {
+      filePath: workspaceRoot ?? '',
+      kind: 'jsx-text',
+    });
+    return generated.key;
   } catch {
-    // Fall back to local heuristic below if config load fails
+    return key;
   }
+}
 
-  // Fallback heuristic (no config): preserve namespace and add short hash
-  const lastDot = key.lastIndexOf('.');
-  const ns = lastDot > 0 ? key.slice(0, lastDot) : 'common';
-  const leaf = lastDot > 0 ? key.slice(lastDot + 1) : key;
-  const sanitizedLeaf = leaf
-    .trim()
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/(^-|-$)/g, '')
-    .toLowerCase() || 'key';
-  const hash = createHash('sha1').update(`${key}|${filePath ?? ''}`).digest('hex').slice(0, 6);
-  return `${ns}.${sanitizedLeaf}.${hash}`;
+function buildSuspiciousKeyWarning(
+  key: string,
+  document: vscode.TextDocument,
+  diagnostic: vscode.Diagnostic
+): SuspiciousKeyWarning {
+  return {
+    key,
+    filePath: document.uri.fsPath,
+    position: {
+      line: diagnostic.range.start.line + 1,
+      column: diagnostic.range.start.character + 1,
+    },
+    reason: extractSuspiciousReasonCode(diagnostic.message) ?? 'contains-spaces',
+  };
+}
+
+function extractSuspiciousReasonCode(message: string): string | undefined {
+  const match = message.match(/\(([^)]+)\)/);
+  if (!match) {
+    return undefined;
+  }
+  return match[1].trim().toLowerCase().replace(/\s+/g, '-');
 }
 
 interface LightweightWorkspaceConfig {
