@@ -5,6 +5,7 @@ import { Project } from 'ts-morph';
 import { describe, expect, it, afterEach } from 'vitest';
 import type { I18nConfig } from '@i18nsmith/core';
 import { Transformer } from './transformer';
+import type { TransformProgress } from './types';
 
 let tempDir: string | undefined;
 
@@ -438,5 +439,46 @@ describe('Transformer', () => {
       // since they include namespace and proper formatting
       expect(candidate.suggestedKey).toMatch(/^common\./);
     });
+  });
+
+  it('emits progress updates while applying candidates', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-progress-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Progress.tsx');
+    await fs.writeFile(
+      filePath,
+      `export function Progress(){return (<div><p>Alpha</p><p>Beta</p><p>Gamma</p></div>);}`,
+      'utf8'
+    );
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const events: TransformProgress[] = [];
+    await transformer.run({
+      write: true,
+      onProgress: (progress) => events.push(progress),
+    });
+
+    const applyEvents = events.filter((event) => event.stage === 'apply');
+    expect(applyEvents.length).toBeGreaterThan(1);
+    const finalEvent = applyEvents[applyEvents.length - 1];
+    expect(finalEvent.percent).toBe(100);
+    expect(finalEvent.applied).toBe(3);
+    expect(finalEvent.remaining).toBe(0);
   });
 });

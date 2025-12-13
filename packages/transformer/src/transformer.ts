@@ -28,6 +28,7 @@ import {
   CandidateStatus,
   FileTransformRecord,
   TransformCandidate,
+  TransformProgress,
   TransformRunOptions,
   TransformSummary,
   TransformerOptions,
@@ -100,11 +101,45 @@ export class Transformer {
     });
 
     const enriched = await this.enrichCandidates(summary.detailedCandidates);
+    const transformableCandidates = enriched.filter(
+      (candidate) => candidate.status === 'pending' || candidate.status === 'existing'
+    );
 
     const filesChanged = new Map<string, SourceFile>();
     const skippedFiles: FileTransformRecord[] = [];
 
     const shouldProcess = write || generateDiffs;
+    const enableProgress = Boolean(write && runOptions.onProgress && transformableCandidates.length > 0);
+    const progressState = {
+      processed: 0,
+      applied: 0,
+      skipped: 0,
+      errors: 0,
+      total: transformableCandidates.length,
+    };
+
+    const emitProgress = () => {
+      if (!enableProgress || !runOptions.onProgress) {
+        return;
+      }
+      const percent = progressState.total === 0
+        ? 100
+        : Math.min(100, Math.round((progressState.processed / progressState.total) * 100));
+      const payload: TransformProgress = {
+        stage: 'apply',
+        processed: progressState.processed,
+        total: progressState.total,
+        percent,
+        applied: progressState.applied,
+        skipped: progressState.skipped,
+        remaining: Math.max(progressState.total - progressState.processed, 0),
+        errors: progressState.errors,
+        message: 'Applying transformations',
+      };
+      runOptions.onProgress(payload);
+    };
+
+    emitProgress();
 
     if (shouldProcess) {
       // Track detected imports per file to avoid redundant detection
@@ -115,6 +150,9 @@ export class Transformer {
         if (candidate.status !== 'pending' && candidate.status !== 'existing') {
           continue;
         }
+
+        progressState.processed += 1;
+        let skipCounted = false;
 
         // Track original status to determine if we need to upsert locale data
         const wasExisting = candidate.status === 'existing';
@@ -156,6 +194,9 @@ export class Transformer {
             candidate.status = 'skipped';
             candidate.reason = 'No React component/function scope found';
             skippedFiles.push({ filePath: candidate.filePath, reason: candidate.reason });
+            progressState.skipped += 1;
+            skipCounted = true;
+            emitProgress();
             continue;
           }
 
@@ -165,6 +206,7 @@ export class Transformer {
             this.applyCandidate(candidate);
             candidate.status = 'applied';
             filesChanged.set(candidate.filePath, sourceFile);
+            progressState.applied += 1;
           }
 
           // Only upsert to locale store if this is a new key (wasExisting = false)
@@ -187,7 +229,17 @@ export class Transformer {
           candidate.status = 'skipped';
           candidate.reason = (error as Error).message;
           skippedFiles.push({ filePath: candidate.filePath, reason: candidate.reason });
+          progressState.skipped += 1;
+          progressState.errors += 1;
+          skipCounted = true;
         }
+
+        if (candidate.status === 'skipped' && !skipCounted) {
+          progressState.skipped += 1;
+          skipCounted = true;
+        }
+
+        emitProgress();
       }
 
       if (write) {

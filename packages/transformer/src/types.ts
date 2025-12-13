@@ -30,11 +30,26 @@ export interface TransformSummary {
   write: boolean;
 }
 
+export type TransformProgressStage = 'scan' | 'apply' | 'locales';
+
+export interface TransformProgress {
+  stage: TransformProgressStage;
+  processed: number;
+  total: number;
+  percent: number;
+  applied?: number;
+  skipped?: number;
+  remaining?: number;
+  errors?: number;
+  message?: string;
+}
+
 export interface TransformRunOptions {
   write?: boolean;
   targets?: string[];
   diff?: boolean;
   migrateTextKeys?: boolean;
+  onProgress?: (progress: TransformProgress) => void;
 }
 
 export interface TransformerOptions {

@@ -2841,13 +2841,12 @@ async function runCliCommand(
   out.appendLine(`$ ${command}`);
 
   return await new Promise<CliRunResult>((resolve) => {
-    exec(command, { cwd: workspaceFolder.uri.fsPath }, async (err: Error | null, stdout: string, stderr: string) => {
-      if (stdout) {
-        out.appendLine(stdout);
-      }
-      if (stderr) {
-        out.appendLine(`[stderr] ${stderr}`);
-      }
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+
+    const child = exec(command, { cwd: workspaceFolder.uri.fsPath }, async (err: Error | null) => {
+      const stdout = stdoutChunks.join('');
+      const stderr = stderrChunks.join('');
       const warnings = extractCliWarnings(stdout);
       if (err) {
         out.appendLine(`[error] ${err.message}`);
@@ -2880,6 +2879,18 @@ async function runCliCommand(
         }
         resolve({ success: true, stdout, stderr, warnings });
       }
+    });
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      stdoutChunks.push(text);
+      out.append(text);
+    });
+
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      stderrChunks.push(text);
+      out.append(text);
     });
   });
 }
