@@ -3,6 +3,11 @@
 All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
+
+## [0.2.1] - 2025-12-13
+- Chore: bump package version to 0.2.1 and package the compiled extension for release.
+- See the commit history for packaging/build details.
+
 ## [0.2.0] - 2025-12-12
 - Preview-first workflows: suggested commands now open previews by default instead of running destructive --write operations.
 - Added support for CLI preview output and diff flags to enable safe preview/apply flows from the extension.
