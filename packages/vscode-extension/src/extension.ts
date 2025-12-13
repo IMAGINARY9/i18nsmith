@@ -32,7 +32,7 @@ import type {
   SuspiciousKeyWarning,
   SuspiciousKeyReason,
 } from '@i18nsmith/core';
-import type { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
+import type { TransformSummary, TransformCandidate, TransformProgress } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
 import { resolveCliCommand } from './cli-utils';
 import { buildSyncApplyCommand, normalizeTargetForCli, quoteCliArg } from './command-helpers';
@@ -568,14 +568,18 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     workspaceFolder.uri.fsPath
   );
 
-  await vscode.window.withProgress(
+  const applyResult = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: 'i18nsmith: Applying locale changes…',
       cancellable: false,
     },
-    () => runCliCommand(applyCommand)
+    (progress) => runCliCommand(applyCommand, { progress })
   );
+
+  if (applyResult?.success) {
+    await cleanupPreviewArtifacts(previewResult.previewPath, selectionFilePath);
+  }
 
   await refreshLocaleFilesFromConfig(workspaceFolder.uri.fsPath);
 
@@ -1653,7 +1657,19 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
 
   logVerbose(`runTransformCommand: Applying ${transformable.length} transformations via CLI`);
 
-  await runCliCommand(buildTransformWriteCommand(baseArgs));
+  const writeCommand = buildTransformWriteCommand(baseArgs);
+  const writeResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `i18nsmith: Applying transforms (${label})…`,
+      cancellable: false,
+    },
+    (progress) => runCliCommand(writeCommand, { progress })
+  );
+
+  if (writeResult?.success) {
+    await cleanupPreviewArtifacts(previewResult.previewPath);
+  }
 
   hoverProvider.clearCache();
   await reportWatcher.refresh();
@@ -1754,7 +1770,19 @@ async function runRenameCommand(options: { from: string; to: string }) {
     return;
   }
 
-  await runCliCommand(buildRenameWriteCommand(from, to));
+  const renameCommand = buildRenameWriteCommand(from, to);
+  const renameResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `i18nsmith: Renaming ${from} → ${to}…`,
+      cancellable: false,
+    },
+    (progress) => runCliCommand(renameCommand, { progress })
+  );
+
+  if (renameResult?.success) {
+    await cleanupPreviewArtifacts(previewResult.previewPath);
+  }
   hoverProvider.clearCache();
   await reportWatcher.refresh();
   await smartScanner.scan('rename');
@@ -1871,7 +1899,19 @@ async function runTranslateCommand(options: TranslateRunOptions = {}) {
     return;
   }
 
-  await runCliCommand(buildTranslateWriteCommand(baseArgs));
+  const translateCommand = buildTranslateWriteCommand(baseArgs);
+  const translateResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Applying translations…',
+      cancellable: false,
+    },
+    (progress) => runCliCommand(translateCommand, { progress })
+  );
+
+  if (translateResult?.success) {
+    await cleanupPreviewArtifacts(previewResult.previewPath);
+  }
   hoverProvider.clearCache();
   await reportWatcher.refresh();
   await smartScanner.scan('translate');
@@ -2796,7 +2836,11 @@ function tokenizeCliCommand(command: string): string[] {
 
 async function runCliCommand(
   rawCommand: string,
-  options: { interactive?: boolean; confirmMessage?: string } = {}
+  options: {
+    interactive?: boolean;
+    confirmMessage?: string;
+    progress?: vscode.Progress<{ message?: string; increment?: number }>;
+  } = {}
 ) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -2840,11 +2884,14 @@ async function runCliCommand(
   out.show();
   out.appendLine(`$ ${command}`);
 
+  const progressTracker = createCliProgressTracker(options.progress);
+
   return await new Promise<CliRunResult>((resolve) => {
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
 
     const child = exec(command, { cwd: workspaceFolder.uri.fsPath }, async (err: Error | null) => {
+      progressTracker?.flush();
       const stdout = stdoutChunks.join('');
       const stderr = stderrChunks.join('');
       const warnings = extractCliWarnings(stdout);
@@ -2873,6 +2920,7 @@ async function runCliCommand(
             }
           });
         }
+        progressTracker?.complete();
         await reportWatcher?.refresh();
         if (smartScanner) {
           await smartScanner.scan('suggested-command');
@@ -2885,6 +2933,11 @@ async function runCliCommand(
       const text = chunk.toString();
       stdoutChunks.push(text);
       out.append(text);
+      progressTracker?.handleChunk(text);
+    });
+
+    child.stdout?.on('close', () => {
+      progressTracker?.flush();
     });
 
     child.stderr?.on('data', (chunk: Buffer | string) => {
@@ -2893,6 +2946,146 @@ async function runCliCommand(
       out.append(text);
     });
   });
+}
+
+function createCliProgressTracker(
+  progress?: vscode.Progress<{ message?: string; increment?: number }>
+): null | {
+  handleChunk: (text: string) => void;
+  flush: () => void;
+  complete: () => void;
+} {
+  if (!progress) {
+    return null;
+  }
+
+  let buffer = '';
+  let lastPercent = 0;
+  const reportPercent = (percent?: number, message?: string) => {
+    if (typeof percent !== 'number' || Number.isNaN(percent)) {
+      return;
+    }
+    const bounded = Math.max(0, Math.min(100, percent));
+    const increment = Math.max(0, bounded - lastPercent);
+    lastPercent = Math.max(lastPercent, bounded);
+    progress.report({
+      message: message ?? `Working… ${bounded}%`,
+      ...(increment > 0 ? { increment } : {}),
+    });
+  };
+
+  const describePayload = (payload: Partial<TransformProgress> & { message?: string }): string | undefined => {
+    if (payload.message) {
+      return payload.message;
+    }
+    if (typeof payload.processed === 'number' && typeof payload.total === 'number') {
+      return `Applying ${payload.processed}/${payload.total}`;
+    }
+    if (payload.stage) {
+      return `Stage: ${payload.stage}`;
+    }
+    return undefined;
+  };
+
+  const parsePayload = (raw: string): (Partial<TransformProgress> & { message?: string }) | null => {
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed as Partial<TransformProgress> & { message?: string };
+      }
+    } catch {
+      const payload: Partial<TransformProgress> & { message?: string } = {};
+      const percentMatch = raw.match(/percent[:=]\s*(\d+)/i);
+      const processedMatch = raw.match(/processed[:=]\s*(\d+)/i);
+      const totalMatch = raw.match(/total[:=]\s*(\d+)/i);
+      const stageMatch = raw.match(/stage[:=]\s*([a-z-]+)/i);
+      const messageMatch = raw.match(/message[:=]\s*(.+)$/i);
+      if (percentMatch) payload.percent = Number(percentMatch[1]);
+      if (processedMatch) payload.processed = Number(processedMatch[1]);
+      if (totalMatch) payload.total = Number(totalMatch[1]);
+      if (stageMatch) payload.stage = stageMatch[1] as TransformProgress['stage'];
+      if (messageMatch) payload.message = messageMatch[1].trim();
+      if (Object.keys(payload).length) {
+        return payload;
+      }
+    }
+    return null;
+  };
+
+  const handleLine = (rawLine: string) => {
+    const line = rawLine.trim();
+    if (!line) {
+      return;
+    }
+    if (line.startsWith('[progress]')) {
+      const payload = parsePayload(line.slice('[progress]'.length).trim());
+      if (payload) {
+        if ((payload.percent === undefined || Number.isNaN(payload.percent)) &&
+            typeof payload.processed === 'number' &&
+            typeof payload.total === 'number' &&
+            payload.total > 0) {
+          payload.percent = Math.min(100, Math.round((payload.processed / payload.total) * 100));
+        }
+        reportPercent(payload.percent, describePayload(payload));
+        return;
+      }
+    }
+
+    const applyMatch = line.match(/Applying transforms .*\((\d+)%\)/i);
+    if (applyMatch) {
+      reportPercent(Number(applyMatch[1]), line.replace(/\s+/g, ' ').trim());
+    }
+  };
+
+  const feedText = (text: string) => {
+    buffer += text.replace(/\r/g, '\n');
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      handleLine(line);
+      newlineIndex = buffer.indexOf('\n');
+    }
+  };
+
+  return {
+    handleChunk(text: string) {
+      feedText(text);
+    },
+    flush() {
+      if (buffer.trim()) {
+        handleLine(buffer);
+        buffer = '';
+      }
+    },
+    complete() {
+      if (lastPercent < 100) {
+        reportPercent(100, 'Completed.');
+      } else {
+        progress.report({ message: 'Completed.' });
+      }
+    },
+  };
+}
+
+async function cleanupPreviewArtifacts(...paths: Array<string | null | undefined>): Promise<void> {
+  for (const target of paths) {
+    if (!target) {
+      continue;
+    }
+    try {
+      await fsp.unlink(target);
+      logVerbose(`Removed preview artifact: ${target}`);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code && code !== 'ENOENT') {
+        logVerbose(`Failed to remove preview artifact ${target}: ${(error as Error).message}`);
+      }
+    }
+  }
 }
 
 function ensurePreviewManager(): PreviewManager {

@@ -410,6 +410,7 @@ describe('Transformer', () => {
     `;
     await fs.writeFile(filePath, initial, 'utf8');
 
+
     const config: I18nConfig = {
       sourceLanguage: 'en',
       targetLanguages: [],
@@ -480,5 +481,70 @@ describe('Transformer', () => {
     expect(finalEvent.percent).toBe(100);
     expect(finalEvent.applied).toBe(3);
     expect(finalEvent.remaining).toBe(0);
+  });
+
+  it('converges after repeated write passes when no new literals are introduced', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-multipass-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Multi.tsx');
+    await fs.writeFile(filePath, `export function Multi(){return <div><p>A</p><p>B</p></div>;}`, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const firstRun = await transformer.run({ write: true });
+    const firstApplied = firstRun.candidates.filter((candidate) => candidate.status === 'applied').length;
+    expect(firstApplied).toBeGreaterThanOrEqual(2);
+
+    const secondRun = await transformer.run({ write: true });
+    const secondApplied = secondRun.candidates.filter((candidate) => candidate.status === 'applied').length;
+    expect(secondApplied).toBe(0);
+  });
+
+  it('detects and applies literals added between passes', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-multipass-new-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'NewPass.tsx');
+    await fs.writeFile(filePath, `export function NewPass(){return <div><p>Alpha</p></div>;}`, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    await fs.appendFile(filePath, '\nexport const Later = () => <span>Beta</span>;');
+    project.getSourceFileOrThrow(filePath).refreshFromFileSystemSync();
+
+    const secondRun = await transformer.run({ write: true });
+    const applied = secondRun.candidates.filter((candidate) => candidate.status === 'applied').length;
+    expect(applied).toBeGreaterThanOrEqual(1);
   });
 });
