@@ -752,39 +752,28 @@ async function reviewSyncSelection(
   const detail = formatSyncSelectionDetail(summary, selection, workspaceRoot);
   const previewAvailable = Boolean(summary.diffs && summary.diffs.length > 0);
   const total = selection.missing.length + selection.unused.length;
-  const buttons: string[] = [];
-  if (previewAvailable) {
-    buttons.push('Preview Changes');
-  }
-  buttons.push('Apply', 'Dry Run Only', 'Cancel');
+  const decision = await promptPreviewDecision({
+    title: `Locale preview ready (${total} change${total === 1 ? '' : 's'})`,
+    detail,
+    previewAvailable,
+    allowDryRun: true,
+  });
 
-  const choice = await vscode.window.showInformationMessage(
-    buildNotificationMessage(`Locale preview ready (${total} change${total === 1 ? '' : 's'})`, detail),
-    ...buttons
-  );
-
-  if (!choice || choice === 'Cancel') {
+  if (decision === 'cancel') {
     return false;
   }
-
-  if (choice === 'Dry Run Only') {
+  if (decision === 'dry-run') {
     showSyncDryRunSummary(summary);
     return false;
   }
-
-  if (choice === 'Preview Changes') {
+  if (decision === 'preview') {
     await showSyncDiffPreview(summary);
     return showPersistentApplyNotification({
       title: `Apply ${total} locale change${total === 1 ? '' : 's'}?`,
       detail,
     });
   }
-
-  if (choice === 'Apply') {
-    return true;
-  }
-
-  return false;
+  return decision === 'apply';
 }
 
 function formatSyncSelectionDetail(
@@ -887,6 +876,25 @@ function summarizeLocalePreview(localePreview: SyncSummary['localePreview'], sel
   return rows;
 }
 
+/**
+ * Preview UX helpers: every action should present the same sequence
+ * 1. Summarize findings (non-modal notification) with optional "Preview" button
+ * 2. If the user previews diffs, leave a persistent Apply/Cancel notification
+ * 3. Applying runs via CLI progress, cancelling leaves preview artifacts untouched
+ */
+type PreviewDecision = 'preview' | 'apply' | 'dry-run' | 'cancel';
+
+interface PreviewDecisionOptions {
+  title: string;
+  detail?: string;
+  previewAvailable?: boolean;
+  allowDryRun?: boolean;
+  previewLabel?: string;
+  applyLabel?: string;
+  dryRunLabel?: string;
+  cancelLabel?: string;
+}
+
 function formatNotificationDetail(detail?: string, maxLines = 4): string | undefined {
   if (!detail) {
     return undefined;
@@ -910,6 +918,42 @@ function buildNotificationMessage(title: string, detail?: string): string {
   return summary ? `${title}\n${summary}` : title;
 }
 
+async function promptPreviewDecision(options: PreviewDecisionOptions): Promise<PreviewDecision> {
+  const previewLabel = options.previewLabel ?? 'Preview Changes';
+  const applyLabel = options.applyLabel ?? 'Apply';
+  const dryRunLabel = options.dryRunLabel ?? 'Dry Run Only';
+  const cancelLabel = options.cancelLabel ?? 'Cancel';
+  const buttons: string[] = [];
+  if (options.previewAvailable) {
+    buttons.push(previewLabel);
+  }
+  buttons.push(applyLabel);
+  const allowDryRun = options.allowDryRun ?? true;
+  if (allowDryRun) {
+    buttons.push(dryRunLabel);
+  }
+  buttons.push(cancelLabel);
+
+  const choice = await vscode.window.showInformationMessage(
+    buildNotificationMessage(options.title, options.detail),
+    ...buttons
+  );
+
+  if (!choice || choice === cancelLabel) {
+    return 'cancel';
+  }
+  if (options.previewAvailable && choice === previewLabel) {
+    return 'preview';
+  }
+  if (allowDryRun && choice === dryRunLabel) {
+    return 'dry-run';
+  }
+  if (choice === applyLabel) {
+    return 'apply';
+  }
+  return 'cancel';
+}
+
 async function showPersistentApplyNotification(options: {
   title: string;
   detail?: string;
@@ -919,12 +963,7 @@ async function showPersistentApplyNotification(options: {
   const applyLabel = options.applyLabel ?? 'Apply';
   const cancelLabel = options.cancelLabel ?? 'Cancel';
   const message = buildNotificationMessage(options.title, options.detail);
-  const buttons = [applyLabel, cancelLabel].filter(Boolean) as string[];
-  if (!buttons.length) {
-    // No buttons means nothing to wait for; default to false to avoid accidental apply.
-    return false;
-  }
-  const choice = await vscode.window.showInformationMessage(message, ...buttons);
+  const choice = await vscode.window.showInformationMessage(message, applyLabel, cancelLabel);
   return choice === applyLabel;
 }
 
@@ -1799,22 +1838,20 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
 
   const multiPassTip = 'Tip: Transform runs are incremental. After applying, rerun the command to keep processing remaining candidates.';
   const detail = `${formatTransformPreview(preview)}\n\n${multiPassTip}`;
-  const buttons = preview.diffs && preview.diffs.length > 0
-    ? ['Apply', 'Preview Diff', 'Dry Run Only']
-    : ['Apply', 'Dry Run Only'];
-  
-  const choice = await vscode.window.showInformationMessage(
-    `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${label}?`,
-    { modal: true, detail },
-    ...buttons
-  );
+  const decision = await promptPreviewDecision({
+    title: `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${label}?`,
+    detail,
+    previewAvailable: Boolean(preview.diffs && preview.diffs.length > 0),
+    allowDryRun: true,
+    previewLabel: 'Preview Diff',
+  });
 
-  if (!choice) {
+  if (decision === 'cancel') {
     logVerbose('runTransformCommand: User cancelled');
     return;
   }
 
-  if (choice === 'Preview Diff') {
+  if (decision === 'preview') {
     logVerbose('runTransformCommand: Showing diff preview');
     await showTransformDiff(preview);
 
@@ -1829,7 +1866,7 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
       logVerbose('runTransformCommand: User cancelled after viewing diff');
       return;
     }
-  } else if (choice === 'Dry Run Only') {
+  } else if (decision === 'dry-run') {
     logVerbose('runTransformCommand: Dry run only, showing preview');
     vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
     return;
@@ -1923,19 +1960,20 @@ async function runRenameCommand(options: { from: string; to: string }) {
   }
 
   const detail = formatRenamePreview(summary, from, to);
-  const buttons = summary.diffs?.length ? ['Apply', 'Show Diff', 'Dry Run Only'] : ['Apply', 'Dry Run Only'];
-  const choice = await vscode.window.showInformationMessage(
-    `Rename ${from} → ${to}?`,
-    { modal: true, detail },
-    ...buttons
-  );
+  const decision = await promptPreviewDecision({
+    title: `Rename ${from} → ${to}?`,
+    detail,
+    previewAvailable: Boolean(summary.diffs?.length),
+    allowDryRun: true,
+    previewLabel: 'Show Diff',
+  });
 
-  if (!choice) {
+  if (decision === 'cancel') {
     logVerbose('runRenameCommand: User cancelled');
     return;
   }
 
-  if (choice === 'Show Diff') {
+  if (decision === 'preview') {
     await showSourceDiffPreview(summary.diffs ?? [], 'Rename Preview');
     const confirmed = await showPersistentApplyNotification({
       title: `Apply rename ${from} → ${to}?`,
@@ -1946,7 +1984,7 @@ async function runRenameCommand(options: { from: string; to: string }) {
     if (!confirmed) {
       return;
     }
-  } else if (choice === 'Dry Run Only') {
+  } else if (decision === 'dry-run') {
     vscode.window.showInformationMessage('Preview only. Run again and choose Apply to write changes.', { detail });
     return;
   }
@@ -2063,19 +2101,19 @@ async function runTranslateCommand(options: TranslateRunOptions = {}) {
   }
 
   const detail = formatTranslatePreview(summary);
-  const choice = await vscode.window.showInformationMessage(
-    `Translate ${summary.plan.totalTasks} key${summary.plan.totalTasks === 1 ? '' : 's'} via ${summary.provider}?`,
-    { modal: true, detail },
-    'Apply',
-    'Dry Run Only'
-  );
+  const decision = await promptPreviewDecision({
+    title: `Translate ${summary.plan.totalTasks} key${summary.plan.totalTasks === 1 ? '' : 's'} via ${summary.provider}?`,
+    detail,
+    previewAvailable: false,
+    allowDryRun: true,
+  });
 
-  if (!choice) {
+  if (decision === 'cancel') {
     logVerbose('runTranslateCommand: User cancelled');
     return;
   }
 
-  if (choice === 'Dry Run Only') {
+  if (decision === 'dry-run') {
     vscode.window.showInformationMessage('Preview only. Run again and choose Apply to write changes.', { detail });
     return;
   }
