@@ -31,6 +31,7 @@ import type {
   DynamicKeyWarning,
   SuspiciousKeyWarning,
   SuspiciousKeyReason,
+  LocaleDiffEntry,
 } from '@i18nsmith/core';
 import type { TransformSummary, TransformCandidate, TransformProgress } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
@@ -535,33 +536,10 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
     return;
   }
 
-  // Show diff preview if available
-  if (summary.diffs && summary.diffs.length > 0) {
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Sync Preview');
-    }
-
-    const applyChoice = await vscode.window.showInformationMessage(
-      `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
-      'Apply'
-    );
-    
-    if (applyChoice !== 'Apply') {
-      logVerbose('runSync: User cancelled after viewing diff preview');
-      return;
-    }
-  } else {
-    // Fallback if no diffs available
-    const applyChoice = await vscode.window.showInformationMessage(
-      `Apply ${selection.missing.length + selection.unused.length} locale changes?`,
-      'Apply'
-    );
-    
-    if (applyChoice !== 'Apply') {
-      logVerbose('runSync: User cancelled');
-      return;
-    }
+  const applyConfirmed = await reviewSyncSelection(summary, selection, workspaceFolder.uri.fsPath);
+  if (!applyConfirmed) {
+    logVerbose('runSync: User cancelled after review modal');
+    return;
   }
 
   logVerbose(`runSync: Applying ${selection.missing.length} missing, ${selection.unused.length} unused via CLI preview apply`);
@@ -764,6 +742,170 @@ async function presentSyncQuickPick(summary: SyncSummary): Promise<SyncSelection
   }
 
   return { missing, unused };
+}
+
+async function reviewSyncSelection(
+  summary: SyncSummary,
+  selection: SyncSelectionResult,
+  workspaceRoot: string
+): Promise<boolean> {
+  const detail = formatSyncSelectionDetail(summary, selection, workspaceRoot);
+  const previewAvailable = Boolean(summary.diffs && summary.diffs.length > 0);
+  const buttons = previewAvailable ? ['Preview Changes', 'Apply', 'Dry Run Only'] : ['Apply', 'Dry Run Only'];
+  const total = selection.missing.length + selection.unused.length;
+  let keepPrompting = true;
+
+  while (keepPrompting) {
+    const choice = await vscode.window.showInformationMessage(
+      `Apply ${total} locale change${total === 1 ? '' : 's'}?`,
+      { modal: true, detail },
+      ...buttons
+    );
+
+    if (!choice) {
+      return false;
+    }
+
+    if (choice === 'Dry Run Only') {
+      showSyncDryRunSummary(summary);
+      return false;
+    }
+
+    if (choice === 'Preview Changes') {
+      await showSyncDiffPreview(summary);
+      // Loop back and ask again so the user can apply/cancel after reviewing the diff.
+      continue;
+    }
+
+    keepPrompting = false;
+
+    if (choice === 'Apply') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function formatSyncSelectionDetail(
+  summary: SyncSummary,
+  selection: SyncSelectionResult,
+  workspaceRoot: string
+): string {
+  const lines: string[] = [];
+  const missingCount = selection.missing.length;
+  const unusedCount = selection.unused.length;
+  lines.push(
+    missingCount
+      ? `• ${missingCount} missing key${missingCount === 1 ? '' : 's'} will be backfilled`
+      : '• No missing keys selected'
+  );
+  lines.push(
+    unusedCount
+      ? `• ${unusedCount} unused key${unusedCount === 1 ? '' : 's'} will be pruned`
+      : '• No unused keys selected'
+  );
+
+  const localeLines = summarizeLocalePreview(summary.localePreview ?? [], selection);
+  if (localeLines.length) {
+    lines.push(...localeLines);
+  }
+
+  if (summary.placeholderIssues.length) {
+    lines.push(
+      `• ${summary.placeholderIssues.length} placeholder issue${
+        summary.placeholderIssues.length === 1 ? '' : 's'
+      } detected`
+    );
+  }
+
+  if (summary.emptyValueViolations.length) {
+    lines.push(
+      `• ${summary.emptyValueViolations.length} empty locale value${
+        summary.emptyValueViolations.length === 1 ? '' : 's'
+      } to fix`
+    );
+  }
+
+  if (lastSyncDynamicWarnings.length) {
+    lines.push(
+      `• ${lastSyncDynamicWarnings.length} dynamic key warning${
+        lastSyncDynamicWarnings.length === 1 ? '' : 's'
+      } (whitelist to suppress)`
+    );
+  }
+
+  if (lastSyncSuspiciousWarnings.length) {
+    lines.push(
+      `• ${lastSyncSuspiciousWarnings.length} suspicious key${
+        lastSyncSuspiciousWarnings.length === 1 ? '' : 's'
+      } require rename`
+    );
+  }
+
+  if (summary.backup?.backupPath) {
+    const relativeBackup = path.relative(workspaceRoot, summary.backup.backupPath) || summary.backup.backupPath;
+    lines.push(`• Backup ready at ${relativeBackup}`);
+  }
+
+  return lines.join('\n');
+}
+
+function summarizeLocalePreview(localePreview: SyncSummary['localePreview'], selection: SyncSelectionResult): string[] {
+  if (!localePreview?.length) {
+    return [];
+  }
+  const missingSet = new Set(selection.missing);
+  const unusedSet = new Set(selection.unused);
+  const rows: string[] = [];
+
+  for (const preview of localePreview) {
+    const adds = preview.add.filter((key) => missingSet.has(key));
+    const removes = preview.remove.filter((key) => unusedSet.has(key));
+    if (!adds.length && !removes.length) {
+      continue;
+    }
+    const parts: string[] = [];
+    if (adds.length) {
+      const sample = adds.slice(0, 2);
+      const suffix = adds.length > sample.length ? '…' : '';
+      parts.push(`+${adds.length}${sample.length ? ` (${sample.join(', ')}${suffix})` : ''}`);
+    }
+    if (removes.length) {
+      const sample = removes.slice(0, 2);
+      const suffix = removes.length > sample.length ? '…' : '';
+      parts.push(`-${removes.length}${sample.length ? ` (${sample.join(', ')}${suffix})` : ''}`);
+    }
+    rows.push(`• ${preview.locale}: ${parts.join(' / ')}`);
+  }
+
+  if (rows.length > 5) {
+    const extra = rows.length - 5;
+    return [...rows.slice(0, 5), `• …plus ${extra} more locale${extra === 1 ? '' : 's'}`];
+  }
+
+  return rows;
+}
+
+async function showSyncDiffPreview(summary: SyncSummary) {
+  const diffs: LocaleDiffEntry[] = summary.diffs ?? [];
+  if (!diffs.length) {
+    vscode.window.showInformationMessage('No locale diffs available for preview.');
+    return;
+  }
+
+  let editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    const doc = await vscode.workspace.openTextDocument({ content: '', language: 'plaintext' });
+    editor = await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a file to show diff previews.');
+    return;
+  }
+
+  await diffPeekProvider.showDiffPeek(editor, diffs, 'Sync Preview');
 }
 
 function describeSuspiciousKeyReason(reason?: string): string {
@@ -2604,6 +2746,7 @@ async function runCliCommand(
   }
 
   const command = resolveCliCommand(rawCommand);
+  logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${command}'`);
 
   if (options.confirmMessage || options.interactive) {
     const detailLines: string[] = [];
@@ -2684,11 +2827,33 @@ async function runCliCommand(
       }
     });
 
+    // Safety net: some CLI versions still prompt for confirmation during prune operations.
+    // If that happens, auto-confirm so the VS Code progress notification doesn't hang forever.
+    // (We also pass `--yes` in the command builder; this is a fallback.)
+    const shouldAutoConfirm =
+      !options.interactive && /\bi18nsmith\b[\s\S]*\bsync\b[\s\S]*--apply-preview/.test(rawCommand);
+    const maybeAutoConfirm = (chunk: Buffer | string) => {
+      if (!shouldAutoConfirm) {
+        return;
+      }
+      const text = chunk.toString();
+      // Inquirer prompt is typically rendered as: "Remove these N unused keys? (y/N)"
+      if (/(\(y\/N\))|(\(Y\/n\))/i.test(text) || /Remove these\s+\d+\s+unused keys\?/i.test(text)) {
+        logVerbose('runCliCommand: detected confirmation prompt; auto-sending "y"');
+        try {
+          child.stdin?.write('y\n');
+        } catch {
+          // ignore
+        }
+      }
+    };
+
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const text = chunk.toString();
       stdoutChunks.push(text);
       out.append(text);
       progressTracker?.handleChunk(text);
+      maybeAutoConfirm(chunk);
     });
 
     child.stdout?.on('close', () => {
@@ -2699,6 +2864,7 @@ async function runCliCommand(
       const text = chunk.toString();
       stderrChunks.push(text);
       out.append(text);
+      maybeAutoConfirm(chunk);
     });
   });
 }
