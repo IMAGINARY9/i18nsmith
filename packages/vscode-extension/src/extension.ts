@@ -751,37 +751,37 @@ async function reviewSyncSelection(
 ): Promise<boolean> {
   const detail = formatSyncSelectionDetail(summary, selection, workspaceRoot);
   const previewAvailable = Boolean(summary.diffs && summary.diffs.length > 0);
-  const buttons = previewAvailable ? ['Preview Changes', 'Apply', 'Dry Run Only'] : ['Apply', 'Dry Run Only'];
   const total = selection.missing.length + selection.unused.length;
-  let keepPrompting = true;
+  const buttons: string[] = [];
+  if (previewAvailable) {
+    buttons.push('Preview Changes');
+  }
+  buttons.push('Apply', 'Dry Run Only', 'Cancel');
 
-  while (keepPrompting) {
-    const choice = await vscode.window.showInformationMessage(
-      `Apply ${total} locale change${total === 1 ? '' : 's'}?`,
-      { modal: true, detail },
-      ...buttons
-    );
+  const choice = await vscode.window.showInformationMessage(
+    buildNotificationMessage(`Locale preview ready (${total} change${total === 1 ? '' : 's'})`, detail),
+    ...buttons
+  );
 
-    if (!choice) {
-      return false;
-    }
+  if (!choice || choice === 'Cancel') {
+    return false;
+  }
 
-    if (choice === 'Dry Run Only') {
-      showSyncDryRunSummary(summary);
-      return false;
-    }
+  if (choice === 'Dry Run Only') {
+    showSyncDryRunSummary(summary);
+    return false;
+  }
 
-    if (choice === 'Preview Changes') {
-      await showSyncDiffPreview(summary);
-      // Loop back and ask again so the user can apply/cancel after reviewing the diff.
-      continue;
-    }
+  if (choice === 'Preview Changes') {
+    await showSyncDiffPreview(summary);
+    return showPersistentApplyNotification({
+      title: `Apply ${total} locale change${total === 1 ? '' : 's'}?`,
+      detail,
+    });
+  }
 
-    keepPrompting = false;
-
-    if (choice === 'Apply') {
-      return true;
-    }
+  if (choice === 'Apply') {
+    return true;
   }
 
   return false;
@@ -885,6 +885,47 @@ function summarizeLocalePreview(localePreview: SyncSummary['localePreview'], sel
   }
 
   return rows;
+}
+
+function formatNotificationDetail(detail?: string, maxLines = 4): string | undefined {
+  if (!detail) {
+    return undefined;
+  }
+  const lines = detail
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return undefined;
+  }
+  const truncated = lines.slice(0, maxLines);
+  if (lines.length > maxLines) {
+    truncated.push('…');
+  }
+  return truncated.join('\n');
+}
+
+function buildNotificationMessage(title: string, detail?: string): string {
+  const summary = formatNotificationDetail(detail);
+  return summary ? `${title}\n${summary}` : title;
+}
+
+async function showPersistentApplyNotification(options: {
+  title: string;
+  detail?: string;
+  applyLabel?: string;
+  cancelLabel?: string;
+}): Promise<boolean> {
+  const applyLabel = options.applyLabel ?? 'Apply';
+  const cancelLabel = options.cancelLabel ?? 'Cancel';
+  const message = buildNotificationMessage(options.title, options.detail);
+  const buttons = [applyLabel, cancelLabel].filter(Boolean) as string[];
+  if (!buttons.length) {
+    // No buttons means nothing to wait for; default to false to avoid accidental apply.
+    return false;
+  }
+  const choice = await vscode.window.showInformationMessage(message, ...buttons);
+  return choice === applyLabel;
 }
 
 async function showSyncDiffPreview(summary: SyncSummary) {
@@ -1775,15 +1816,16 @@ async function runTransformCommand(options: TransformRunOptions = {}) {
 
   if (choice === 'Preview Diff') {
     logVerbose('runTransformCommand: Showing diff preview');
-  await showTransformDiff(preview);
-    
-    const applyChoice = await vscode.window.showInformationMessage(
-      `Apply transform to ${label}?`,
-      { modal: true, detail },
-      'Apply'
-    );
-    
-    if (applyChoice !== 'Apply') {
+    await showTransformDiff(preview);
+
+    const applyConfirmed = await showPersistentApplyNotification({
+      title: `Apply transform to ${label}?`,
+      detail,
+      applyLabel: 'Apply',
+      cancelLabel: 'Cancel',
+    });
+
+    if (!applyConfirmed) {
       logVerbose('runTransformCommand: User cancelled after viewing diff');
       return;
     }
@@ -1895,12 +1937,13 @@ async function runRenameCommand(options: { from: string; to: string }) {
 
   if (choice === 'Show Diff') {
     await showSourceDiffPreview(summary.diffs ?? [], 'Rename Preview');
-    const applyChoice = await vscode.window.showInformationMessage(
-      `Apply rename ${from} → ${to}?`,
-      { modal: true, detail },
-      'Apply'
-    );
-    if (applyChoice !== 'Apply') {
+    const confirmed = await showPersistentApplyNotification({
+      title: `Apply rename ${from} → ${to}?`,
+      detail,
+      applyLabel: 'Apply',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) {
       return;
     }
   } else if (choice === 'Dry Run Only') {
