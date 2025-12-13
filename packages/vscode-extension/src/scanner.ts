@@ -2,6 +2,13 @@ import * as vscode from 'vscode';
 import { exec } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import {
+  summarizeReportIssues,
+  summarizeSuggestedCommands,
+  assessStatusLevel,
+  type IssueSeverityLevel,
+  type SeverityCounts,
+} from './report-utils';
 
 export type ScanState = 'idle' | 'scanning' | 'success' | 'error';
 
@@ -9,7 +16,31 @@ export interface ScanResult {
   success: boolean;
   timestamp: Date;
   issueCount: number;
+  severityCounts: SeverityCounts;
+  dominantSeverity: IssueSeverityLevel;
+  suggestionCount: number;
+  suggestionSeverityCounts: SeverityCounts;
+  suggestionDominantSeverity: IssueSeverityLevel;
+  statusLevel: IssueSeverityLevel;
+  statusReasons: string[];
+  warningCount: number;
   error?: string;
+}
+
+type ReportMetrics = Omit<ScanResult, 'success' | 'timestamp' | 'error'>;
+
+function emptyReportMetrics(): ReportMetrics {
+  return {
+    issueCount: 0,
+    severityCounts: { error: 0, warn: 0, info: 0 },
+    dominantSeverity: 'none',
+    suggestionCount: 0,
+    suggestionSeverityCounts: { error: 0, warn: 0, info: 0 },
+    suggestionDominantSeverity: 'none',
+    statusLevel: 'none',
+    statusReasons: ['Workspace healthy'],
+    warningCount: 0,
+  };
 }
 
 /**
@@ -237,10 +268,19 @@ export class SmartScanner implements vscode.Disposable {
   private async runCli(): Promise<ScanResult> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
+      const summary = emptyReportMetrics();
       return {
         success: false,
         timestamp: new Date(),
-        issueCount: 0,
+        issueCount: summary.issueCount,
+        severityCounts: summary.severityCounts,
+        dominantSeverity: summary.dominantSeverity,
+        suggestionCount: summary.suggestionCount,
+        suggestionSeverityCounts: summary.suggestionSeverityCounts,
+        suggestionDominantSeverity: summary.suggestionDominantSeverity,
+        statusLevel: summary.statusLevel,
+        statusReasons: summary.statusReasons,
+        warningCount: summary.warningCount,
         error: 'No workspace folder found',
       };
     }
@@ -282,19 +322,31 @@ export class SmartScanner implements vscode.Disposable {
           // Check if the report file was created/updated successfully
           // The CLI may exit with non-zero codes when issues are found, but that's expected
           const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
-          let issueCount = 0;
           let reportExists = false;
+          let reportSummary: ReportMetrics | null = null;
 
           try {
             if (fs.existsSync(fullReportPath)) {
               reportExists = true;
               const reportContent = fs.readFileSync(fullReportPath, 'utf8');
               const report = JSON.parse(reportContent);
-              // Count actionable items
-              issueCount =
-                (report.actionableItems?.length ?? 0) +
-                (report.diagnostics?.actionableItems?.length ?? 0) +
-                (report.sync?.actionableItems?.length ?? 0);
+              const issueSummary = summarizeReportIssues(report);
+              const suggestionSummary = summarizeSuggestedCommands(report);
+              const assessment = assessStatusLevel(report, {
+                issueSummary,
+                suggestionSummary,
+              });
+              reportSummary = {
+                issueCount: issueSummary.issueCount,
+                severityCounts: issueSummary.severityCounts,
+                dominantSeverity: issueSummary.dominantSeverity,
+                suggestionCount: suggestionSummary.total,
+                suggestionSeverityCounts: suggestionSummary.severityCounts,
+                suggestionDominantSeverity: suggestionSummary.dominantSeverity,
+                statusLevel: assessment.level,
+                statusReasons: assessment.reasons,
+                warningCount: assessment.warningCount,
+              };
             }
           } catch (parseError) {
             this.log(`[Scanner] Failed to parse report: ${parseError}`);
@@ -302,11 +354,20 @@ export class SmartScanner implements vscode.Disposable {
 
           // If report exists and was updated, consider it a success even with non-zero exit
           if (reportExists) {
-            this.log(`[Scanner] Completed successfully (${issueCount} issues found)`);
+            const summary = reportSummary ?? emptyReportMetrics();
+            this.log(`[Scanner] Completed successfully (${summary.issueCount} issues found)`);
             resolve({
               success: true,
               timestamp,
-              issueCount,
+              issueCount: summary.issueCount,
+              severityCounts: summary.severityCounts,
+              dominantSeverity: summary.dominantSeverity,
+              suggestionCount: summary.suggestionCount,
+              suggestionSeverityCounts: summary.suggestionSeverityCounts,
+              suggestionDominantSeverity: summary.suggestionDominantSeverity,
+              statusLevel: summary.statusLevel,
+              statusReasons: summary.statusReasons,
+              warningCount: summary.warningCount,
             });
             return;
           }
@@ -328,10 +389,19 @@ export class SmartScanner implements vscode.Disposable {
               this.log(`[Scanner] Error: ${errorMsg}`);
             }
 
+            const summary = emptyReportMetrics();
             resolve({
               success: false,
               timestamp,
-              issueCount: 0,
+              issueCount: summary.issueCount,
+              severityCounts: summary.severityCounts,
+              dominantSeverity: summary.dominantSeverity,
+              suggestionCount: summary.suggestionCount,
+              suggestionSeverityCounts: summary.suggestionSeverityCounts,
+              suggestionDominantSeverity: summary.suggestionDominantSeverity,
+              statusLevel: summary.statusLevel,
+              statusReasons: summary.statusReasons,
+              warningCount: summary.warningCount,
               error: errorMsg,
             });
             return;
@@ -339,10 +409,19 @@ export class SmartScanner implements vscode.Disposable {
 
           // No report and no error - unusual but treat as success with 0 issues
           this.log(`[Scanner] Completed (no report generated)`);
+          const summary = emptyReportMetrics();
           resolve({
             success: true,
             timestamp,
-            issueCount: 0,
+            issueCount: summary.issueCount,
+            severityCounts: summary.severityCounts,
+            dominantSeverity: summary.dominantSeverity,
+            suggestionCount: summary.suggestionCount,
+            suggestionSeverityCounts: summary.suggestionSeverityCounts,
+            suggestionDominantSeverity: summary.suggestionDominantSeverity,
+            statusLevel: summary.statusLevel,
+            statusReasons: summary.statusReasons,
+            warningCount: summary.warningCount,
           });
         }
       );

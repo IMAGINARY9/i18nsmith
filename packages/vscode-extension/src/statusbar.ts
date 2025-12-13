@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SmartScanner, ScanState, ScanResult } from './scanner';
+import { getSeverityLabel, type IssueSeverityLevel, type SeverityCounts } from './report-utils';
 
 /**
  * Enhanced status bar item that shows:
@@ -74,17 +75,77 @@ export class StatusBarManager implements vscode.Disposable {
 
     const timeAgo = this.formatTimeAgo(result.timestamp);
     
-    if (result.issueCount === 0) {
+  const hasQuickActions = result.warningCount > 0;
+  const actionCount = hasQuickActions ? result.warningCount : result.issueCount;
+
+    if (actionCount === 0) {
       this.statusBarItem.text = '$(check) i18nsmith';
-      this.statusBarItem.tooltip = `No issues found\nLast scan: ${timeAgo}\nClick to re-scan`;
+      this.statusBarItem.tooltip = `Workspace healthy\nLast scan: ${timeAgo}\nClick to open Quick Actions`;
       this.statusBarItem.backgroundColor = undefined;
-    } else {
-      this.statusBarItem.text = `$(warning) i18nsmith: ${result.issueCount}`;
-      this.statusBarItem.tooltip = `${result.issueCount} issue${result.issueCount === 1 ? '' : 's'} found\nLast scan: ${timeAgo}\nClick to re-scan`;
-      this.statusBarItem.backgroundColor = new vscode.ThemeColor(
-        'statusBarItem.warningBackground'
+      return;
+    }
+
+    const severityLabel = getSeverityLabel(result.statusLevel);
+    const icon = this.getSeverityIcon(result.statusLevel);
+    const suggestionBreakdown = this.formatSeverityBreakdown(result.suggestionSeverityCounts);
+    const issueBreakdown = this.formatSeverityBreakdown(result.severityCounts);
+    const reasons = result.statusReasons.length ? result.statusReasons : [`${actionCount} actions available`];
+
+    this.statusBarItem.text = `${icon} i18nsmith: ${actionCount}`;
+    const tooltipLines: string[] = [];
+    if (hasQuickActions) {
+      tooltipLines.push(
+        `${result.warningCount} quick action${result.warningCount === 1 ? '' : 's'} ready (${suggestionBreakdown || 'review'})`
       );
     }
+    tooltipLines.push(
+      `${result.issueCount} diagnostic${result.issueCount === 1 ? '' : 's'} (${issueBreakdown || 'no details'})`
+    );
+    tooltipLines.push(`Severity: ${severityLabel}`);
+    tooltipLines.push(...reasons.map((reason) => `• ${reason}`));
+    tooltipLines.push(`Last scan: ${timeAgo}`);
+    tooltipLines.push('Click to open Quick Actions');
+
+    this.statusBarItem.tooltip = tooltipLines.join('\n');
+    this.statusBarItem.backgroundColor = this.getSeverityBackground(result.statusLevel);
+  }
+
+  private getSeverityIcon(level: IssueSeverityLevel): string {
+    switch (level) {
+      case 'error':
+        return '$(error)';
+      case 'warn':
+        return '$(warning)';
+      case 'info':
+        return '$(info)';
+      default:
+        return '$(globe)';
+    }
+  }
+
+  private getSeverityBackground(level: IssueSeverityLevel): vscode.ThemeColor | undefined {
+    switch (level) {
+      case 'error':
+        return new vscode.ThemeColor('statusBarItem.errorBackground');
+      case 'warn':
+        return new vscode.ThemeColor('statusBarItem.warningBackground');
+      default:
+        return undefined;
+    }
+  }
+
+  private formatSeverityBreakdown(counts: SeverityCounts): string {
+    const parts: string[] = [];
+    if (counts.error) {
+      parts.push(`${counts.error} critical`);
+    }
+    if (counts.warn) {
+      parts.push(`${counts.warn} warning${counts.warn === 1 ? '' : 's'}`);
+    }
+    if (counts.info) {
+      parts.push(`${counts.info} info${counts.info === 1 ? '' : 's'}`);
+    }
+    return parts.join(', ');
   }
 
   private formatTimeAgo(date: Date): string {

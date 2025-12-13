@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { DiagnosticsManager, CheckReport } from './diagnostics';
+import { summarizeReportIssues } from './report-utils';
 
 /**
  * Watches for changes to the i18nsmith report file and updates diagnostics
@@ -99,9 +100,7 @@ export class ReportWatcher implements vscode.Disposable {
       this.diagnosticsManager.updateFromReport(report, workspaceFolder.uri.fsPath);
       
       // Show status message
-      const issueCount = (report.actionableItems?.length || 0) +
-        (report.diagnostics?.actionableItems?.length || 0) +
-        (report.sync?.actionableItems?.length || 0);
+      const issueCount = summarizeReportIssues(report).issueCount;
       
       if (issueCount > 0) {
         vscode.window.setStatusBarMessage(
