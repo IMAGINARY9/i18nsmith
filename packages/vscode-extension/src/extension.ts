@@ -49,6 +49,7 @@ import {
   type PreviewableCommand,
   type TranslateRunOptions,
 } from './preview-intents';
+import { summarizeReportIssues } from './report-utils';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -112,10 +113,8 @@ function buildDiagnosticsRefreshMessage(): string | null {
     return '$(symbol-event) i18nsmith: Diagnostics refreshed.';
   }
 
-  const actionableItems =
-    (report.actionableItems?.length ?? 0) +
-    (report.diagnostics?.actionableItems?.length ?? 0) +
-    (report.sync?.actionableItems?.length ?? 0);
+  const summary = summarizeReportIssues(report);
+  const actionableItems = summary.issueCount;
   const suggestions = report.suggestedCommands?.length ?? 0;
   const missing = report.sync?.missingKeys?.length ?? 0;
   const unused = report.sync?.unusedKeys?.length ?? 0;
@@ -174,11 +173,8 @@ async function showHealthCheckSummary(result: ScanResult | null) {
 
 function buildHealthCheckSummary(result: ScanResult | null): { title: string; detail: string } | null {
   const report = diagnosticsManager?.getReport?.();
-  const actionableItems = [
-    ...(report?.actionableItems ?? []),
-    ...(report?.diagnostics?.actionableItems ?? []),
-    ...(report?.sync?.actionableItems ?? []),
-  ];
+  const summary = summarizeReportIssues(report);
+  const actionableItems = summary.items;
 
   const filesWithIssues = new Set(
     actionableItems
@@ -189,7 +185,7 @@ function buildHealthCheckSummary(result: ScanResult | null): { title: string; de
   const missingKeys = report?.sync?.missingKeys?.length ?? 0;
   const unusedKeys = report?.sync?.unusedKeys?.length ?? 0;
   const suggestionCount = report?.suggestedCommands?.length ?? 0;
-  const issueCount = actionableItems.length || result?.issueCount || 0;
+  const issueCount = summary.issueCount || result?.issueCount || 0;
 
   const title = issueCount
     ? `i18nsmith health check: ${issueCount} issue${issueCount === 1 ? '' : 's'} detected`
