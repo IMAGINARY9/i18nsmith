@@ -12,7 +12,8 @@ describe('command-helpers', () => {
 
     expect(command).toContain('--apply-preview');
     expect(command).toContain('--selection-file');
-    expect(command.endsWith('--prune')).toBe(true);
+  expect(command.includes('--prune')).toBe(true);
+  expect(command.trim().endsWith('--yes')).toBe(true);
     expect(command).toContain('.i18nsmith/previews/sync-preview.json');
     expect(command).toContain('.i18nsmith/previews/selection.json');
   });

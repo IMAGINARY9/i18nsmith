@@ -30,5 +30,6 @@ export function buildSyncApplyCommand(
     '--selection-file',
     quoteCliArg(selectionArg),
     '--prune',
+    '--yes',
   ].join(' ');
 }
