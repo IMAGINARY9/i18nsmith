@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
-import type { TransformSummary } from '@i18nsmith/transformer';
+import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer';
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 
@@ -98,6 +98,59 @@ function printTransformSummary(summary: TransformSummary) {
   }
 }
 
+function createProgressLogger() {
+  let lastPercent = -1;
+  let lastLogTime = 0;
+  let pendingCarriageReturn = false;
+
+  const writeLine = (line: string, final = false) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write(`\r${line}`);
+      pendingCarriageReturn = !final;
+      if (final) {
+        process.stdout.write('\n');
+      }
+    } else {
+      console.log(line);
+    }
+  };
+
+  return {
+    emit(progress: TransformProgress) {
+      if (progress.stage !== 'apply' || progress.total === 0) {
+        return;
+      }
+
+      const now = Date.now();
+      const shouldLog =
+        progress.processed === progress.total ||
+        progress.percent === 0 ||
+        progress.percent >= lastPercent + 2 ||
+        now - lastLogTime > 1500;
+
+      if (!shouldLog) {
+        return;
+      }
+
+      lastPercent = progress.percent;
+      lastLogTime = now;
+      const line =
+        `Applying transforms ${progress.processed}/${progress.total} (${progress.percent}%)` +
+        ` | applied: ${progress.applied ?? 0}` +
+        ` | skipped: ${progress.skipped ?? 0}` +
+        (progress.errors ? ` | errors: ${progress.errors}` : '') +
+        ` | remaining: ${progress.remaining ?? progress.total - progress.processed}`;
+      writeLine(line, progress.processed === progress.total);
+    },
+    flush() {
+      if (pendingCarriageReturn && process.stdout.isTTY) {
+        process.stdout.write('\n');
+        pendingCarriageReturn = false;
+      }
+    },
+  };
+}
+
 export function registerTransform(program: Command) {
   program
     .command('transform')
@@ -147,12 +200,15 @@ export function registerTransform(program: Command) {
         }
         
         const transformer = new Transformer(config, { workspaceRoot: projectRoot });
+        const progressLogger = createProgressLogger();
         const summary = await transformer.run({
           write: options.write,
           targets: options.target,
           diff: diffRequested,
           migrateTextKeys: options.migrateTextKeys,
+          onProgress: progressLogger.emit,
         });
+        progressLogger.flush();
 
         if (previewMode && options.previewOutput) {
           const savedPath = await writePreviewFile('transform', summary, options.previewOutput);
