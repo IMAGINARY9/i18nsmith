@@ -49,11 +49,10 @@ export async function executePreviewPlan(plan: PreviewPlan): Promise<boolean> {
       );
     }
 
-    const applyChoice = await vscode.window.showInformationMessage(
-      `Apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}?`,
-      { modal: true, detail },
-      'Apply Changes'
-    );
+    const applyMessage = detail
+      ? `${plan.title} – apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}?\n${detail}`
+      : `${plan.title} – apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}?`;
+    const applyChoice = await vscode.window.showInformationMessage(applyMessage, 'Apply Changes', 'Cancel');
 
     if (applyChoice !== 'Apply Changes') {
       return false;
