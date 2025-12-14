@@ -56,4 +56,22 @@ describe('workspace config helper', () => {
     }
   });
 
+  it('rejects localesDir containing shell metacharacters', async () => {
+    const { dir } = await createWorkspaceConfig({ localesDir: 'locales;rm -rf' });
+    const result = readWorkspaceConfigSnapshot(dir);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('localesDir');
+    }
+  });
+
+  it('rejects invalid sourceLanguage tokens', async () => {
+    const { dir } = await createWorkspaceConfig({ sourceLanguage: 'en us' });
+    const result = readWorkspaceConfigSnapshot(dir);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('sourceLanguage');
+    }
+  });
+
 });

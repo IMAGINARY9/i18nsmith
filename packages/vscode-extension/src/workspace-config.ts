@@ -1,5 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  hasUnsafeConfigValue,
+  isSafeLanguageTag,
+  isSafeNamespace,
+} from '@i18nsmith/core';
 
 export interface WorkspaceConfigShape {
   localesDir?: string;
@@ -79,6 +84,7 @@ export function invalidateWorkspaceConfigCache(workspaceRoot?: string) {
 }
 
 function buildSnapshot(configPath: string, raw: WorkspaceConfigShape): WorkspaceConfigSnapshot {
+  validateWorkspaceConfig(raw);
   const localesDir =
     typeof raw?.localesDir === 'string' && raw.localesDir?.trim()
       ? raw.localesDir
@@ -96,6 +102,46 @@ function buildSnapshot(configPath: string, raw: WorkspaceConfigShape): Workspace
     keyGeneration: raw?.keyGeneration,
     raw,
   };
+}
+
+function validateWorkspaceConfig(raw: WorkspaceConfigShape): void {
+  const errors: string[] = [];
+
+  const candidateLocalesDir =
+    typeof raw?.localesDir === 'string' && raw.localesDir?.trim()
+      ? raw.localesDir
+      : typeof raw?.globs?.localesDir === 'string' && raw.globs.localesDir?.trim()
+        ? raw.globs.localesDir
+        : undefined;
+  if (candidateLocalesDir && hasUnsafeConfigValue(candidateLocalesDir)) {
+    errors.push('localesDir cannot include control characters or shell metacharacters');
+  }
+
+  if (typeof raw?.sourceLanguage === 'string' && raw.sourceLanguage.trim()) {
+    if (!isSafeLanguageTag(raw.sourceLanguage.trim())) {
+      errors.push('sourceLanguage must use letters, numbers, dashes, or underscores only');
+    }
+  }
+
+  const namespace = raw?.keyGeneration?.namespace;
+  if (typeof namespace === 'string' && namespace.trim()) {
+    if (!isSafeNamespace(namespace.trim())) {
+      errors.push('keyGeneration.namespace may only contain letters, numbers, dot, dash, or underscore');
+    }
+  }
+
+  const shortHashLen = raw?.keyGeneration?.shortHashLen;
+  if (typeof shortHashLen !== 'undefined') {
+    if (typeof shortHashLen !== 'number' || !Number.isFinite(shortHashLen)) {
+      errors.push('keyGeneration.shortHashLen must be a number');
+    } else if (shortHashLen < 4 || shortHashLen > 32) {
+      errors.push('keyGeneration.shortHashLen must be between 4 and 32');
+    }
+  }
+
+  if (errors.length) {
+    throw new Error(`Invalid i18n.config.json:\n- ${errors.join('\n- ')}`);
+  }
 }
 
 function cloneSnapshot(snapshot: WorkspaceConfigSnapshot): WorkspaceConfigSnapshot {

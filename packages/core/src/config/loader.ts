@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { I18nConfig, LoadConfigResult } from './types.js';
 import { normalizeConfig } from './normalizer.js';
+import { assertConfigValid } from './validator.js';
 import { DEFAULT_CONFIG_FILENAME } from './defaults.js';
 import { inferConfig } from './inference.js';
 
@@ -110,6 +111,7 @@ export async function loadConfigWithMeta(
   const projectRoot = path.dirname(resolvedPath);
   const enriched = await inferConfig(rawConfig, { projectRoot });
   const config = normalizeConfig(enriched);
+  assertConfigValid(config);
 
   return {
     config,
