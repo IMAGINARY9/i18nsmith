@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getWorkspaceConfigSnapshot } from './workspace-config';
 
 export class I18nDefinitionProvider implements vscode.DefinitionProvider {
   provideDefinition(
@@ -15,7 +16,9 @@ export class I18nDefinitionProvider implements vscode.DefinitionProvider {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return null;
 
-    const { localesDir, sourceLanguage } = readConfig(workspaceFolder.uri.fsPath);
+  const config = getWorkspaceConfigSnapshot(workspaceFolder.uri.fsPath);
+  const localesDir = config?.localesDir ?? 'locales';
+  const sourceLanguage = config?.sourceLanguage ?? 'en';
     const targetPath = path.join(workspaceFolder.uri.fsPath, localesDir, `${sourceLanguage}.json`);
     if (!fs.existsSync(targetPath)) return null;
 
@@ -32,22 +35,6 @@ export class I18nDefinitionProvider implements vscode.DefinitionProvider {
     // Fallback: top of file
     return new vscode.Location(uri, new vscode.Position(0, 0));
   }
-}
-
-function readConfig(root: string): { localesDir: string; sourceLanguage: string } {
-  const cfgPath = path.join(root, 'i18n.config.json');
-  let localesDir = 'locales';
-  let sourceLanguage = 'en';
-  try {
-    if (fs.existsSync(cfgPath)) {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      localesDir = cfg.localesDir || localesDir;
-      sourceLanguage = cfg.sourceLanguage || sourceLanguage;
-    }
-  } catch (error) {
-    console.warn('Failed to read i18nsmith config for definition provider:', error);
-  }
-  return { localesDir, sourceLanguage };
 }
 
 function findKeyRangeAtPosition(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null {

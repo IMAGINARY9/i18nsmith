@@ -55,6 +55,11 @@ import {
   type TranslateRunOptions,
 } from './preview-intents';
 import { summarizeReportIssues } from './report-utils';
+import {
+  getWorkspaceConfigSnapshot,
+  invalidateWorkspaceConfigCache,
+  readWorkspaceConfigSnapshot,
+} from './workspace-config';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -1766,6 +1771,7 @@ async function persistDynamicKeyAssumptions(
   config.sync.dynamicKeyAssumptions = assumptionMerge.next;
 
   await fsp.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  invalidateWorkspaceConfigCache(workspaceRoot);
 
   return {
     globsAdded: globMerge.added.length,
@@ -1776,22 +1782,14 @@ async function persistDynamicKeyAssumptions(
 async function loadDynamicWhitelistSnapshot(
   workspaceRoot: string
 ): Promise<DynamicWhitelistSnapshot | null> {
-  const configPath = path.join(workspaceRoot, 'i18n.config.json');
-  let raw: string;
-  try {
-    raw = await fsp.readFile(configPath, 'utf8');
-  } catch (error) {
-    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${(error as Error).message}`);
+  const result = readWorkspaceConfigSnapshot(workspaceRoot);
+  if (!result.ok) {
+    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${result.error.message}`);
     return null;
   }
 
-  let config: WritableConfig;
-  try {
-    config = JSON.parse(raw);
-  } catch (error) {
-    vscode.window.showErrorMessage(`Invalid i18n.config.json: ${(error as Error).message}`);
-    return null;
-  }
+  const config = (result.snapshot.raw ?? {}) as WritableConfig;
+  const configPath = result.snapshot.configPath;
 
   config.sync = config.sync ?? {};
 
@@ -3349,18 +3347,9 @@ async function openSourceLocaleFile() {
     return;
   }
   const root = workspaceFolder.uri.fsPath;
-  const configPath = path.join(root, 'i18n.config.json');
-  let localesDir = 'locales';
-  let sourceLanguage = 'en';
-  try {
-    if (fs.existsSync(configPath)) {
-      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      localesDir = cfg.localesDir || localesDir;
-      sourceLanguage = cfg.sourceLanguage || sourceLanguage;
-    }
-  } catch {
-    // use defaults
-  }
+  const snapshot = getWorkspaceConfigSnapshot(root);
+  const localesDir = snapshot?.localesDir ?? 'locales';
+  const sourceLanguage = snapshot?.sourceLanguage ?? 'en';
   const filePath = path.join(root, localesDir, `${sourceLanguage}.json`);
   if (!fs.existsSync(filePath)) {
     vscode.window.showWarningMessage(`Locale file not found: ${path.relative(root, filePath)}`);
