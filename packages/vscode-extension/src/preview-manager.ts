@@ -1,12 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { promises as fs } from 'fs';
 import { resolveCliCommand } from './cli-utils';
 import { quoteCliArg } from './command-helpers';
-
-const execAsync = promisify(exec);
+import { runResolvedCliCommand } from './cli-runner';
 
 export interface PreviewPayload<TSummary> {
   type: string;
@@ -51,12 +48,28 @@ export class PreviewManager {
     this.output.appendLine(`$ ${humanReadable}`);
 
     try {
-      const { stdout, stderr } = await execAsync(resolvedCommand, { cwd: workspaceRoot });
-      if (stdout?.trim()) {
-        this.output.appendLine(stdout.trim());
-      }
-      if (stderr?.trim()) {
-        this.output.appendLine(`[stderr] ${stderr.trim()}`);
+      const stdoutChunks: string[] = [];
+      const stderrChunks: string[] = [];
+      const result = await runResolvedCliCommand(resolvedCommand, {
+        cwd: workspaceRoot,
+        onStdout: (text) => {
+          stdoutChunks.push(text);
+          if (text.trim()) {
+            this.output.appendLine(text.trim());
+          }
+        },
+        onStderr: (text) => {
+          stderrChunks.push(text);
+          if (text.trim()) {
+            this.output.appendLine(`[stderr] ${text.trim()}`);
+          }
+        },
+      });
+
+      if (result.code !== 0 || result.error) {
+        const message = result.error?.message || `Command exited with code ${result.code}`;
+        this.output.appendLine(`[error] ${message}`);
+        throw new Error(message);
       }
 
       const raw = await fs.readFile(previewPath, 'utf8');
@@ -65,19 +78,13 @@ export class PreviewManager {
       return {
         payload,
         previewPath,
-        stdout: stdout ?? '',
-        stderr: stderr ?? '',
-        command: humanReadable,
+        stdout: stdoutChunks.join(''),
+        stderr: stderrChunks.join(''),
+        command: resolvedCommand.display,
       };
     } catch (error) {
       if (error && typeof error === 'object') {
         const err = error as { message?: string; stdout?: string; stderr?: string };
-        if (err.stdout?.trim()) {
-          this.output.appendLine(err.stdout.trim());
-        }
-        if (err.stderr?.trim()) {
-          this.output.appendLine(`[stderr] ${err.stderr.trim()}`);
-        }
         if (err.message) {
           this.output.appendLine(`[error] ${err.message}`);
         }

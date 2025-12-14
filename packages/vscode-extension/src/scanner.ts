@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
@@ -9,6 +8,9 @@ import {
   type IssueSeverityLevel,
   type SeverityCounts,
 } from './report-utils';
+import { resolveCliCommand } from './cli-utils';
+import { runResolvedCliCommand } from './cli-runner';
+import { quoteCliArg } from './command-helpers';
 
 export type ScanState = 'idle' | 'scanning' | 'success' | 'error';
 
@@ -286,146 +288,140 @@ export class SmartScanner implements vscode.Disposable {
     }
 
     const config = vscode.workspace.getConfiguration('i18nsmith');
-    let cliPath = config.get<string>('cliPath', '');
+    const configuredCliPath = (config.get<string>('cliPath', '') ?? '').trim();
+    let preferredCliPath = configuredCliPath;
 
-    // If no explicit cliPath, try to detect local monorepo
-    if (!cliPath) {
+    if (!preferredCliPath) {
       const localMonorepo = this.detectLocalMonorepo();
       if (localMonorepo) {
-        cliPath = localMonorepo;
+        preferredCliPath = localMonorepo;
       }
     }
 
     const reportPath = config.get<string>('reportPath', '.i18nsmith/check-report.json');
+    const commandParts = ['i18nsmith', 'check', '--json', '--report', quoteCliArg(reportPath)];
+    const humanReadable = commandParts.join(' ').trim();
+    const resolvedCommand = resolveCliCommand(humanReadable, { preferredCliPath });
 
-    const cmd = cliPath
-      ? `node "${cliPath}" check --json --report "${reportPath}"`
-      : `npx i18nsmith@latest check --json --report "${reportPath}"`;
-
-    this.log(`[Scanner] Running: ${cmd}`);
+    this.log(`[Scanner] Running: ${resolvedCommand.display}`);
     this.log(`[Scanner] CWD: ${workspaceFolder.uri.fsPath}`);
 
-    return new Promise((resolve) => {
-      exec(
-        cmd,
-        { cwd: workspaceFolder.uri.fsPath, timeout: 60000 },
-        (error, stdout, stderr) => {
-          const timestamp = new Date();
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
 
-          if (stdout) {
-            this.log(stdout);
-          }
-          if (stderr) {
-            this.log(`[stderr] ${stderr}`);
-          }
-
-          // Check if the report file was created/updated successfully
-          // The CLI may exit with non-zero codes when issues are found, but that's expected
-          const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
-          let reportExists = false;
-          let reportSummary: ReportMetrics | null = null;
-
-          try {
-            if (fs.existsSync(fullReportPath)) {
-              reportExists = true;
-              const reportContent = fs.readFileSync(fullReportPath, 'utf8');
-              const report = JSON.parse(reportContent);
-              const issueSummary = summarizeReportIssues(report);
-              const suggestionSummary = summarizeSuggestedCommands(report);
-              const assessment = assessStatusLevel(report, {
-                issueSummary,
-                suggestionSummary,
-              });
-              reportSummary = {
-                issueCount: issueSummary.issueCount,
-                severityCounts: issueSummary.severityCounts,
-                dominantSeverity: issueSummary.dominantSeverity,
-                suggestionCount: suggestionSummary.total,
-                suggestionSeverityCounts: suggestionSummary.severityCounts,
-                suggestionDominantSeverity: suggestionSummary.dominantSeverity,
-                statusLevel: assessment.level,
-                statusReasons: assessment.reasons,
-                warningCount: assessment.warningCount,
-              };
-            }
-          } catch (parseError) {
-            this.log(`[Scanner] Failed to parse report: ${parseError}`);
-          }
-
-          // If report exists and was updated, consider it a success even with non-zero exit
-          if (reportExists) {
-            const summary = reportSummary ?? emptyReportMetrics();
-            this.log(`[Scanner] Completed successfully (${summary.issueCount} issues found)`);
-            resolve({
-              success: true,
-              timestamp,
-              issueCount: summary.issueCount,
-              severityCounts: summary.severityCounts,
-              dominantSeverity: summary.dominantSeverity,
-              suggestionCount: summary.suggestionCount,
-              suggestionSeverityCounts: summary.suggestionSeverityCounts,
-              suggestionDominantSeverity: summary.suggestionDominantSeverity,
-              statusLevel: summary.statusLevel,
-              statusReasons: summary.statusReasons,
-              warningCount: summary.warningCount,
-            });
-            return;
-          }
-
-          // Only treat as error if report doesn't exist AND there was an exec error
-          if (error) {
-            const errorMsg = error.message || '';
-            
-            // Check if this is a "not found" error (E404 from npm or npx)
-            const isNotFound = errorMsg.includes('E404') || 
-                               errorMsg.includes('not in this registry') ||
-                               stderr.includes('E404') ||
-                               stderr.includes('not in this registry');
-            
-            if (isNotFound && !cliPath) {
-              this.log(`[Scanner] i18nsmith CLI not found. Install it with: npm install -D i18nsmith`);
-              this.log(`[Scanner] Or set 'i18nsmith.cliPath' in settings to point to a local CLI.`);
-            } else {
-              this.log(`[Scanner] Error: ${errorMsg}`);
-            }
-
-            const summary = emptyReportMetrics();
-            resolve({
-              success: false,
-              timestamp,
-              issueCount: summary.issueCount,
-              severityCounts: summary.severityCounts,
-              dominantSeverity: summary.dominantSeverity,
-              suggestionCount: summary.suggestionCount,
-              suggestionSeverityCounts: summary.suggestionSeverityCounts,
-              suggestionDominantSeverity: summary.suggestionDominantSeverity,
-              statusLevel: summary.statusLevel,
-              statusReasons: summary.statusReasons,
-              warningCount: summary.warningCount,
-              error: errorMsg,
-            });
-            return;
-          }
-
-          // No report and no error - unusual but treat as success with 0 issues
-          this.log(`[Scanner] Completed (no report generated)`);
-          const summary = emptyReportMetrics();
-          resolve({
-            success: true,
-            timestamp,
-            issueCount: summary.issueCount,
-            severityCounts: summary.severityCounts,
-            dominantSeverity: summary.dominantSeverity,
-            suggestionCount: summary.suggestionCount,
-            suggestionSeverityCounts: summary.suggestionSeverityCounts,
-            suggestionDominantSeverity: summary.suggestionDominantSeverity,
-            statusLevel: summary.statusLevel,
-            statusReasons: summary.statusReasons,
-            warningCount: summary.warningCount,
-          });
-        }
-      );
+    const result = await runResolvedCliCommand(resolvedCommand, {
+      cwd: workspaceFolder.uri.fsPath,
+      timeoutMs: 60000,
+      onStdout: (text) => {
+        stdoutChunks.push(text);
+        this.log(text);
+      },
+      onStderr: (text) => {
+        stderrChunks.push(text);
+        this.log(`[stderr] ${text}`);
+      },
     });
+
+    const timestamp = new Date();
+    const aggregatedStderr = stderrChunks.join('');
+
+    const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
+    let reportExists = false;
+    let reportSummary: ReportMetrics | null = null;
+
+    try {
+      if (fs.existsSync(fullReportPath)) {
+        reportExists = true;
+        const reportContent = fs.readFileSync(fullReportPath, 'utf8');
+        const report = JSON.parse(reportContent);
+        const issueSummary = summarizeReportIssues(report);
+        const suggestionSummary = summarizeSuggestedCommands(report);
+        const assessment = assessStatusLevel(report, {
+          issueSummary,
+          suggestionSummary,
+        });
+        reportSummary = {
+          issueCount: issueSummary.issueCount,
+          severityCounts: issueSummary.severityCounts,
+          dominantSeverity: issueSummary.dominantSeverity,
+          suggestionCount: suggestionSummary.total,
+          suggestionSeverityCounts: suggestionSummary.severityCounts,
+          suggestionDominantSeverity: suggestionSummary.dominantSeverity,
+          statusLevel: assessment.level,
+          statusReasons: assessment.reasons,
+          warningCount: assessment.warningCount,
+        };
+      }
+    } catch (parseError) {
+      this.log(`[Scanner] Failed to parse report: ${parseError}`);
+    }
+
+    if (reportExists) {
+      const summary = reportSummary ?? emptyReportMetrics();
+      this.log(`[Scanner] Completed successfully (${summary.issueCount} issues found)`);
+      return {
+        success: true,
+        timestamp,
+        issueCount: summary.issueCount,
+        severityCounts: summary.severityCounts,
+        dominantSeverity: summary.dominantSeverity,
+        suggestionCount: summary.suggestionCount,
+        suggestionSeverityCounts: summary.suggestionSeverityCounts,
+        suggestionDominantSeverity: summary.suggestionDominantSeverity,
+        statusLevel: summary.statusLevel,
+        statusReasons: summary.statusReasons,
+        warningCount: summary.warningCount,
+      };
+    }
+
+    if (result.code !== 0 || result.error) {
+      const errorMsg = result.error?.message || aggregatedStderr || `Command exited with code ${result.code}`;
+      const stderrText = aggregatedStderr;
+      const isNotFound =
+        errorMsg.includes('E404') ||
+        errorMsg.includes('not in this registry') ||
+        stderrText.includes('E404') ||
+        stderrText.includes('not in this registry');
+
+      if (isNotFound && !configuredCliPath) {
+        this.log(`[Scanner] i18nsmith CLI not found. Install it with: npm install -D i18nsmith`);
+        this.log(`[Scanner] Or set 'i18nsmith.cliPath' in settings to point to a local CLI.`);
+      } else {
+        this.log(`[Scanner] Error: ${errorMsg}`);
+      }
+
+      const summary = emptyReportMetrics();
+      return {
+        success: false,
+        timestamp,
+        issueCount: summary.issueCount,
+        severityCounts: summary.severityCounts,
+        dominantSeverity: summary.dominantSeverity,
+        suggestionCount: summary.suggestionCount,
+        suggestionSeverityCounts: summary.suggestionSeverityCounts,
+        suggestionDominantSeverity: summary.suggestionDominantSeverity,
+        statusLevel: summary.statusLevel,
+        statusReasons: summary.statusReasons,
+        warningCount: summary.warningCount,
+        error: errorMsg,
+      };
+    }
+
+    this.log(`[Scanner] Completed (no report generated)`);
+    const summary = emptyReportMetrics();
+    return {
+      success: true,
+      timestamp,
+      issueCount: summary.issueCount,
+      severityCounts: summary.severityCounts,
+      dominantSeverity: summary.dominantSeverity,
+      suggestionCount: summary.suggestionCount,
+      suggestionSeverityCounts: summary.suggestionSeverityCounts,
+      suggestionDominantSeverity: summary.suggestionDominantSeverity,
+      statusLevel: summary.statusLevel,
+      statusReasons: summary.statusReasons,
+      warningCount: summary.warningCount,
+    };
   }
 
   private setState(state: ScanState) {

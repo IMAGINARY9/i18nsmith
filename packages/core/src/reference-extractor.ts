@@ -10,6 +10,7 @@ import path from 'path';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
+import { createDefaultProject } from './project-factory.js';
 
 export interface TranslationReference {
   key: string;
@@ -82,7 +83,7 @@ export class ReferenceExtractor {
     options: ReferenceExtractorOptions
   ) {
     this.workspaceRoot = options.workspaceRoot;
-    this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
+  this.project = options.project ?? createDefaultProject();
     this.cacheDir = options.cacheDir ?? path.join(this.workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
     this.translationIdentifier = options.translationIdentifier ??
       config.translationAdapter?.hookName ?? 't';
