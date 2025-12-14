@@ -1487,6 +1487,7 @@ function buildSuspiciousRenameReport(
   const generator = new KeyGenerator({
     namespace: meta.config.keyGeneration?.namespace,
     hashLength: meta.config.keyGeneration?.shortHashLen,
+    workspaceRoot: meta.projectRoot,
   });
 
   const localesDir = path.join(meta.projectRoot, meta.config.localesDir ?? 'locales');

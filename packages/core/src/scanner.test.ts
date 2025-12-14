@@ -179,6 +179,7 @@ describe('Scanner', () => {
             <p>30%</p>
             <p>a150800</p>
             <p>*</p>
+            <p>x</p>
             <p>Ready ✅</p>
             {t('All set now')}
             {t('30% off')}

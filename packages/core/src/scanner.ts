@@ -615,18 +615,22 @@ export class Scanner {
     const totalLength = text.length || 1;
 
     if (letterCount === 0) {
-      return { include: false, reason: "no_letters" };
+      return { include: false, reason: 'no_letters' };
     }
 
     const minLetterCount = this.config.extraction?.minLetterCount ?? 2;
     const minLetterRatio = this.config.extraction?.minLetterRatio ?? 0.25;
     const letterRatio = letterCount / totalLength;
 
+    if (letterCount <= 1 && totalLength <= 2) {
+      return { include: false, reason: 'insufficient_letters' };
+    }
+
     if (letterCount >= minLetterCount || letterRatio >= minLetterRatio) {
       return { include: true };
     }
 
-    return { include: false, reason: "insufficient_letters" };
+    return { include: false, reason: 'insufficient_letters' };
   }
 
   private matchesPattern(text: string, patterns: RegExp[]): boolean {
@@ -694,12 +698,24 @@ export class Scanner {
 
   private decodeEntities(text: string): string {
     const namedEntities: Record<string, string> = {
-      amp: "&",
-      lt: "<",
-      gt: ">",
+      amp: '&',
+      lt: '<',
+      gt: '>',
       quot: '"',
       apos: "'",
-      nbsp: " ",
+      nbsp: ' ',
+      ldquo: '“',
+      rdquo: '”',
+      lsquo: '‘',
+      rsquo: '’',
+      mdash: '—',
+      ndash: '–',
+      hellip: '…',
+      middot: '·',
+      copy: '©',
+      reg: '®',
+      trade: '™',
+      bull: '•',
     };
 
     return text.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (match, entity) => {
