@@ -1,3 +1,6 @@
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import { describe, it, expect } from 'vitest';
 import { Project } from 'ts-morph';
 import { Scanner } from './scanner';
@@ -380,5 +383,53 @@ describe('Scanner', () => {
 
     const nonSentence = summary.buckets.skipped.find((entry) => entry.reason === 'non_sentence');
     expect(nonSentence?.text).toBe('Nospace');
+  });
+
+  it('streams workspace files to avoid retaining large AST sets', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scanner-stream-'));
+
+    const files = [
+      ['src/App.tsx', `<div>Hello One</div>`],
+      ['src/Dashboard.tsx', `<main><p>Hello Two</p></main>`],
+      ['src/forms/Widget.tsx', `<span>Hello Three</span>`],
+    ] as const;
+
+    try {
+      for (const [relative, contents] of files) {
+        const fullPath = path.join(tempDir, relative);
+        await fs.mkdir(path.dirname(fullPath), { recursive: true });
+        await fs.writeFile(
+          fullPath,
+          `import React from 'react';
+           export function Component() {
+             return ${contents};
+           }
+          `
+        );
+      }
+
+      const config = {
+        sourceLanguage: 'en',
+        targetLanguages: [],
+        localesDir: 'locales',
+        include: ['src/**/*.{ts,tsx}'],
+        minTextLength: 1,
+      };
+
+      const scanner = new Scanner(config, { workspaceRoot: tempDir });
+      const summary = scanner.scan();
+
+      expect(summary.filesScanned).toBe(files.length);
+      expect(summary.candidates).toHaveLength(files.length);
+
+      const internalProject = (scanner as unknown as { project: Project }).project;
+      expect(internalProject.getSourceFiles().length).toBe(0);
+
+      const followUp = scanner.scan();
+      expect(followUp.filesScanned).toBe(summary.filesScanned);
+      expect(followUp.candidates.length).toBe(summary.candidates.length);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
