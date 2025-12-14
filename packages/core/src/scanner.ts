@@ -114,6 +114,8 @@ const TRANSLATABLE_ATTRIBUTES = new Set([
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
+const HTML_ENTITY_PATTERN = /^&[a-z][a-z0-9-]*;$/i;
+const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
 
 export class Scanner {
   private project: Project;
@@ -614,7 +616,7 @@ export class Scanner {
     const totalLength = text.length || 1;
 
     if (letterCount === 0) {
-      return { include: false, reason: 'no_letters' };
+      return { include: false, reason: "no_letters" };
     }
 
     const minLetterCount = this.config.extraction?.minLetterCount ?? 2;
@@ -622,18 +624,89 @@ export class Scanner {
     const letterRatio = letterCount / totalLength;
 
     if (letterCount <= 1 && totalLength <= 2) {
-      return { include: false, reason: 'insufficient_letters' };
+      return { include: false, reason: "insufficient_letters" };
     }
 
-    if (letterCount >= minLetterCount || letterRatio >= minLetterRatio) {
-      return { include: true };
+    if (letterCount < minLetterCount && letterRatio < minLetterRatio) {
+      return { include: false, reason: "insufficient_letters" };
     }
 
-    return { include: false, reason: 'insufficient_letters' };
+    if (!this.hasMeaningfulTextShape(text)) {
+      return { include: false, reason: "non_sentence" };
+    }
+
+    return { include: true };
   }
 
   private matchesPattern(text: string, patterns: RegExp[]): boolean {
     return patterns.some((pattern) => pattern.test(text));
+  }
+
+  private hasMeaningfulTextShape(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    if (HTML_ENTITY_PATTERN.test(trimmed)) {
+      return false;
+    }
+
+    if (REPEATED_SYMBOL_PATTERN.test(trimmed)) {
+      return false;
+    }
+
+    const rawTokens = trimmed.split(/\s+/).filter(Boolean);
+    if (!rawTokens.length) {
+      return false;
+    }
+
+    const sanitizedTokens = rawTokens
+      .map((token) =>
+        token
+          .replace(/^[^\p{L}]+/u, "")
+          .replace(/[^\p{L}]+$/u, "")
+      )
+      .filter(Boolean);
+
+    if (!sanitizedTokens.length) {
+      return false;
+    }
+
+    const longestToken = sanitizedTokens.reduce(
+      (max, token) => Math.max(max, token.length),
+      0
+    );
+    const letterTotal = sanitizedTokens.reduce(
+      (sum, token) => sum + token.length,
+      0
+    );
+
+    const hasMeaningfulWord =
+      longestToken >= 4 || (rawTokens.length >= 2 && longestToken >= 3);
+
+    const symbolCount = (trimmed.match(/[\p{S}\p{P}]/gu) ?? []).length;
+    if (symbolCount && symbolCount / Math.max(trimmed.length, 1) >= 0.6) {
+      if (longestToken < 4) {
+        return false;
+      }
+    }
+
+    if (rawTokens.length === 1) {
+      const cleaned = sanitizedTokens[0];
+      if (cleaned.length <= 2) {
+        return false;
+      }
+      if (/^[\p{Lu}\d]+$/u.test(cleaned) && cleaned.length <= 4) {
+        return false;
+      }
+    }
+
+    if (!hasMeaningfulWord && letterTotal < 6) {
+      return false;
+    }
+
+    return true;
   }
 
   private getConfidenceBucket(candidate: ScanCandidate): "high" | "review" {

@@ -36,14 +36,17 @@ describe('Scanner', () => {
 
     const summary = scanner.scan();
 
-  expect(summary.filesScanned).toBe(1);
-  expect(summary.filesExamined).toHaveLength(1);
-    expect(summary.candidates).toHaveLength(3);
+    expect(summary.filesScanned).toBe(1);
+    expect(summary.filesExamined).toHaveLength(1);
+    expect(summary.candidates).toHaveLength(2);
 
-    const texts = summary.candidates.map(c => c.text);
+    const texts = summary.candidates.map((c) => c.text);
     expect(texts).toContain('Hello World');
     expect(texts).toContain('Enter name');
-    expect(texts).toContain('OK');
+    expect(texts).not.toContain('OK');
+
+    const lowLetterSkip = summary.buckets.skipped.find((entry) => entry.text === 'OK');
+    expect(lowLetterSkip?.reason).toBe('non_sentence');
   });
 
   it('should respect minTextLength', () => {
@@ -56,7 +59,7 @@ describe('Scanner', () => {
         return (
           <div>
             <span>A</span>
-            <span>AB</span>
+            <span>Label</span>
           </div>
         );
       }
@@ -75,9 +78,9 @@ describe('Scanner', () => {
 
     const summary = scanner.scan();
 
-  expect(summary.candidates).toHaveLength(1);
-  expect(summary.filesExamined).toHaveLength(1);
-    expect(summary.candidates[0].text).toBe('AB');
+    expect(summary.candidates).toHaveLength(1);
+    expect(summary.filesExamined).toHaveLength(1);
+  expect(summary.candidates[0].text).toBe('Label');
   });
 
   it('captures translation calls accessed via properties when scanCalls enabled', () => {
@@ -372,18 +375,20 @@ describe('Scanner', () => {
     const scanner = new Scanner(config, { workspaceRoot: '/test', project });
     const summary = scanner.scan({ scanCalls: true } as any);
 
-    const highTexts = summary.buckets.highConfidence.map((candidate) => candidate.text);
-    const reviewTexts = summary.buckets.needsReview.map((candidate) => candidate.text);
+  const highTexts = summary.buckets.highConfidence.map((candidate) => candidate.text);
+  const reviewTexts = summary.buckets.needsReview.map((candidate) => candidate.text);
 
-    expect(highTexts).toContain('Welcome aboard traveler');
-    expect(reviewTexts).toContain('OK');
-    expect(reviewTexts).toContain('Go');
+  expect(highTexts).toContain('Welcome aboard traveler');
+  expect(reviewTexts).toContain('Go');
+
+  const skippedOk = summary.buckets.skipped.find((entry) => entry.text === 'OK');
+  expect(skippedOk?.reason).toBe('non_sentence');
 
     const skipReasons = summary.buckets.skipped.map((entry) => entry.reason);
     expect(skipReasons).toContain('directive_skip');
 
-    const nonSentence = summary.buckets.skipped.find((entry) => entry.reason === 'non_sentence');
-    expect(nonSentence?.text).toBe('Nospace');
+  const nonSentence = summary.buckets.skipped.find((entry) => entry.reason === 'non_sentence');
+  expect(nonSentence?.text).toBe('OK');
   });
 
   it('streams workspace files to avoid retaining large AST sets', async () => {
@@ -432,5 +437,45 @@ describe('Scanner', () => {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('skips html entities and system-like short labels unless forced', () => {
+    const project = new Project();
+    project.createSourceFile(
+      'entities-and-labels.tsx',
+      `
+      export function Example() {
+        return (
+          <section>
+            <p>{'&ldquo;'}</p>
+            <p>{'&rdquo;'}</p>
+            <p>{'--'}</p>
+            <p>CPU</p>
+            <p data-i18n-force-extract>Go</p>
+            <p>Welcome aboard</p>
+          </section>
+        );
+      }
+      `
+    );
+
+    const config = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: 'locales',
+      include: ['**/*.{ts,tsx}'],
+      minTextLength: 1,
+    };
+
+    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const summary = scanner.scan();
+    const texts = summary.candidates.map((candidate) => candidate.text);
+
+    expect(texts).toContain('Go');
+    expect(texts).toContain('Welcome aboard');
+    expect(texts).not.toContain('CPU');
+    expect(texts).not.toContain('“');
+    expect(texts).not.toContain('”');
+    expect(texts).not.toContain('--');
   });
 });
