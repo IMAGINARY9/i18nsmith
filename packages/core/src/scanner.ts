@@ -9,7 +9,7 @@ import {
   SyntaxKind,
 } from 'ts-morph';
 import fg from 'fast-glob';
-import { I18nConfig } from './config.js';
+import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE, I18nConfig } from './config.js';
 
 export type CandidateKind = 'jsx-text' | 'jsx-attribute' | 'jsx-expression' | 'call-expression';
 
@@ -65,6 +65,11 @@ export interface ScanSummary {
   buckets: ScanBuckets;
 }
 
+type GlobPatterns = {
+  include: string[];
+  exclude: string[];
+};
+
 export interface ScannerNodeCandidate extends ScanCandidate {
   node: Node;
   sourceFile: SourceFile;
@@ -111,6 +116,7 @@ export class Scanner {
   private preserveNewlines: boolean;
   private decodeHtmlEntities: boolean;
   private activeSkipLog?: SkippedCandidate[];
+  private readonly usesExternalProject: boolean;
 
   constructor(config: I18nConfig, options: ScannerOptions = {}) {
     this.config = config;
@@ -118,6 +124,7 @@ export class Scanner {
     this.project = options.project ?? new Project({
       skipAddingFilesFromTsConfig: true,
     });
+    this.usesExternalProject = Boolean(options.project);
     this.allowPatterns = this.compilePatterns(this.config.extraction?.allowPatterns);
     this.denyPatterns = this.compilePatterns(this.config.extraction?.denyPatterns);
     this.preserveNewlines = this.config.extraction?.preserveNewlines ?? false;
@@ -139,11 +146,21 @@ export class Scanner {
         const existing = this.project.getSourceFile(absolutePath);
         return existing ?? this.project.addSourceFileAtPath(absolutePath);
       });
-    } else {
+    } else if (this.usesExternalProject) {
       files = this.project.getSourceFiles();
-      if (files.length === 0) {
-        files = this.project.addSourceFilesAtPaths(patterns);
+      if (!files.length) {
+        const workspacePaths = this.resolveWorkspaceFiles(patterns);
+        files = workspacePaths.map((absolutePath) => {
+          const existing = this.project.getSourceFile(absolutePath);
+          return existing ?? this.project.addSourceFileAtPath(absolutePath);
+        });
       }
+    } else {
+      const workspacePaths = this.resolveWorkspaceFiles(patterns);
+      files = workspacePaths.map((absolutePath) => {
+        const existing = this.project.getSourceFile(absolutePath);
+        return existing ?? this.project.addSourceFileAtPath(absolutePath);
+      });
     }
 
     const candidates: ScanCandidate[] = [];
@@ -209,7 +226,10 @@ export class Scanner {
 
     if (files.length === 0) {
       console.warn('⚠️  Scanner found 0 files. Check your "include" patterns in i18n.config.json.');
-      console.warn(`   Current patterns: ${patterns.join(', ')}`);
+      const includeList = patterns.include.length ? patterns.include.join(', ') : '(none)';
+      const excludeList = patterns.exclude.length ? patterns.exclude.join(', ') : '(none)';
+      console.warn(`   Include patterns: ${includeList}`);
+      console.warn(`   Exclude patterns: ${excludeList}`);
     }
 
     if (collectNodes) {
@@ -716,12 +736,30 @@ export class Scanner {
     return tagNameNode ? `<${tagNameNode.getText()}>` : undefined;
   }
 
-  private getGlobPatterns(): string[] {
-    const includes = Array.isArray(this.config.include) && this.config.include.length
+  private getGlobPatterns(): GlobPatterns {
+    const include = Array.isArray(this.config.include) && this.config.include.length
       ? this.config.include
-      : ['src/**/*.{ts,tsx,js,jsx}'];
-    const excludes = this.config.exclude?.map((pattern) => `!${pattern}`) ?? [];
-    return [...includes, ...excludes];
+      : DEFAULT_INCLUDE;
+    const exclude = Array.isArray(this.config.exclude)
+      ? this.config.exclude
+      : DEFAULT_EXCLUDE;
+    return { include, exclude };
+  }
+
+  private resolveWorkspaceFiles(patterns: GlobPatterns): string[] {
+    const includePatterns = patterns.include.length ? patterns.include : DEFAULT_INCLUDE;
+    const excludePatterns = patterns.exclude.length ? patterns.exclude : [];
+
+    const matches = fg.sync(includePatterns, {
+      cwd: this.workspaceRoot,
+      ignore: excludePatterns,
+      onlyFiles: true,
+      unique: true,
+      absolute: true,
+      followSymbolicLinks: true,
+    }) as string[];
+
+    return matches.sort((a, b) => a.localeCompare(b));
   }
 
   private resolveTargetFiles(targets: string[]): string[] {
