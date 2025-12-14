@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { KeyGenerator } from '@i18nsmith/core';
 import type { SuspiciousKeyWarning } from '@i18nsmith/core';
 import { DiagnosticsManager } from './diagnostics';
+import { buildSuspiciousKeySuggestion } from './suspicious-key-helpers';
 
 /**
  * Code Action provider for i18nsmith quick fixes
@@ -105,7 +103,11 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const warning = buildSuspiciousKeyWarning(key, document, diagnostic);
-    const suggestedKey = buildSuspiciousKeySuggestion(key, workspaceRoot);
+    const suggestedKey = buildSuspiciousKeySuggestion(
+      key,
+      workspaceRoot,
+      warning.filePath ?? document.uri.fsPath
+    );
 
     const action = new vscode.CodeAction(
       `Refactor suspicious key to "${suggestedKey}"`,
@@ -290,28 +292,6 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   }
 }
 
-/**
- * Set a nested value in an object using dot notation
- */
-function buildSuspiciousKeySuggestion(key: string, workspaceRoot?: string): string {
-  try {
-    const config = loadWorkspaceConfig(workspaceRoot);
-    const generator = new KeyGenerator({
-      namespace: config.keyGeneration?.namespace,
-      hashLength: config.keyGeneration?.shortHashLen,
-      workspaceRoot,
-    });
-    const baseText = key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
-    const generated = generator.generate(baseText || key, {
-      filePath: workspaceRoot ?? '',
-      kind: 'jsx-text',
-    });
-    return generated.key;
-  } catch {
-    return key;
-  }
-}
-
 function buildSuspiciousKeyWarning(
   key: string,
   document: vscode.TextDocument,
@@ -334,36 +314,6 @@ function extractSuspiciousReasonCode(message: string): string | undefined {
     return undefined;
   }
   return match[1].trim().toLowerCase().replace(/\s+/g, '-');
-}
-
-interface LightweightWorkspaceConfig {
-  localesDir?: string;
-  keyGeneration?: {
-    namespace?: string;
-    shortHashLen?: number;
-  };
-}
-
-function loadWorkspaceConfig(workspaceRoot?: string): LightweightWorkspaceConfig {
-  if (!workspaceRoot) {
-    return {};
-  }
-
-  const configPath = path.join(workspaceRoot, 'i18n.config.json');
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-
-  try {
-    const content = fs.readFileSync(configPath, 'utf8');
-    const parsed = JSON.parse(content);
-    return {
-      localesDir: parsed.localesDir,
-      keyGeneration: parsed.keyGeneration,
-    };
-  } catch {
-    return {};
-  }
 }
 
 function extractSuspiciousKeyFromMessage(message: string): string | null {
