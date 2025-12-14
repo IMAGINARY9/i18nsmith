@@ -129,11 +129,7 @@ export class Scanner {
   constructor(config: I18nConfig, options: ScannerOptions = {}) {
     this.config = config;
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
-    this.project =
-      options.project ??
-      new Project({
-        skipAddingFilesFromTsConfig: true,
-      });
+    this.project = options.project ?? this.createProject();
     this.usesExternalProject = Boolean(options.project);
     this.allowPatterns = this.compilePatterns(
       this.config.extraction?.allowPatterns
@@ -156,6 +152,9 @@ export class Scanner {
   ): ScanSummary | DetailedScanSummary {
     const collectNodes = options?.collectNodes ?? false;
     const scanCalls = options?.scanCalls ?? false;
+    if (!this.usesExternalProject) {
+      this.project = this.createProject();
+    }
     const patterns = this.getGlobPatterns();
     const targetFiles = options?.targets?.length
       ? this.resolveTargetFiles(options.targets)
@@ -878,11 +877,21 @@ export class Scanner {
       }
       return files;
     }
-
     const workspacePaths = this.resolveWorkspaceFiles(patterns);
     return workspacePaths.map((absolutePath) =>
       this.addOrGetSourceFile(absolutePath)
     );
+  }
+
+  private createProject(): Project {
+    return new Project({
+      skipAddingFilesFromTsConfig: true,
+      skipFileDependencyResolution: true,
+      compilerOptions: {
+        allowJs: true,
+        jsx: 1,
+      },
+    });
   }
 
   private addOrGetSourceFile(absolutePath: string): SourceFile {
