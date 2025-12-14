@@ -4,6 +4,7 @@ import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
 import { createUnifiedDiff, SourceFileDiffEntry } from './diff-utils.js';
+import { createDefaultProject } from './project-factory.js';
 
 export interface KeyRenamerOptions {
   workspaceRoot?: string;
@@ -77,7 +78,7 @@ export class KeyRenamer {
 
   constructor(private readonly config: I18nConfig, options: KeyRenamerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
-    this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
+  this.project = options.project ?? createDefaultProject();
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
     const localeStoreOptions = {
       format: config.locales?.format ?? 'auto',

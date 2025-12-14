@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
 import { DiagnosticsManager } from './diagnostics';
 import { I18nCodeLensProvider } from './codelens';
 import { ReportWatcher } from './watcher';
@@ -36,6 +35,7 @@ import type {
 import type { TransformSummary, TransformCandidate, TransformProgress } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
 import { resolveCliCommand } from './cli-utils';
+import { runResolvedCliCommand } from './cli-runner';
 import {
   buildExportMissingTranslationsCommand,
   buildSyncApplyCommand,
@@ -2990,15 +2990,20 @@ async function runCliCommand(
     confirmMessage?: string;
     progress?: vscode.Progress<{ message?: string; increment?: number }>;
   } = {}
-) {
+): Promise<CliRunResult | undefined> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     vscode.window.showErrorMessage('No workspace folder found');
     return;
   }
 
-  const command = resolveCliCommand(rawCommand);
-  logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${command}'`);
+  const resolved = resolveCliCommand(rawCommand);
+  if (!resolved.command) {
+    vscode.window.showErrorMessage('Unable to determine CLI command to run.');
+    return;
+  }
+
+  logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${resolved.display}'`);
 
   if (options.confirmMessage || options.interactive) {
     const detailLines: string[] = [];
@@ -3008,7 +3013,7 @@ async function runCliCommand(
     if (options.interactive) {
       detailLines.push('This command may scaffold files or install dependencies and will run in the i18nsmith terminal.');
     }
-    detailLines.push('', `Command: ${command}`);
+  detailLines.push('', `Command: ${resolved.display}`);
     const confirmLabel = options.interactive ? 'Run Command' : 'Continue';
     const choice = await vscode.window.showWarningMessage(
       options.interactive ? 'Run interactive i18nsmith command?' : 'Run i18nsmith command?',
@@ -3023,7 +3028,7 @@ async function runCliCommand(
   if (options.interactive) {
     const terminal = ensureInteractiveTerminal(workspaceFolder.uri.fsPath);
     terminal.show();
-    terminal.sendText(command, true);
+  terminal.sendText(resolved.display, true);
     vscode.window.showInformationMessage(
       'Command started in the integrated terminal. Refresh diagnostics once it completes.'
     );
@@ -3032,93 +3037,87 @@ async function runCliCommand(
 
   const out = vscode.window.createOutputChannel('i18nsmith');
   out.show();
-  out.appendLine(`$ ${command}`);
+  out.appendLine(`$ ${resolved.display}`);
 
   const progressTracker = createCliProgressTracker(options.progress);
 
-  return await new Promise<CliRunResult>((resolve) => {
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
 
-    const child = exec(command, { cwd: workspaceFolder.uri.fsPath }, async (err: Error | null) => {
-      progressTracker?.flush();
-      const stdout = stdoutChunks.join('');
-      const stderr = stderrChunks.join('');
-      const warnings = extractCliWarnings(stdout);
-      if (err) {
-        out.appendLine(`[error] ${err.message}`);
-        vscode.window.showErrorMessage(`Command failed: ${err.message}`);
-        resolve({ success: false, stdout, stderr, warnings });
-      } else {
-        const summary = summarizeCliJson(stdout);
-        if (summary) {
-          vscode.window.showInformationMessage(summary);
-        } else {
-          vscode.window.showInformationMessage('Command completed');
-        }
-        if (warnings.length) {
-          const whitelistAction = 'Whitelist dynamic keys';
-          const outputAction = 'Open Output';
-          const actions = warnings.some((warning) => /dynamic translation key/.test(warning))
-            ? [whitelistAction, outputAction]
-            : [outputAction];
-          vscode.window.showWarningMessage(warnings[0], ...actions).then((choice) => {
-            if (choice === outputAction) {
-              out.show(true);
-            } else if (choice === whitelistAction) {
-              vscode.commands.executeCommand('i18nsmith.whitelistDynamicKeys');
-            }
-          });
-        }
-        progressTracker?.complete();
-        await reportWatcher?.refresh();
-        if (smartScanner) {
-          await smartScanner.scan('suggested-command');
-        }
-        resolve({ success: true, stdout, stderr, warnings });
-      }
-    });
+  // Safety net: some CLI versions still prompt for confirmation during prune operations.
+  // If that happens, auto-confirm so the VS Code progress notification doesn't hang forever.
+  // (We also pass `--yes` in the command builder; this is a fallback.)
+  const shouldAutoConfirm =
+    !options.interactive && /\bi18nsmith\b[\s\S]*\bsync\b[\s\S]*--apply-preview/.test(rawCommand);
 
-    // Safety net: some CLI versions still prompt for confirmation during prune operations.
-    // If that happens, auto-confirm so the VS Code progress notification doesn't hang forever.
-    // (We also pass `--yes` in the command builder; this is a fallback.)
-    const shouldAutoConfirm =
-      !options.interactive && /\bi18nsmith\b[\s\S]*\bsync\b[\s\S]*--apply-preview/.test(rawCommand);
-    const maybeAutoConfirm = (chunk: Buffer | string) => {
-      if (!shouldAutoConfirm) {
-        return;
+  const handleAutoConfirm = (text: string, child: import('child_process').ChildProcessWithoutNullStreams) => {
+    if (!shouldAutoConfirm) {
+      return;
+    }
+    if (/(\(y\/N\))|(\(Y\/n\))/i.test(text) || /Remove these\s+\d+\s+unused keys\?/i.test(text)) {
+      logVerbose('runCliCommand: detected confirmation prompt; auto-sending "y"');
+      try {
+        child.stdin?.write('y\n');
+      } catch {
+        // ignore write errors
       }
-      const text = chunk.toString();
-      // Inquirer prompt is typically rendered as: "Remove these N unused keys? (y/N)"
-      if (/(\(y\/N\))|(\(Y\/n\))/i.test(text) || /Remove these\s+\d+\s+unused keys\?/i.test(text)) {
-        logVerbose('runCliCommand: detected confirmation prompt; auto-sending "y"');
-        try {
-          child.stdin?.write('y\n');
-        } catch {
-          // ignore
-        }
-      }
-    };
+    }
+  };
 
-    child.stdout?.on('data', (chunk: Buffer | string) => {
-      const text = chunk.toString();
+  const result = await runResolvedCliCommand(resolved, {
+    cwd: workspaceFolder.uri.fsPath,
+    onStdout: (text, child) => {
       stdoutChunks.push(text);
       out.append(text);
       progressTracker?.handleChunk(text);
-      maybeAutoConfirm(chunk);
-    });
-
-    child.stdout?.on('close', () => {
-      progressTracker?.flush();
-    });
-
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      const text = chunk.toString();
+      handleAutoConfirm(text, child);
+    },
+    onStderr: (text, child) => {
       stderrChunks.push(text);
       out.append(text);
-      maybeAutoConfirm(chunk);
-    });
+      handleAutoConfirm(text, child);
+    },
   });
+
+  progressTracker?.flush();
+
+  const stdout = stdoutChunks.join('');
+  const stderr = stderrChunks.join('');
+  const warnings = extractCliWarnings(stdout);
+
+  if (result.code !== 0 || result.error) {
+    const message = result.error?.message || `Command exited with code ${result.code}`;
+    out.appendLine(`[error] ${message}`);
+    vscode.window.showErrorMessage(`Command failed: ${message}`);
+    return { success: false, stdout, stderr, warnings };
+  }
+
+  const summary = summarizeCliJson(stdout);
+  if (summary) {
+    vscode.window.showInformationMessage(summary);
+  } else {
+    vscode.window.showInformationMessage('Command completed');
+  }
+  if (warnings.length) {
+    const whitelistAction = 'Whitelist dynamic keys';
+    const outputAction = 'Open Output';
+    const actions = warnings.some((warning) => /dynamic translation key/.test(warning))
+      ? [whitelistAction, outputAction]
+      : [outputAction];
+    vscode.window.showWarningMessage(warnings[0], ...actions).then((choice) => {
+      if (choice === outputAction) {
+        out.show(true);
+      } else if (choice === whitelistAction) {
+        vscode.commands.executeCommand('i18nsmith.whitelistDynamicKeys');
+      }
+    });
+  }
+  progressTracker?.complete();
+  await reportWatcher?.refresh();
+  if (smartScanner) {
+    await smartScanner.scan('suggested-command');
+  }
+  return { success: true, stdout, stderr, warnings };
 }
 
 function createCliProgressTracker(

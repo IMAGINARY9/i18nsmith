@@ -10,6 +10,7 @@ import {
 } from "ts-morph";
 import fg from "fast-glob";
 import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE, I18nConfig } from "./config.js";
+import { createScannerProject } from "./project-factory.js";
 
 export type CandidateKind =
   | "jsx-text"
@@ -957,14 +958,7 @@ export class Scanner {
   }
 
   private createProject(): Project {
-    return new Project({
-      skipAddingFilesFromTsConfig: true,
-      skipFileDependencyResolution: true,
-      compilerOptions: {
-        allowJs: true,
-        jsx: 1,
-      },
-    });
+    return createScannerProject();
   }
 
   private addOrGetSourceFile(absolutePath: string): SourceFile {

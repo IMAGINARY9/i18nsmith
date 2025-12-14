@@ -12,6 +12,7 @@ import {
 import { createBackup, BackupResult } from './backup.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
+import { createDefaultProject } from './project-factory.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
@@ -172,9 +173,7 @@ export class Syncer {
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
-    this.project = options.project ?? new Project({
-      skipAddingFilesFromTsConfig: true,
-    });
+      this.project = options.project ?? createDefaultProject();
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
     const localeStoreOptions = {
       format: config.locales?.format ?? 'auto',
