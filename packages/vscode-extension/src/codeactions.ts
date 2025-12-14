@@ -13,6 +13,8 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     vscode.CodeActionKind.QuickFix,
   ];
 
+  private static readonly MAX_SUSPICIOUS_KEY_ACTIONS = 3;
+
   constructor(private diagnosticsManager: DiagnosticsManager) {}
 
   provideCodeActions(
@@ -25,6 +27,9 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 
     // Get diagnostics for this document
     const diagnostics = context.diagnostics.filter(d => d.source === 'i18nsmith');
+
+    const suspiciousDiagnostics: vscode.Diagnostic[] = [];
+    let suspiciousRefactorActions = 0;
 
     for (const diagnostic of diagnostics) {
       // Check if this is a missing key issue
@@ -47,20 +52,37 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
       }
 
       if (diagnostic.code === 'suspicious-key') {
-        const refactorAction = this.createRefactorSuspiciousKeyAction(document, diagnostic);
-        if (refactorAction) {
-          actions.push(refactorAction);
+        suspiciousDiagnostics.push(diagnostic);
+
+        if (suspiciousRefactorActions < I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS) {
+          const refactorAction = this.createRefactorSuspiciousKeyAction(document, diagnostic);
+          if (refactorAction) {
+            actions.push(refactorAction);
+          }
+          suspiciousRefactorActions += 1;
         }
 
         const ignoreAction = this.createIgnoreSuspiciousKeyAction(document, diagnostic);
         if (ignoreAction) {
           actions.push(ignoreAction);
         }
+
+        const checkAction = this.createRunCheckAction(diagnostic);
+        actions.push(checkAction);
+
+        continue;
       }
 
       // For any i18nsmith diagnostic, offer to run check
       const checkAction = this.createRunCheckAction(diagnostic);
       actions.push(checkAction);
+    }
+
+    if (suspiciousDiagnostics.length > I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS) {
+      const renameAllAction = this.createRenameSuspiciousKeysInFileAction(document, suspiciousDiagnostics.length);
+      if (renameAllAction) {
+        actions.push(renameAllAction);
+      }
     }
 
     // Also check if we're on a t('key') call and offer to extract
@@ -113,6 +135,22 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
       command: 'i18nsmith.ignoreSuspiciousKey',
       title: 'Ignore suspicious key',
       arguments: [document.uri, diagnostic.range.start.line],
+    };
+    return action;
+  }
+
+  private createRenameSuspiciousKeysInFileAction(
+    document: vscode.TextDocument,
+    totalCount: number
+  ): vscode.CodeAction | null {
+    const action = new vscode.CodeAction(
+      `Rename ${totalCount} suspicious key${totalCount === 1 ? '' : 's'} in this file`,
+      vscode.CodeActionKind.QuickFix
+    );
+    action.command = {
+      command: 'i18nsmith.renameSuspiciousKeysInFile',
+      title: 'Rename suspicious keys in file',
+      arguments: [document.uri],
     };
     return action;
   }

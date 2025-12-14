@@ -77,6 +77,10 @@
         "title": "i18nsmith: Rename Suspicious Key"
       },
       {
+        "command": "i18nsmith.renameSuspiciousKeysInFile",
+        "title": "i18nsmith: Rename Suspicious Keys in File"
+      },
+      {
         "command": "i18nsmith.renameAllSuspiciousKeys",
         "title": "i18nsmith: Rename All Suspicious Keys"
       },
