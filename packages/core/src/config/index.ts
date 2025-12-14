@@ -69,3 +69,12 @@ export {
 } from './loader.js';
 
 export { inferConfig } from './inference.js';
+
+export {
+  validateConfig,
+  assertConfigValid,
+  hasUnsafeConfigValue,
+  isSafeLanguageTag,
+  isSafeTranslationIdentifier,
+  isSafeNamespace,
+} from './validator.js';
