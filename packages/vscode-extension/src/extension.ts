@@ -36,7 +36,12 @@ import type {
 import type { TransformSummary, TransformCandidate, TransformProgress } from '@i18nsmith/transformer';
 import { PreviewManager } from './preview-manager';
 import { resolveCliCommand } from './cli-utils';
-import { buildSyncApplyCommand, normalizeTargetForCli, quoteCliArg } from './command-helpers';
+import {
+  buildExportMissingTranslationsCommand,
+  buildSyncApplyCommand,
+  normalizeTargetForCli,
+  quoteCliArg,
+} from './command-helpers';
 import { executePreviewPlan, type PlannedChange } from './preview-flow';
 import {
   deriveWhitelistSuggestions,
@@ -339,6 +344,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.transformFile', async () => {
       await transformCurrentFile();
+    }),
+    vscode.commands.registerCommand('i18nsmith.exportMissingTranslations', async () => {
+      await exportMissingTranslations();
     }),
     vscode.commands.registerCommand('i18nsmith.whitelistDynamicKeys', async () => {
       await whitelistDynamicKeys();
@@ -1130,8 +1138,29 @@ async function whitelistDynamicKeys() {
   }
 
   vscode.window.showInformationMessage(`Added ${parts.join(' and ')} to i18n.config.json.`);
+
+  if (smartScanner) {
+    try {
+      const scanResult = await smartScanner.scan('whitelist-dynamic');
+      if (!scanResult.success) {
+        vscode.window.showWarningMessage(
+          'i18nsmith check could not refresh automatically. Run "i18nsmith check" to ensure diagnostics are up to date.'
+        );
+      }
+    } catch (error) {
+      logVerbose(`whitelistDynamicKeys: smartScanner scan failed - ${(error as Error).message}`);
+      vscode.window.showWarningMessage(
+        'i18nsmith check failed while refreshing. Run "i18nsmith check" manually to update diagnostics.'
+      );
+    }
+  } else {
+    logVerbose('whitelistDynamicKeys: smartScanner unavailable, skipping automatic refresh');
+  }
+
+  if (reportWatcher) {
+    await reportWatcher.refresh();
+  }
   await refreshDiagnosticsWithMessage('quick-action');
-  await smartScanner.scan('whitelist-dynamic');
 }
 
 async function renameAllSuspiciousKeys() {
@@ -1259,7 +1288,8 @@ async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder
   }
 
   const diagnosticsWarnings = getDiagnosticsDynamicWarnings(workspaceFolder.uri.fsPath);
-  if (diagnosticsWarnings.length) {
+  const hasDiagnosticsReport = Boolean(diagnosticsManager?.getReport?.());
+  if (diagnosticsWarnings.length || hasDiagnosticsReport) {
     return diagnosticsWarnings;
   }
 
@@ -2208,6 +2238,65 @@ async function runTranslateCommand(options: TranslateRunOptions = {}) {
   await smartScanner.scan('translate');
 }
 
+async function exportMissingTranslations() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('No workspace folder found');
+    return;
+  }
+
+  const defaultDir = path.join(workspaceFolder.uri.fsPath, '.i18nsmith');
+  const defaultFile = path.join(defaultDir, 'missing-translations.csv');
+  const defaultUri = vscode.Uri.file(defaultFile);
+  const saveTarget = await vscode.window.showSaveDialog({
+    defaultUri,
+    filters: { CSV: ['csv'] },
+    saveLabel: 'Export',
+    title: 'Export missing translations to CSV',
+  });
+
+  if (!saveTarget) {
+    return;
+  }
+
+  try {
+    await fsp.mkdir(path.dirname(saveTarget.fsPath), { recursive: true });
+  } catch (error) {
+    vscode.window.showErrorMessage(`Unable to prepare export directory: ${(error as Error).message}`);
+    return;
+  }
+
+  const command = buildExportMissingTranslationsCommand(saveTarget.fsPath, workspaceFolder.uri.fsPath);
+  const exportResult = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'i18nsmith: Exporting missing translations…',
+      cancellable: false,
+    },
+    (progress) => runCliCommand(command, { progress })
+  );
+
+  if (!exportResult?.success) {
+    return;
+  }
+
+  const relativePath = path.relative(workspaceFolder.uri.fsPath, saveTarget.fsPath);
+  if (fs.existsSync(saveTarget.fsPath)) {
+    const targetLabel = relativePath.startsWith('..')
+      ? saveTarget.fsPath
+      : relativePath || path.basename(saveTarget.fsPath);
+    vscode.window.showInformationMessage(`Missing translations exported to ${targetLabel}.`);
+    try {
+      const doc = await vscode.workspace.openTextDocument(saveTarget);
+      await vscode.window.showTextDocument(doc, { preview: false });
+    } catch (error) {
+      logVerbose(`exportMissingTranslations: unable to open CSV - ${(error as Error).message}`);
+    }
+  } else {
+    vscode.window.showInformationMessage('No missing translations detected. Nothing to export.');
+  }
+}
+
 function formatTranslatePreview(summary: TranslatePreviewSummary): string {
   const lines: string[] = [];
   const localePlans = summary.plan?.locales ?? [];
@@ -2711,6 +2800,15 @@ async function showQuickActions() {
       builtin: 'rename-suspicious',
     });
   }
+
+  const missingCount = driftStats?.missing ?? 0;
+  picks.push({
+    label: '$(cloud-download) Export missing translations',
+    description: missingCount
+      ? `${missingCount} missing key${missingCount === 1 ? '' : 's'} → CSV handoff`
+      : 'Generate a CSV of missing translations for translators',
+    command: 'i18nsmith.exportMissingTranslations',
+  });
 
   picks.push(
     {

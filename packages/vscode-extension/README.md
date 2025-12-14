@@ -34,6 +34,7 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) —
 | `i18nsmith: Add Placeholder Key` | Add a TODO placeholder for a missing key |
 | `i18nsmith: Extract Selection as Translation Key` | Extract selected string as a new key |
 | `i18nsmith: Transform Current File` | Run the transformer on the active file with preview + confirmation |
+| `i18nsmith: Export Missing Translations` | Generate a CSV of missing translations for handoff |
 
 ## Per-file Workflows
 
@@ -77,6 +78,7 @@ Press `Cmd+Shift+P` (or `Ctrl+Shift+P` on Windows/Linux) and run **"i18nsmith: Q
 - Extract selection as translation key
 - Rename key at cursor
 - Apply local fixes (sync with write)
+- Export missing translations (CSV handoff)
 - Open source locale file
 - Sync/transform current file
 - Run health check

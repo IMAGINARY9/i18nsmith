@@ -33,3 +33,8 @@ export function buildSyncApplyCommand(
     '--yes',
   ].join(' ');
 }
+
+export function buildExportMissingTranslationsCommand(targetPath: string, workspaceRoot: string): string {
+  const exportArg = normalizeTargetForCli(targetPath, workspaceRoot);
+  return ['i18nsmith translate --export', quoteCliArg(exportArg)].join(' ');
+}
