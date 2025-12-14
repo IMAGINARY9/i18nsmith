@@ -342,6 +342,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.whitelistDynamicKeys', async () => {
       await whitelistDynamicKeys();
+    }),
+    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKeysInFile', async (target?: vscode.Uri) => {
+      await renameSuspiciousKeysInFile(target);
     })
   );
 
@@ -435,7 +438,7 @@ async function renameSuspiciousKey(warning: SuspiciousKeyWarning) {
     return;
   }
 
-  await runRenameCommand({ from: proposal.originalKey, to: proposal.proposedKey });
+  await runRenameCommand({ from: proposal.originalKey, to: proposal.proposedKey, invocation: 'quickFix' });
   lastSyncSuspiciousWarnings = [];
 }
 
@@ -1144,6 +1147,44 @@ async function renameAllSuspiciousKeys() {
     return;
   }
 
+  await runSuspiciousRenameFlow(warnings, workspaceFolder, { scopeLabel: 'workspace' });
+}
+
+async function renameSuspiciousKeysInFile(target?: vscode.Uri) {
+  const workspaceFolder = target
+    ? vscode.workspace.getWorkspaceFolder(target)
+    : vscode.workspace.workspaceFolders?.[0];
+
+  const fileUri = target ?? vscode.window.activeTextEditor?.document.uri;
+  if (!fileUri) {
+    vscode.window.showWarningMessage('Open a file to rename suspicious keys.');
+    return;
+  }
+
+  const folder = workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    vscode.window.showErrorMessage('No workspace folder found.');
+    return;
+  }
+
+  const warnings = await collectSuspiciousKeyWarnings(folder);
+  const normalizedTarget = path.normalize(fileUri.fsPath);
+  const fileWarnings = warnings.filter((warning) => path.normalize(warning.filePath) === normalizedTarget);
+
+  if (!fileWarnings.length) {
+    vscode.window.showInformationMessage('No suspicious keys detected in this file. Run "i18nsmith sync" to refresh diagnostics.');
+    return;
+  }
+
+  const relativeLabel = path.relative(folder.uri.fsPath, normalizedTarget) || path.basename(normalizedTarget);
+  await runSuspiciousRenameFlow(fileWarnings, folder, { scopeLabel: relativeLabel });
+}
+
+async function runSuspiciousRenameFlow(
+  warnings: SuspiciousKeyWarning[],
+  workspaceFolder: vscode.WorkspaceFolder,
+  options: { scopeLabel: string }
+) {
   let meta: Awaited<ReturnType<typeof loadConfigWithMeta>>;
   try {
     meta = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
@@ -1158,20 +1199,21 @@ async function renameAllSuspiciousKeys() {
   if (!renameReport.safeProposals.length) {
     if (renameReport.conflictProposals.length) {
       vscode.window.showWarningMessage(
-        'All suspicious keys conflict with existing keys. Review the rename plan and resolve conflicts manually.'
+        `All suspicious keys in ${options.scopeLabel} conflict with existing keys. Review the rename plan and resolve conflicts manually.`
       );
       await showSuspiciousRenamePlan(renameReport);
     } else {
-      vscode.window.showInformationMessage('No auto-rename suggestions were generated for the detected keys.');
+      vscode.window.showInformationMessage(`No auto-rename suggestions were generated for suspicious keys in ${options.scopeLabel}.`);
     }
     return;
   }
 
   const summaryDetail = formatSuspiciousRenameSummary(renameReport);
+  const renameLabel = options.scopeLabel === 'workspace' ? 'Rename All' : 'Rename Keys';
   let choice = await vscode.window.showInformationMessage(
-    `Rename ${renameReport.safeProposals.length} suspicious key${renameReport.safeProposals.length === 1 ? '' : 's'}?`,
+    `Rename ${renameReport.safeProposals.length} suspicious key${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}?`,
     { modal: true, detail: summaryDetail },
-    'Rename All',
+    renameLabel,
     'Review Plan'
   );
 
@@ -1182,11 +1224,11 @@ async function renameAllSuspiciousKeys() {
   if (choice === 'Review Plan') {
     await showSuspiciousRenamePlan(renameReport);
     choice = await vscode.window.showInformationMessage(
-      `Apply ${renameReport.safeProposals.length} rename${renameReport.safeProposals.length === 1 ? '' : 's'} now?`,
+      `Apply ${renameReport.safeProposals.length} rename${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}?`,
       { modal: true, detail: summaryDetail },
-      'Rename All'
+      renameLabel
     );
-    if (choice !== 'Rename All') {
+    if (choice !== renameLabel) {
       return;
     }
   }
@@ -1203,7 +1245,7 @@ async function renameAllSuspiciousKeys() {
     if (result?.success) {
       lastSyncSuspiciousWarnings = [];
       vscode.window.showInformationMessage(
-        `Applied ${renameReport.safeProposals.length} auto-renamed key${renameReport.safeProposals.length === 1 ? '' : 's'}.`
+        `Applied ${renameReport.safeProposals.length} auto-renamed key${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}.`
       );
     }
   } finally {
@@ -1913,8 +1955,24 @@ async function showTransformDiff(summary: TransformSummary) {
   await diffPeekProvider.showDiffPeek(editor, summary.diffs, 'Transform Preview');
 }
 
-async function runRenameCommand(options: { from: string; to: string }) {
-  const { from, to } = options;
+type RenameInvocationSource = 'quickFix' | 'commandPalette';
+
+interface RenameCommandOptions {
+  from: string;
+  to: string;
+  invocation?: RenameInvocationSource;
+  skipPreview?: boolean;
+  forceApply?: boolean;
+}
+
+async function runRenameCommand(options: RenameCommandOptions) {
+  const {
+    from,
+    to,
+    invocation = 'commandPalette',
+    skipPreview,
+    forceApply,
+  } = options;
   if (!from || !to || from === to) {
     vscode.window.showWarningMessage('Provide distinct keys to rename.');
     return;
@@ -1956,13 +2014,31 @@ async function runRenameCommand(options: { from: string; to: string }) {
   }
 
   const detail = formatRenamePreview(summary, from, to);
-  const decision = await promptPreviewDecision({
-    title: `Rename ${from} → ${to}?`,
-    detail,
-    previewAvailable: Boolean(summary.diffs?.length),
-    allowDryRun: true,
-    previewLabel: 'Show Diff',
-  });
+  const shouldSkipPreview = forceApply ? true : skipPreview ?? (invocation === 'quickFix');
+  const previewAvailable = Boolean(summary.diffs?.length);
+
+  let decision: PreviewDecision;
+  if (forceApply) {
+    decision = 'apply';
+  } else if (shouldSkipPreview) {
+    decision = await promptPreviewDecision({
+      title: `Rename ${from} → ${to}?`,
+      detail,
+      previewAvailable,
+      allowDryRun: false,
+      previewLabel: previewAvailable ? 'Preview Diff' : undefined,
+      applyLabel: 'Apply Fix',
+      cancelLabel: 'Cancel',
+    });
+  } else {
+    decision = await promptPreviewDecision({
+      title: `Rename ${from} → ${to}?`,
+      detail,
+      previewAvailable,
+      allowDryRun: true,
+      previewLabel: 'Show Diff',
+    });
+  }
 
   if (decision === 'cancel') {
     logVerbose('runRenameCommand: User cancelled');
