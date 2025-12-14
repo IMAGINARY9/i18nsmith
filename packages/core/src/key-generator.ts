@@ -17,6 +17,7 @@ export interface GeneratedKey {
 export interface KeyGeneratorOptions {
   namespace?: string;
   hashLength?: number;
+  workspaceRoot?: string;
 }
 
 function normalizeText(input: string): string {
@@ -40,12 +41,14 @@ function slugify(input?: string): string | undefined {
 export class KeyGenerator {
   private readonly namespace: string;
   private readonly hashLength: number;
+  private readonly workspaceRoot: string;
   private readonly textCache = new Map<string, GeneratedKey>();
   private readonly hashCache = new Map<string, string>();
 
   constructor(options: KeyGeneratorOptions = {}) {
     this.namespace = options.namespace ?? 'common';
     this.hashLength = options.hashLength ?? 6;
+    this.workspaceRoot = options.workspaceRoot ? path.resolve(options.workspaceRoot) : process.cwd();
   }
 
   public generate(text: string, context: KeyGenerationContext): GeneratedKey {
@@ -107,14 +110,62 @@ export class KeyGenerator {
   }
 
   private buildScopeSlug(filePath: string, jsxContext?: string): string | undefined {
-    const fileSlug = slugify(path.basename(filePath, path.extname(filePath)));
+    const pathSlug = this.buildPathScopeSlug(filePath);
     const contextSlug = slugify(jsxContext);
 
-    if (fileSlug && contextSlug) {
-      return `${fileSlug}.${contextSlug}`;
+    if (pathSlug && contextSlug) {
+      return `${pathSlug}.${contextSlug}`;
     }
 
-    return fileSlug ?? contextSlug ?? undefined;
+    return pathSlug ?? contextSlug ?? undefined;
+  }
+
+  private buildPathScopeSlug(filePath?: string): string | undefined {
+    if (!filePath) {
+      return undefined;
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(this.workspaceRoot, filePath);
+    const normalized = path.normalize(absolutePath).replace(/\\+/g, '/');
+    const relative = path.relative(this.workspaceRoot, normalized) || normalized;
+    const withoutExt = relative.replace(/\.[^/.]+$/, '');
+    const rawSegments = withoutExt
+      .split(/[\\/]/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    const slugSegments = rawSegments
+      .map((segment) => slugify(segment))
+      .filter((segment): segment is string => Boolean(segment));
+
+    const filtered = slugSegments.filter(
+      (segment, index) => !this.shouldSkipScopeSegment(segment, index)
+    );
+
+    const tail = filtered.slice(-4);
+    if (!tail.length) {
+      return undefined;
+    }
+
+    return tail.join('.');
+  }
+
+  private shouldSkipScopeSegment(segment: string, index: number): boolean {
+    if (!segment) {
+      return true;
+    }
+
+    if (index === 0 && segment === 'src') {
+      return true;
+    }
+
+    if (segment === 'index') {
+      return true;
+    }
+
+    return false;
   }
 
   private buildTextSlug(text: string): string | undefined {

@@ -57,7 +57,13 @@ export class Transformer {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
   this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
   const namespace = options.keyNamespace ?? this.config.keyGeneration?.namespace ?? 'common';
-  this.keyGenerator = options.keyGenerator ?? new KeyGenerator({ namespace, hashLength: this.config.keyGeneration?.shortHashLen ?? 6 });
+  this.keyGenerator =
+    options.keyGenerator ??
+    new KeyGenerator({
+      namespace,
+      hashLength: this.config.keyGeneration?.shortHashLen ?? 6,
+      workspaceRoot: this.workspaceRoot,
+    });
   this.keyValidator = new KeyValidator(this.config.sync?.suspiciousKeyPolicy ?? 'skip');
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');
   const localeStoreOptions = {

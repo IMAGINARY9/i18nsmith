@@ -375,6 +375,7 @@ function buildSuspiciousKeySuggestion(
   const generator = new KeyGenerator({
     namespace: config.keyGeneration?.namespace,
     hashLength: config.keyGeneration?.shortHashLen,
+    workspaceRoot,
   });
 
   // Extract the base text from the suspicious key (strip hash if present)

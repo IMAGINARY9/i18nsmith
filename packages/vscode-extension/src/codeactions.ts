@@ -299,6 +299,7 @@ function buildSuspiciousKeySuggestion(key: string, workspaceRoot?: string): stri
     const generator = new KeyGenerator({
       namespace: config.keyGeneration?.namespace,
       hashLength: config.keyGeneration?.shortHashLen,
+      workspaceRoot,
     });
     const baseText = key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
     const generated = generator.generate(baseText || key, {
