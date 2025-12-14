@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
-import { buildSyncApplyCommand, normalizeTargetForCli } from './command-helpers';
+import {
+  buildExportMissingTranslationsCommand,
+  buildSyncApplyCommand,
+  normalizeTargetForCli,
+} from './command-helpers';
 
 describe('command-helpers', () => {
   it('buildSyncApplyCommand always enables prune with quoted relative paths', () => {
@@ -28,5 +32,20 @@ describe('command-helpers', () => {
     const workspace = path.join('/tmp', 'workspace');
     const target = path.join(workspace, 'nested', 'file.json');
     expect(normalizeTargetForCli(target, workspace)).toBe('nested/file.json');
+  });
+
+  it('buildExportMissingTranslationsCommand quotes relative paths', () => {
+    const workspace = path.join('/tmp', 'workspace');
+    const csvPath = path.join(workspace, '.i18nsmith', 'missing translations.csv');
+    const command = buildExportMissingTranslationsCommand(csvPath, workspace);
+    expect(command).toContain('i18nsmith translate --export');
+    expect(command).toContain('".i18nsmith/missing translations.csv"');
+  });
+
+  it('buildExportMissingTranslationsCommand leaves absolute path outside workspace', () => {
+    const workspace = path.join('/tmp', 'workspace');
+    const csvPath = path.join('/var', 'tmp', 'missing.csv');
+    const command = buildExportMissingTranslationsCommand(csvPath, workspace);
+    expect(command).toContain(`"${csvPath}"`);
   });
 });

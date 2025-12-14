@@ -103,6 +103,10 @@
       {
         "command": "i18nsmith.transformFile",
         "title": "i18nsmith: Transform Current File"
+      },
+      {
+        "command": "i18nsmith.exportMissingTranslations",
+        "title": "i18nsmith: Export Missing Translations"
       }
     ],
     "menus": {
