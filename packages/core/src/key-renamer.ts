@@ -61,6 +61,12 @@ export interface KeyRenameBatchSummary {
   diffs: SourceFileDiffEntry[];
 }
 
+type MappingLocaleAnalysis = {
+  localePreview: KeyRenameLocalePreview[];
+  missingLocales: string[];
+  duplicateLocales: string[];
+};
+
 export class KeyRenamer {
   private readonly project: Project;
   private readonly workspaceRoot: string;
@@ -116,6 +122,29 @@ export class KeyRenamer {
 
     const write = options.write ?? false;
     const generateDiffs = options.diff ?? false;
+    const localeAnalysis = await this.buildLocaleAnalysis(mappings);
+    const duplicateConflicts = mappings
+      .map((mapping) => {
+        const analysis = localeAnalysis.get(mapping.from);
+        if (!analysis || analysis.duplicateLocales.length === 0) {
+          return undefined;
+        }
+        return { mapping, locales: analysis.duplicateLocales };
+      })
+      .filter((entry): entry is { mapping: KeyRenameMapping; locales: string[] } => Boolean(entry));
+
+    if (duplicateConflicts.length && write) {
+      const conflictSummary = duplicateConflicts
+        .slice(0, 5)
+        .map(({ mapping, locales }) => `${mapping.from} → ${mapping.to} (${locales.join(', ')})`)
+        .join('; ');
+      const moreConflicts = duplicateConflicts.length > 5 ? ` (and ${duplicateConflicts.length - 5} more)` : '';
+      throw new Error(
+        `Cannot rename keys because target entries already exist in locale files: ${conflictSummary}${moreConflicts}. ` +
+          'Rename or remove the conflicting keys, or choose a different target before running with --write.'
+      );
+    }
+
     const files = this.loadFiles();
     const filesToSave = new Map<string, SourceFile>();
     const mappingBySource = new Map<string, KeyRenameMapping>();
@@ -206,40 +235,35 @@ export class KeyRenamer {
       }
     }
 
-    const mappingSummaries: KeyRenameMappingSummary[] = mappings.map((mapping) => ({
-      from: mapping.from,
-      to: mapping.to,
-      occurrences: occurrencesByKey.get(mapping.from) ?? 0,
-      localePreview: [],
-      missingLocales: [],
-    }));
+    const mappingSummaries: KeyRenameMappingSummary[] = mappings.map((mapping) => {
+      const analysis = localeAnalysis.get(mapping.from);
+      return {
+        from: mapping.from,
+        to: mapping.to,
+        occurrences: occurrencesByKey.get(mapping.from) ?? 0,
+        localePreview: analysis?.localePreview ?? [],
+        missingLocales: analysis?.missingLocales ?? [],
+      };
+    });
 
-    const locales = [this.sourceLocale, ...this.targetLocales];
-    for (const summary of mappingSummaries) {
-      for (const locale of locales) {
-        const data = await this.localeStore.get(locale);
-        const missing = typeof data[summary.from] === 'undefined';
-        const duplicate = !missing && typeof data[summary.to] !== 'undefined';
-
-        summary.localePreview.push({
-          locale,
-          renamedFrom: summary.from,
-          renamedTo: summary.to,
-          missing,
-          duplicate,
-        });
-
-        if (missing) {
-          summary.missingLocales.push(locale);
+    if (write) {
+      for (const mapping of mappings) {
+        const analysis = localeAnalysis.get(mapping.from);
+        if (!analysis) {
           continue;
         }
 
-        if (duplicate) {
-          continue;
-        }
+        for (const preview of analysis.localePreview) {
+          if (preview.missing || preview.duplicate) {
+            continue;
+          }
 
-        if (write) {
-          await this.localeStore.renameKey(locale, summary.from, summary.to);
+          const result = await this.localeStore.renameKey(preview.locale, mapping.from, mapping.to);
+          if (result === 'duplicate') {
+            throw new Error(
+              `Target key "${mapping.to}" already exists in locale ${preview.locale}. Rename aborted to prevent data loss.`
+            );
+          }
         }
       }
     }
@@ -300,6 +324,53 @@ export class KeyRenamer {
     });
 
     return items;
+  }
+
+  private async buildLocaleAnalysis(mappings: KeyRenameMapping[]): Promise<Map<string, MappingLocaleAnalysis>> {
+    const locales = [this.sourceLocale, ...this.targetLocales];
+    const cache = new Map<string, Record<string, string>>();
+    const getLocaleData = async (locale: string) => {
+      if (!cache.has(locale)) {
+        cache.set(locale, await this.localeStore.get(locale));
+      }
+      return cache.get(locale)!;
+    };
+
+    const analysis = new Map<string, MappingLocaleAnalysis>();
+
+    for (const mapping of mappings) {
+      const localePreview: KeyRenameLocalePreview[] = [];
+      const missingLocales: string[] = [];
+      const duplicateLocales: string[] = [];
+
+      for (const locale of locales) {
+        const data = await getLocaleData(locale);
+        const missing = typeof data[mapping.from] === 'undefined';
+        const duplicate = !missing && typeof data[mapping.to] !== 'undefined';
+
+        localePreview.push({
+          locale,
+          renamedFrom: mapping.from,
+          renamedTo: mapping.to,
+          missing,
+          duplicate,
+        });
+
+        if (missing) {
+          missingLocales.push(locale);
+        } else if (duplicate) {
+          duplicateLocales.push(locale);
+        }
+      }
+
+      analysis.set(mapping.from, {
+        localePreview,
+        missingLocales,
+        duplicateLocales,
+      });
+    }
+
+    return analysis;
   }
 
   private loadFiles() {

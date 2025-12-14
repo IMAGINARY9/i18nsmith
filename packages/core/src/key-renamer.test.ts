@@ -124,4 +124,33 @@ export function Profile() {
       )
     ).rejects.toThrow(/Duplicate mapping detected/);
   });
+
+  it('aborts renaming when target key already exists in a locale', async () => {
+    const enPath = path.join(tempDir, 'locales', 'en.json');
+    await fs.writeFile(
+      enPath,
+      JSON.stringify({ 'old.key': 'Hello', 'profile.greeting': 'Hi profile', 'new.key': 'Existing' }, null, 2)
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    await expect(renamer.rename('old.key', 'new.key', { write: true })).rejects.toThrow(/target entries already exist/i);
+
+    const enContents = JSON.parse(await fs.readFile(enPath, 'utf8'));
+    expect(enContents).toMatchObject({ 'old.key': 'Hello', 'new.key': 'Existing' });
+  });
+
+  it('reports duplicate targets during dry-run without modifying files', async () => {
+    const esPath = path.join(tempDir, 'locales', 'es.json');
+    await fs.writeFile(
+      esPath,
+      JSON.stringify({ 'old.key': 'Hola', 'profile.greeting': 'Hola perfil', 'new.key': 'Ya existe' }, null, 2)
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key');
+
+    expect(summary.localePreview.some((preview) => preview.duplicate)).toBe(true);
+    const appContents = await fs.readFile(path.join(tempDir, 'src', 'App.tsx'), 'utf8');
+    expect(appContents).toContain("t('old.key')");
+  });
 });

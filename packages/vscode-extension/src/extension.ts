@@ -1541,6 +1541,8 @@ function buildSuspiciousRenameReport(
     if (existingKeys.has(proposedKey)) {
       proposal.conflictsWith = proposedKey;
       proposal.targetExists = true;
+      conflictProposals.push(proposal);
+      continue;
     }
 
     safeProposals.push(proposal);
@@ -1562,7 +1564,7 @@ function formatSuspiciousRenameSummary(report: ExtensionSuspiciousRenameReport):
   if (report.conflictProposals.length) {
     lines.push(`• Conflicts requiring manual attention: ${report.conflictProposals.length}`);
   }
-  const existingTargetCount = report.safeProposals.filter((proposal) => proposal.targetExists).length;
+  const existingTargetCount = report.conflictProposals.filter((proposal) => proposal.targetExists).length;
   if (existingTargetCount) {
     lines.push(
       `• ${existingTargetCount} target${existingTargetCount === 1 ? '' : 's'} already exist (locales will need merging)`
