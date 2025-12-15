@@ -6,6 +6,8 @@ import { SyncSummary, SuspiciousKeyWarning } from '@i18nsmith/core';
 import { PreviewPayload } from '../preview-manager';
 import { resolveCliCommand } from '../cli-utils';
 import { runResolvedCliCommand } from '../cli-runner';
+import { quoteCliArg } from '../command-helpers';
+import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
 
 export class SyncController implements vscode.Disposable {
   private lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
@@ -45,7 +47,7 @@ export class SyncController implements vscode.Disposable {
       () =>
         this.services.previewManager.run<SyncSummary>({
           kind: 'sync',
-          args: options.targets ? ['--targets', ...options.targets] : [],
+          args: options.targets ? ['--target', ...options.targets] : [],
           workspaceRoot: workspaceFolder.uri.fsPath,
           label,
         })
@@ -121,6 +123,8 @@ export class SyncController implements vscode.Disposable {
       afterUri: vscode.Uri.parse('i18nsmith-preview:sync-after'),   // Placeholder
       summary: `${missingCount} missing, ${unusedCount} unused`,
       apply: async () => {
+        // Close the preview editor first to avoid confusion
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
         await this.applySync(previewPath, workspaceRoot);
       },
     });
@@ -157,6 +161,114 @@ export class SyncController implements vscode.Disposable {
         this.services.smartScanner.scan('sync');
         
         vscode.window.showInformationMessage('Sync applied successfully.');
+      }
+    );
+  }
+
+  public async exportMissingTranslations() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.joinPath(workspaceFolder.uri, 'missing-translations.csv'),
+      filters: { 'CSV Files': ['csv'] },
+      saveLabel: 'Export',
+      title: 'Export Missing Translations',
+    });
+
+    if (!uri) {
+      return;
+    }
+
+    const command = `i18nsmith translate --export ${quoteCliArg(uri.fsPath)}`;
+    
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Exporting missing translations...',
+      },
+      async () => {
+        const result = await this.services.cliService.runCliCommand(command);
+        
+        if (result?.success) {
+          vscode.window.showInformationMessage(`Exported missing translations to ${uri.fsPath}`);
+        } else {
+          vscode.window.showErrorMessage(`Export failed: ${result?.stderr ?? 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  public async renameSuspiciousKey(warning: SuspiciousKeyWarning) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return;
+    }
+
+    const suggestion = buildSuspiciousKeySuggestion(warning.key, workspaceFolder.uri.fsPath, warning.filePath);
+    
+    const newKey = await vscode.window.showInputBox({
+      title: `Rename suspicious key "${warning.key}"`,
+      value: suggestion,
+      prompt: 'Enter the new key name',
+    });
+
+    if (!newKey || newKey === warning.key) {
+      return;
+    }
+
+    const command = `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(newKey)} --write`;
+    
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Renaming key to "${newKey}"...`,
+      },
+      async () => {
+        const result = await this.services.cliService.runCliCommand(command);
+
+        if (result?.success) {
+          vscode.window.showInformationMessage(`Renamed "${warning.key}" to "${newKey}"`);
+          // Refresh diagnostics
+          this.services.reportWatcher.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Rename failed: ${result?.stderr ?? 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  public async renameSuspiciousKeysInFile(target?: vscode.Uri) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return;
+    }
+
+    const targetFile = target?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+    if (!targetFile) {
+      vscode.window.showErrorMessage('No file selected for renaming suspicious keys.');
+      return;
+    }
+
+    const command = `i18nsmith sync --target ${quoteCliArg(targetFile)} --auto-rename-suspicious --write`;
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Renaming suspicious keys in file...',
+      },
+      async () => {
+        const result = await this.services.cliService.runCliCommand(command);
+        
+        if (result?.success) {
+          vscode.window.showInformationMessage('Renamed suspicious keys.');
+          this.services.reportWatcher.refresh();
+        } else {
+          vscode.window.showErrorMessage(`Rename failed: ${result?.stderr ?? 'Unknown error'}`);
+        }
       }
     );
   }

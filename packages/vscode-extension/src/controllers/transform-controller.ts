@@ -271,7 +271,7 @@ export class TransformController implements vscode.Disposable {
   }): Promise<boolean> {
     const choice = await vscode.window.showInformationMessage(
       options.title,
-      { modal: true, detail: options.detail },
+      { modal: false, detail: options.detail },
       options.applyLabel,
       options.cancelLabel
     );

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { ServiceContainer } from '../services/container';
-import { loadConfigWithMeta, LocaleStore } from '@i18nsmith/core';
+import { loadConfigWithMeta, LocaleStore, KeyGenerator } from '@i18nsmith/core';
 import { executePreviewPlan, PlannedChange } from '../preview-flow';
 
 const fsp = fs.promises;
@@ -33,23 +33,7 @@ export class ExtractionController implements vscode.Disposable {
 
     const document = await vscode.workspace.openTextDocument(uri);
     const selectionText = document.getText(range) || text;
-    const normalizedSelection = selectionText
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '')
-      .trim()
-      .replace(/\s+/g, '-')
-      .slice(0, 30);
-
-    const key = await vscode.window.showInputBox({
-      prompt: 'Enter the translation key',
-      value: `common.${normalizedSelection}`,
-      placeHolder: 'e.g., common.greeting',
-    });
-
-    if (!key) {
-      return;
-    }
-
+    
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri) ?? vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder found');
@@ -61,6 +45,28 @@ export class ExtractionController implements vscode.Disposable {
       meta = await loadConfigWithMeta(undefined, { cwd: workspaceFolder.uri.fsPath });
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to load i18nsmith config: ${error}`);
+      return;
+    }
+
+    // Use KeyGenerator to propose a key
+    const generator = new KeyGenerator({
+      namespace: meta.config.keyGeneration?.namespace,
+      hashLength: meta.config.keyGeneration?.shortHashLen,
+      workspaceRoot: workspaceFolder.uri.fsPath,
+    });
+
+    const generated = generator.generate(selectionText, {
+      filePath: uri.fsPath,
+      kind: 'jsx-text', // Default assumption, could be refined
+    });
+
+    const key = await vscode.window.showInputBox({
+      prompt: 'Enter the translation key',
+      value: generated.key,
+      placeHolder: 'e.g., common.greeting',
+    });
+
+    if (!key) {
       return;
     }
 
