@@ -102,6 +102,7 @@ function createProgressLogger() {
   let lastPercent = -1;
   let lastLogTime = 0;
   let pendingCarriageReturn = false;
+  let lastPlainLog = 0;
 
   const writeLine = (line: string, final = false) => {
     if (process.stdout.isTTY) {
@@ -110,8 +111,13 @@ function createProgressLogger() {
       if (final) {
         process.stdout.write('\n');
       }
-    } else {
+      return;
+    }
+
+    const now = Date.now();
+    if (final || now - lastPlainLog >= 2000) {
       console.log(line);
+      lastPlainLog = now;
     }
   };
 
@@ -122,25 +128,35 @@ function createProgressLogger() {
       }
 
       const now = Date.now();
-      const shouldLog =
-        progress.processed === progress.total ||
-        progress.percent === 0 ||
-        progress.percent >= lastPercent + 2 ||
-        now - lastLogTime > 1500;
+      const computedPercent =
+        typeof progress.percent === 'number'
+          ? Math.max(0, Math.min(100, Math.round(progress.percent)))
+          : progress.total
+          ? Math.round((progress.processed / progress.total) * 100)
+          : 0;
+      const reachedEnd = progress.processed === progress.total;
+      const percentAdvanced = computedPercent === 0 || computedPercent >= lastPercent + 5 || reachedEnd;
+      const timedOut = now - lastLogTime >= 2000;
 
-      if (!shouldLog) {
+      if (!percentAdvanced && !timedOut) {
         return;
       }
 
-      lastPercent = progress.percent;
+      lastPercent = Math.max(lastPercent, computedPercent);
       lastLogTime = now;
+
+      const remaining =
+        typeof progress.remaining === 'number'
+          ? progress.remaining
+          : Math.max(progress.total - progress.processed, 0);
+
       const line =
-        `Applying transforms ${progress.processed}/${progress.total} (${progress.percent}%)` +
+        `Applying transforms ${progress.processed}/${progress.total} (${computedPercent}%)` +
         ` | applied: ${progress.applied ?? 0}` +
         ` | skipped: ${progress.skipped ?? 0}` +
         (progress.errors ? ` | errors: ${progress.errors}` : '') +
-        ` | remaining: ${progress.remaining ?? progress.total - progress.processed}`;
-      writeLine(line, progress.processed === progress.total);
+        ` | remaining: ${remaining}`;
+      writeLine(line, reachedEnd);
     },
     flush() {
       if (pendingCarriageReturn && process.stdout.isTTY) {
