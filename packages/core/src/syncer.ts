@@ -350,6 +350,10 @@ export class Syncer {
       if (this.config.seedTargetLocales) {
         await this.seedSourceToTargets(localeData);
       }
+      
+      // Ensure all target locale files exist (create empty files if missing)
+      await this.localeStore.ensureFilesExist(this.targetLocales);
+      
       localeStats = await this.localeStore.flush();
     }
 

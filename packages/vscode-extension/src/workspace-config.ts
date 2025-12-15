@@ -5,6 +5,11 @@ import {
   isSafeLanguageTag,
   isSafeNamespace,
 } from '@i18nsmith/core';
+import {
+  mergeAssumptions,
+  normalizeManualAssumption,
+  type WhitelistSuggestion,
+} from './dynamic-key-whitelist';
 
 export interface WorkspaceConfigShape {
   localesDir?: string;
@@ -15,6 +20,10 @@ export interface WorkspaceConfigShape {
   };
   globs?: {
     localesDir?: string;
+  };
+  dynamicKeys?: {
+    assumptions?: string[];
+    globs?: string[];
   };
   [key: string]: unknown;
 }
@@ -169,3 +178,102 @@ function toError(value: unknown, fallbackMessage: string): Error {
   }
   return new Error(`${fallbackMessage}: ${String(value)}`);
 }
+
+export interface DynamicWhitelistSnapshot {
+  assumptions: string[];
+  globs: string[];
+  normalizedEntries: string[];
+}
+
+export async function loadDynamicWhitelistSnapshot(workspaceRoot: string): Promise<DynamicWhitelistSnapshot | null> {
+  const result = readWorkspaceConfigSnapshot(workspaceRoot);
+  if (!result.ok) {
+    return null;
+  }
+  const raw = result.snapshot.raw;
+  const assumptions = Array.isArray(raw.dynamicKeys?.assumptions) ? (raw.dynamicKeys.assumptions as string[]) : [];
+  const globs = Array.isArray(raw.dynamicKeys?.globs) ? (raw.dynamicKeys.globs as string[]) : [];
+  const normalizedEntries = [
+    ...assumptions.map((v) => normalizeManualAssumption(v)),
+    ...globs.map((v) => normalizeManualAssumption(v)),
+  ].filter(Boolean);
+
+  return { assumptions, globs, normalizedEntries };
+}
+
+export async function persistDynamicKeyAssumptions(
+  workspaceRoot: string,
+  additions: WhitelistSuggestion[],
+  _snapshot: DynamicWhitelistSnapshot
+): Promise<{ assumptionsAdded: number; globsAdded: number } | null> {
+  const configPath = path.join(workspaceRoot, 'i18n.config.json');
+  let rawText: string;
+  try {
+    rawText = await fs.promises.readFile(configPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  let parsed: WorkspaceConfigShape;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return null;
+  }
+
+  if (!parsed.dynamicKeys || typeof parsed.dynamicKeys !== 'object') {
+    parsed.dynamicKeys = {};
+  }
+  const dynamicKeys = parsed.dynamicKeys as { assumptions?: string[]; globs?: string[] };
+
+  const newAssumptions = additions
+    .filter((a) => a.bucket === 'assumptions')
+    .map((a) => a.assumption);
+  const newGlobs = additions
+    .filter((a) => a.bucket === 'globs')
+    .map((a) => a.assumption);
+
+  const { next: nextAssumptions, added: addedAssumptions } = mergeAssumptions(
+    dynamicKeys.assumptions,
+    newAssumptions
+  );
+  const { next: nextGlobs, added: addedGlobs } = mergeAssumptions(dynamicKeys.globs, newGlobs);
+
+  if (!addedAssumptions.length && !addedGlobs.length) {
+    return { assumptionsAdded: 0, globsAdded: 0 };
+  }
+
+  dynamicKeys.assumptions = nextAssumptions;
+  dynamicKeys.globs = nextGlobs;
+
+  try {
+    await fs.promises.writeFile(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+    invalidateWorkspaceConfigCache(workspaceRoot);
+    return {
+      assumptionsAdded: addedAssumptions.length,
+      globsAdded: addedGlobs.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Helper to normalize assumptions (moved from dynamic-key-whitelist.ts to avoid circular deps if needed, 
+// but for now we import it. Wait, we can't import from dynamic-key-whitelist if it imports from us.
+// Let's check imports. dynamic-key-whitelist imports from core. extension imports both.
+// workspace-config imports core.
+// We need to move loadDynamicWhitelistSnapshot and persistDynamicKeyAssumptions to workspace-config.ts 
+// OR keep them in extension.ts but they need access to read/write config.
+// The user said "Issues with 'Whitelist dynamic keys' action persist".
+// The code I read in extension.ts calls `persistDynamicKeyAssumptions`.
+// But `persistDynamicKeyAssumptions` was NOT in `extension.ts` (I read lines 1200-1300 and it called it).
+// It must be imported.
+// I checked `dynamic-key-whitelist.ts` and it DOES NOT export `persistDynamicKeyAssumptions`.
+// Wait, I read `dynamic-key-whitelist.ts` lines 1-146. It exports `deriveWhitelistSuggestions`, `mergeAssumptions`, `normalizeManualAssumption`, `resolveWhitelistAssumption`.
+// It does NOT export `persistDynamicKeyAssumptions`.
+// So where is it?
+// In `extension.ts` line 1214: `const persistResult = await persistDynamicKeyAssumptions(...)`.
+// It must be defined in `extension.ts`.
+// I read lines 1200-1300 of `extension.ts`. It calls it.
+// I did NOT see the definition in the range I read.
+// I will search for `function persistDynamicKeyAssumptions` in `extension.ts`.

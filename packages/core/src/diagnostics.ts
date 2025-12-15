@@ -281,7 +281,10 @@ async function detectLocaleFiles(localesDir: string, config: I18nConfig): Promis
 
   const expectedLocales = [config.sourceLanguage, ...(config.targetLanguages ?? [])];
   for (const locale of expectedLocales) {
-    if (!entries.some((entry) => entry.locale === locale)) {
+    // Check for exact match or case-insensitive match to avoid false positives on case-insensitive FS
+    const exists = entries.some((entry) => entry.locale === locale || entry.locale.toLowerCase() === locale.toLowerCase());
+
+    if (!exists) {
       entries.push({
         locale,
         path: path.join(localesDir, `${locale}.json`),
