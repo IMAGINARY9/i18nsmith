@@ -488,7 +488,11 @@ describe('Transformer', () => {
     const srcDir = path.join(tempDir, 'src');
     await fs.mkdir(srcDir, { recursive: true });
     const filePath = path.join(srcDir, 'Multi.tsx');
-    await fs.writeFile(filePath, `export function Multi(){return <div><p>A</p><p>B</p></div>;}`, 'utf8');
+    await fs.writeFile(
+      filePath,
+      `export function Multi(){return <div><p>Alpha</p><p>Bravo</p></div>;}`,
+      'utf8'
+    );
 
     const config: I18nConfig = {
       sourceLanguage: 'en',

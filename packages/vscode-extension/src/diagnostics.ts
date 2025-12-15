@@ -25,6 +25,8 @@ export interface CheckReport {
     missingKeys?: Array<{ key: string; filePath?: string }>;
     unusedKeys?: Array<{ key: string; locales?: string[] }>;
     actionableItems?: ActionableItem[];
+    dynamicKeyWarnings?: unknown[];
+    suspiciousKeys?: unknown[];
   };
   actionableItems?: ActionableItem[];
   suggestedCommands?: Array<{
@@ -136,6 +138,34 @@ export class DiagnosticsManager implements vscode.Disposable {
     this.diagnosticCollection.clear();
     this.fileIssues.clear();
     this.currentReport = null;
+  }
+
+  suppressSyncWarnings(kinds: Array<'dynamicKeyWarnings' | 'suspiciousKeys'>) {
+    if (!this.currentReport || typeof this.currentReport.sync !== 'object') {
+      return;
+    }
+
+    const syncSection = { ...this.currentReport.sync } as Record<string, unknown>;
+    let changed = false;
+
+    if (kinds.includes('dynamicKeyWarnings') && Array.isArray(syncSection.dynamicKeyWarnings) && syncSection.dynamicKeyWarnings.length) {
+      syncSection.dynamicKeyWarnings = [];
+      changed = true;
+    }
+
+    if (kinds.includes('suspiciousKeys') && Array.isArray(syncSection.suspiciousKeys) && syncSection.suspiciousKeys.length) {
+      syncSection.suspiciousKeys = [];
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    this.currentReport = {
+      ...this.currentReport,
+      sync: syncSection as CheckReport['sync'],
+    };
   }
 
   /**

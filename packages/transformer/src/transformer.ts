@@ -47,6 +47,7 @@ export class Transformer {
   private readonly defaultWrite: boolean;
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
+  private readonly usesExternalProject: boolean;
   // Per-run dedupe state. Must be cleared at the beginning of each run.
   // Keeping it on the instance caused subsequent runs to mislabel candidates as duplicates
   // and could lead to confusing multi-pass behavior/reporting.
@@ -55,6 +56,7 @@ export class Transformer {
 
   constructor(private readonly config: I18nConfig, options: TransformerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+  this.usesExternalProject = Boolean(options.project);
   this.project = options.project ?? new Project({ skipAddingFilesFromTsConfig: true });
   const namespace = options.keyNamespace ?? this.config.keyGeneration?.namespace ?? 'common';
   this.keyGenerator =
@@ -111,7 +113,7 @@ export class Transformer {
       (candidate) => candidate.status === 'pending' || candidate.status === 'existing'
     );
 
-    const filesChanged = new Map<string, SourceFile>();
+  const changedFiles = new Set<string>();
     const skippedFiles: FileTransformRecord[] = [];
 
     const shouldProcess = write || generateDiffs;
@@ -148,29 +150,58 @@ export class Transformer {
     emitProgress();
 
     if (shouldProcess) {
-      // Track detected imports per file to avoid redundant detection
       const fileImportCache = new Map<string, { module: string; hookName: string }>();
+      const pendingByFile = new Map<string, number>();
+      const sourceFilesByPath = new Map<string, SourceFile>();
+
+      for (const candidate of transformableCandidates) {
+        pendingByFile.set(candidate.filePath, (pendingByFile.get(candidate.filePath) ?? 0) + 1);
+        if (!sourceFilesByPath.has(candidate.filePath)) {
+          sourceFilesByPath.set(candidate.filePath, candidate.raw.sourceFile);
+        }
+      }
+
+      const finalizeSourceFile = async (filePath: string) => {
+        const sourceFile = sourceFilesByPath.get(filePath);
+        if (!sourceFile) {
+          return;
+        }
+
+        if (write && changedFiles.has(filePath)) {
+          await sourceFile.save();
+          await formatFileWithPrettier(sourceFile.getFilePath());
+          try {
+            sourceFile.refreshFromFileSystemSync();
+          } catch {
+            // Ignore refresh errors; file may have been removed.
+          }
+        }
+
+        if (!this.usesExternalProject) {
+          sourceFile.forget();
+        }
+        sourceFilesByPath.delete(filePath);
+      };
 
       for (const candidate of enriched) {
-        // Process both 'pending' (new) and 'existing' (key exists but code not transformed) candidates
         if (candidate.status !== 'pending' && candidate.status !== 'existing') {
           continue;
         }
 
         progressState.processed += 1;
         let skipCounted = false;
-
-        // Track original status to determine if we need to upsert locale data
         const wasExisting = candidate.status === 'existing';
+        let didMutate = false;
 
         try {
           const sourceFile = candidate.raw.sourceFile;
           const filePath = candidate.filePath;
 
-          // Determine which adapter to use for this file
-          let adapterForFile = this.translationAdapter;
+          if (!sourceFilesByPath.has(filePath)) {
+            sourceFilesByPath.set(filePath, sourceFile);
+          }
 
-          // Check if we've already detected an import for this file
+          let adapterForFile = this.translationAdapter;
           if (!fileImportCache.has(filePath)) {
             const detected = detectExistingTranslationImport(sourceFile);
             if (detected) {
@@ -185,9 +216,8 @@ export class Transformer {
           if (cachedAdapter) {
             adapterForFile = cachedAdapter;
           }
-          
+
           if (write) {
-            // Convert absolute module path to relative path for the source file
             const relativeModulePath = this.getRelativeModulePath(adapterForFile.module, filePath);
             ensureUseTranslationImport(sourceFile, {
               moduleSpecifier: relativeModulePath,
@@ -203,26 +233,41 @@ export class Transformer {
             progressState.skipped += 1;
             skipCounted = true;
             emitProgress();
+            if (pendingByFile.has(candidate.filePath)) {
+              const remaining = (pendingByFile.get(candidate.filePath) ?? 0) - 1;
+              if (remaining <= 0) {
+                pendingByFile.delete(candidate.filePath);
+                await finalizeSourceFile(candidate.filePath);
+              } else {
+                pendingByFile.set(candidate.filePath, remaining);
+              }
+            }
             continue;
           }
 
           if (write) {
             ensureUseTranslationBinding(scope, adapterForFile.hookName);
             ensureClientDirective(sourceFile);
-            this.applyCandidate(candidate);
-            candidate.status = 'applied';
-            filesChanged.set(candidate.filePath, sourceFile);
-            progressState.applied += 1;
+            didMutate = this.applyCandidate(candidate);
+            if (didMutate) {
+              candidate.status = 'applied';
+              changedFiles.add(candidate.filePath);
+              progressState.applied += 1;
+            } else {
+              candidate.status = 'skipped';
+              candidate.reason = candidate.reason ?? 'Already translated';
+              progressState.skipped += 1;
+              skipCounted = true;
+            }
           }
 
-          // Only upsert to locale store if this is a new key (wasExisting = false)
-          if (!wasExisting) {
+          if (didMutate && !wasExisting) {
             const sourceValue =
               (await this.findLegacyLocaleValue(this.sourceLocale, candidate.text)) ??
               candidate.text ??
               generateValueFromKey(candidate.suggestedKey);
             await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, sourceValue);
-            
+
             const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
             if (shouldMigrate) {
               for (const locale of this.targetLocales) {
@@ -246,28 +291,22 @@ export class Transformer {
         }
 
         emitProgress();
+
+        if (pendingByFile.has(candidate.filePath)) {
+          const remaining = (pendingByFile.get(candidate.filePath) ?? 0) - 1;
+          if (remaining <= 0) {
+            pendingByFile.delete(candidate.filePath);
+            await finalizeSourceFile(candidate.filePath);
+          } else {
+            pendingByFile.set(candidate.filePath, remaining);
+          }
+        }
       }
 
-      if (write) {
-        const changedFiles = Array.from(filesChanged.values());
-
-        await Promise.all(
-          changedFiles.map(async (file) => {
-            await file.save();
-            await formatFileWithPrettier(file.getFilePath());
-          })
-        );
-
-        // Important for iterative runs: ts-morph keeps SourceFile ASTs in memory.
-        // After we mutate+format on disk, the in-memory AST can drift from disk,
-        // which can cause the next scan to see a different shape and produce new
-        // candidates in waves. Refresh ensures scan always reflects the current file.
-        for (const file of changedFiles) {
-          try {
-            file.refreshFromFileSystemSync();
-          } catch {
-            // Best-effort refresh; ignore if file was removed or inaccessible.
-          }
+      if (sourceFilesByPath.size) {
+        const pendingFiles = Array.from(sourceFilesByPath.keys());
+        for (const filePath of pendingFiles) {
+          await finalizeSourceFile(filePath);
         }
       }
     }
@@ -280,7 +319,7 @@ export class Transformer {
 
     return {
       filesScanned: summary.filesScanned,
-      filesChanged: Array.from(filesChanged.keys()),
+      filesChanged: Array.from(changedFiles),
       candidates: enriched.map(({ raw: _raw, ...rest }) => rest),
       localeStats,
       diffs,
@@ -405,7 +444,7 @@ export class Transformer {
     };
   }
 
-  private applyCandidate(candidate: InternalCandidate) {
+  private applyCandidate(candidate: InternalCandidate): boolean {
     const node = candidate.raw.node;
     const keyCall = `t('${candidate.suggestedKey}')`;
 
@@ -413,16 +452,25 @@ export class Transformer {
       if (!Node.isJsxText(node)) {
         throw new Error('Candidate node mismatch for jsx-text');
       }
-      node.replaceWithText(`{${keyCall}}`);
-      return;
+      const replacement = `{${keyCall}}`;
+      if (node.getText() === replacement) {
+        return false;
+      }
+      node.replaceWithText(replacement);
+      return true;
     }
 
     if (candidate.kind === 'jsx-attribute') {
       if (!Node.isJsxAttribute(node)) {
         throw new Error('Candidate node mismatch for jsx-attribute');
       }
-      node.setInitializer(`{${keyCall}}`);
-      return;
+      const newInitializer = `{${keyCall}}`;
+      const initializer = node.getInitializer();
+      if (initializer && initializer.getText() === newInitializer) {
+        return false;
+      }
+      node.setInitializer(newInitializer);
+      return true;
     }
 
     if (candidate.kind === 'jsx-expression') {
@@ -431,11 +479,18 @@ export class Transformer {
       }
       const expression = node.getExpression();
       if (expression) {
+        if (expression.getText() === keyCall) {
+          return false;
+        }
         expression.replaceWithText(keyCall);
-      } else {
-        node.replaceWithText(`{${keyCall}}`);
+        return true;
       }
-      return;
+      const wrapped = `{${keyCall}}`;
+      if (node.getText() === wrapped) {
+        return false;
+      }
+      node.replaceWithText(wrapped);
+      return true;
     }
 
     if (candidate.kind === 'call-expression') {
@@ -444,9 +499,13 @@ export class Transformer {
       }
       const [arg] = node.getArguments();
       if (arg && Node.isStringLiteral(arg)) {
+        if (arg.getLiteralText() === candidate.suggestedKey) {
+          return false;
+        }
         arg.replaceWithText(`'${candidate.suggestedKey}'`);
+        return true;
       }
-      return;
+      return false;
     }
 
     throw new Error(`Unsupported candidate kind: ${candidate.kind}`);

@@ -97,7 +97,29 @@ let cliOutputChannel: vscode.OutputChannel | undefined;
 let previewManager: PreviewManager | undefined;
 let lastSyncDynamicWarnings: DynamicKeyWarning[] = [];
 let lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
+let dynamicWarningSuppressUntil = 0;
 const fsp = fs.promises;
+
+function beginDynamicWarningSuppression(durationMs = 45000) {
+  dynamicWarningSuppressUntil = Date.now() + durationMs;
+  lastSyncDynamicWarnings = [];
+  diagnosticsManager?.suppressSyncWarnings(['dynamicKeyWarnings']);
+}
+
+function clearDynamicWarningSuppression() {
+  dynamicWarningSuppressUntil = 0;
+}
+
+function areDynamicWarningsSuppressed(): boolean {
+  if (!dynamicWarningSuppressUntil) {
+    return false;
+  }
+  if (Date.now() > dynamicWarningSuppressUntil) {
+    dynamicWarningSuppressUntil = 0;
+    return false;
+  }
+  return true;
+}
 
 function logVerbose(message: string) {
   const config = vscode.workspace.getConfiguration('i18nsmith');
@@ -518,6 +540,7 @@ async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {
   );
 
   const summary = previewResult.payload.summary;
+  clearDynamicWarningSuppression();
   lastSyncDynamicWarnings = sanitizeDynamicWarnings(summary.dynamicKeyWarnings ?? [], workspaceFolder.uri.fsPath);
   lastSyncSuspiciousWarnings = sanitizeSuspiciousWarnings(summary.suspiciousKeys ?? [], workspaceFolder.uri.fsPath);
   const relativePreviewPath = path.relative(workspaceFolder.uri.fsPath, previewResult.previewPath);
@@ -1126,7 +1149,7 @@ async function whitelistDynamicKeys() {
     return;
   }
 
-  lastSyncDynamicWarnings = [];
+  beginDynamicWarningSuppression();
 
   const { globsAdded, assumptionsAdded } = persistResult;
   if (!globsAdded && !assumptionsAdded) {
@@ -1243,28 +1266,24 @@ async function runSuspiciousRenameFlow(
   }
 
   const summaryDetail = formatSuspiciousRenameSummary(renameReport);
-  const renameLabel = options.scopeLabel === 'workspace' ? 'Rename All' : 'Rename Keys';
-  let choice = await vscode.window.showInformationMessage(
-    `Rename ${renameReport.safeProposals.length} suspicious key${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}?`,
-    { modal: true, detail: summaryDetail },
-    renameLabel,
-    'Review Plan'
-  );
+  await showSuspiciousRenamePlan(renameReport);
 
-  if (!choice) {
+  const applyLabel = options.scopeLabel === 'workspace' ? 'Apply All Renames' : 'Apply Renames';
+  const notificationDetail = [
+    summaryDetail,
+    renameReport.conflictProposals.length
+      ? 'Conflicts are highlighted in the preview document. Resolve them before applying.'
+      : 'Review the preview document before applying.',
+  ].join('\n\n');
+
+  const confirmed = await showPersistentApplyNotification({
+    title: `Apply ${renameReport.safeProposals.length} auto-rename${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}?`,
+    detail: notificationDetail,
+    applyLabel,
+  });
+
+  if (!confirmed) {
     return;
-  }
-
-  if (choice === 'Review Plan') {
-    await showSuspiciousRenamePlan(renameReport);
-    choice = await vscode.window.showInformationMessage(
-      `Apply ${renameReport.safeProposals.length} rename${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}?`,
-      { modal: true, detail: summaryDetail },
-      renameLabel
-    );
-    if (choice !== renameLabel) {
-      return;
-    }
   }
 
   const mapEntries = renameReport.safeProposals.map((proposal) => ({
@@ -1288,6 +1307,10 @@ async function runSuspiciousRenameFlow(
 }
 
 async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder): Promise<DynamicKeyWarning[]> {
+  if (areDynamicWarningsSuppressed()) {
+    return [];
+  }
+
   if (lastSyncDynamicWarnings.length) {
     return lastSyncDynamicWarnings;
   }
@@ -2695,9 +2718,10 @@ async function showQuickActions() {
   const report = diagnosticsManager?.getReport?.();
   const driftStats = getDriftStatistics(report);
   const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[]; suspiciousKeys?: unknown[] } | undefined;
-  const dynamicWarningCount = Array.isArray(syncSection?.dynamicKeyWarnings)
+  const rawDynamicWarningCount = Array.isArray(syncSection?.dynamicKeyWarnings)
     ? syncSection.dynamicKeyWarnings.length
     : 0;
+  const dynamicWarningCount = areDynamicWarningsSuppressed() ? 0 : rawDynamicWarningCount;
   const suspiciousWarningCount = Array.isArray(syncSection?.suspiciousKeys)
     ? syncSection.suspiciousKeys.length
     : 0;
@@ -3434,7 +3458,7 @@ function extractCliWarnings(stdout: string): string[] {
   const sync = isRecord(obj.sync) ? obj.sync : obj;
   const dynamicWarningsValue = sync['dynamicKeyWarnings'];
   const dynamicWarnings = Array.isArray(dynamicWarningsValue) ? dynamicWarningsValue : [];
-  if (dynamicWarnings.length) {
+  if (dynamicWarnings.length && !areDynamicWarningsSuppressed()) {
     const message =
       dynamicWarnings.length === 1
         ? '1 dynamic translation key detected. Use “Whitelist dynamic keys” to ignore known runtime patterns.'
