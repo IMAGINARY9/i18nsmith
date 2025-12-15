@@ -19,6 +19,8 @@ import { SyncController } from './controllers/sync-controller';
 import { TransformController } from './controllers/transform-controller';
 import { ExtractionController } from './controllers/extraction-controller';
 import { CliService } from './services/cli-service';
+import { applyPreviewPlan } from './preview-flow';
+import { SuspiciousKeyWarning } from '@i18nsmith/core';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -271,9 +273,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.actions', async () => {
       await showQuickActions();
     }),
-    // vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (warning: SuspiciousKeyWarning) => {
-    //   await renameSuspiciousKey(warning);
-    // }),
+    vscode.commands.registerCommand('i18nsmith.applyPreviewPlan', async () => {
+      await applyPreviewPlan();
+    }),
+    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (warning: SuspiciousKeyWarning) => {
+      await syncController.renameSuspiciousKey(warning);
+    }),
     // vscode.commands.registerCommand('i18nsmith.renameAllSuspiciousKeys', async () => {
     //   await renameAllSuspiciousKeys();
     // }),
@@ -309,15 +314,15 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('Open a file to transform.');
       }
     }),
-    // vscode.commands.registerCommand('i18nsmith.exportMissingTranslations', async () => {
-    //   await exportMissingTranslations();
-    // }),
+    vscode.commands.registerCommand('i18nsmith.exportMissingTranslations', async () => {
+      await syncController.exportMissingTranslations();
+    }),
     vscode.commands.registerCommand('i18nsmith.whitelistDynamicKeys', async () => {
       await configController.whitelistDynamicKeys();
     }),
-    // vscode.commands.registerCommand('i18nsmith.renameSuspiciousKeysInFile', async (target?: vscode.Uri) => {
-    //   await renameSuspiciousKeysInFile(target);
-    // }),
+    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKeysInFile', async (target?: vscode.Uri) => {
+      await syncController.renameSuspiciousKeysInFile(target);
+    }),
     // vscode.commands.registerCommand('i18nsmith.applySuspiciousRenamePlan', async () => {
     //   await applyStoredSuspiciousRenamePlan();
     // }),
@@ -504,6 +509,12 @@ async function showQuickActions() {
 
   if (suggestedCommands.length) {
     for (const sc of suggestedCommands) {
+      // Filter out "Create missing locale files" as it's often redundant with "Apply local fixes"
+      // and can be triggered falsely if the check-runner is aggressive.
+      if (sc.label === 'Create missing locale files') {
+        continue;
+      }
+
       const interactive = isInteractiveCliCommand(sc.command);
       const previewIntent = parsePreviewableCommand(sc.command) ?? undefined;
       const detail = previewIntent
@@ -571,13 +582,13 @@ async function showQuickActions() {
   }
 
   const missingCount = driftStats?.missing ?? 0;
-  picks.push({
-    label: '$(cloud-download) Export missing translations',
-    description: missingCount
-      ? `${missingCount} missing key${missingCount === 1 ? '' : 's'} → CSV handoff`
-      : 'Generate a CSV of missing translations for translators',
-    command: 'i18nsmith.exportMissingTranslations',
-  });
+  if (missingCount > 0) {
+    picks.push({
+      label: '$(cloud-download) Export missing translations',
+      description: `${missingCount} missing key${missingCount === 1 ? '' : 's'} → CSV handoff`,
+      command: 'i18nsmith.exportMissingTranslations',
+    });
+  }
 
   picks.push(
     {
