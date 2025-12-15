@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import type { DynamicKeyWarning } from '@i18nsmith/core';
+import { resolveWhitelistAssumption } from './dynamic-key-whitelist';
 
 /**
  * Schema for actionable items from i18nsmith check/sync reports
@@ -47,6 +49,7 @@ export class DiagnosticsManager implements vscode.Disposable {
   private diagnosticCollection: vscode.DiagnosticCollection;
   private currentReport: CheckReport | null = null;
   private fileIssues: Map<string, ActionableItem[]> = new Map();
+  private workspaceRoot: string | null = null;
 
   constructor() {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection('i18nsmith');
@@ -60,6 +63,11 @@ export class DiagnosticsManager implements vscode.Disposable {
    * Update diagnostics from a parsed report
    */
   updateFromReport(report: CheckReport, workspaceRoot: string) {
+    this.workspaceRoot = workspaceRoot;
+    this.replaceDiagnostics(report, workspaceRoot);
+  }
+
+  private replaceDiagnostics(report: CheckReport, workspaceRoot: string) {
     this.currentReport = report;
     this.diagnosticCollection.clear();
     this.fileIssues.clear();
@@ -138,6 +146,7 @@ export class DiagnosticsManager implements vscode.Disposable {
     this.diagnosticCollection.clear();
     this.fileIssues.clear();
     this.currentReport = null;
+    this.workspaceRoot = null;
   }
 
   suppressSyncWarnings(kinds: Array<'dynamicKeyWarnings' | 'suspiciousKeys'>) {
@@ -162,10 +171,54 @@ export class DiagnosticsManager implements vscode.Disposable {
       return;
     }
 
-    this.currentReport = {
+    const nextReport: CheckReport = {
       ...this.currentReport,
       sync: syncSection as CheckReport['sync'],
     };
+
+    if (this.workspaceRoot) {
+      this.replaceDiagnostics(nextReport, this.workspaceRoot);
+    } else {
+      this.currentReport = nextReport;
+    }
+  }
+
+  pruneDynamicWarnings(normalizedExpressions: Set<string>) {
+    if (!normalizedExpressions.size) {
+      return;
+    }
+
+    if (!this.currentReport || !Array.isArray(this.currentReport.sync?.dynamicKeyWarnings)) {
+      return;
+    }
+
+    const currentWarnings = this.currentReport.sync!.dynamicKeyWarnings as DynamicKeyWarning[];
+    const filtered = currentWarnings.filter((warning) => {
+      const derived = resolveWhitelistAssumption(warning);
+      if (!derived) {
+        return true;
+      }
+      return !normalizedExpressions.has(derived.assumption);
+    });
+
+    if (filtered.length === currentWarnings.length) {
+      return;
+    }
+
+    const nextSync: CheckReport['sync'] = {
+      ...(this.currentReport.sync ?? {}),
+      dynamicKeyWarnings: filtered,
+    };
+    const nextReport: CheckReport = {
+      ...this.currentReport,
+      sync: nextSync,
+    };
+
+    if (this.workspaceRoot) {
+      this.replaceDiagnostics(nextReport, this.workspaceRoot);
+    } else {
+      this.currentReport = nextReport;
+    }
   }
 
   /**

@@ -16,7 +16,7 @@ export function deriveWhitelistSuggestions(warnings: DynamicKeyWarning[]): White
   const suggestions: WhitelistSuggestion[] = [];
 
   warnings.forEach((warning, index) => {
-    const derived = deriveAssumption(warning);
+    const derived = resolveWhitelistAssumption(warning);
     if (!derived) {
       return;
     }
@@ -68,7 +68,7 @@ export function normalizeManualAssumption(value: string): string {
   return squeezed.replace(/^\./, '').replace(/\.$/, '');
 }
 
-function deriveAssumption(
+export function resolveWhitelistAssumption(
   warning: DynamicKeyWarning
 ): { assumption: string; bucket: WhitelistBucket } | null {
   const rawExpression = warning.expression?.trim();
