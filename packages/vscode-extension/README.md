@@ -31,10 +31,9 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) —
 | `i18nsmith: Sync Locales (Dry Run)` | Run `i18nsmith sync` dry-run |
 | `i18nsmith: Sync Current File` | Analyze only the active file using core Syncer with QuickPick preview |
 | `i18nsmith: Refresh Diagnostics` | Manually refresh diagnostics from report |
-| `i18nsmith: Add Placeholder Key` | Add a TODO placeholder for a missing key |
 | `i18nsmith: Extract Selection as Translation Key` | Extract selected string as a new key |
 | `i18nsmith: Transform Current File` | Run the transformer on the active file with preview + confirmation |
-| `i18nsmith: Export Missing Translations` | Generate a CSV of missing translations for handoff |
+| `i18nsmith: Whitelist Dynamic Keys` | Whitelist dynamic keys found in the last sync |
 
 ## Per-file Workflows
 

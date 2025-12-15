@@ -4,6 +4,14 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-15
+### Refactoring
+- Major architectural refactor: moved core logic into dedicated controllers (`SyncController`, `TransformController`, `ExtractionController`, `ConfigurationController`).
+- Introduced `ServiceContainer` for better dependency management.
+- Cleaned up `extension.ts` to focus on activation and wiring.
+- Removed legacy monolithic functions and unused code.
+- Improved testability with new controller tests and activation smoke tests.
+
 ## [0.2.1] - 2025-12-13
 - Chore: bump package version to 0.2.1 and package the compiled extension for release.
 - See the commit history for packaging/build details.
