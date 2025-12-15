@@ -12,6 +12,7 @@ import {
   KeyGenerator,
   KeyValidator,
   LocaleStore,
+  ScanCandidate,
   Scanner,
   ScannerNodeCandidate,
   generateValueFromKey,
@@ -102,28 +103,34 @@ export class Transformer {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
     });
-    const summary = scanner.scan({
-      collectNodes: true,
+    const scanSummary = scanner.scan({
       targets: runOptions.targets,
       scanCalls: runOptions.migrateTextKeys,
     });
 
-    const enriched = await this.enrichCandidates(summary.detailedCandidates);
-    const transformableCandidates = enriched.filter(
-      (candidate) => candidate.status === 'pending' || candidate.status === 'existing'
-    );
-
-  const changedFiles = new Set<string>();
+    const preparedCandidates = await this.prepareCandidates(scanSummary.candidates);
+    const changedFiles = new Set<string>();
     const skippedFiles: FileTransformRecord[] = [];
 
     const shouldProcess = write || generateDiffs;
-    const enableProgress = Boolean(write && runOptions.onProgress && transformableCandidates.length > 0);
+    const transformableByFile = new Map<string, TransformCandidate[]>();
+    for (const candidate of preparedCandidates) {
+      if (candidate.status !== 'pending' && candidate.status !== 'existing') {
+        continue;
+      }
+      const list = transformableByFile.get(candidate.filePath) ?? [];
+      list.push(candidate);
+      transformableByFile.set(candidate.filePath, list);
+    }
+
+    const totalTransformable = Array.from(transformableByFile.values()).reduce((sum, list) => sum + list.length, 0);
+    const enableProgress = Boolean(write && runOptions.onProgress && totalTransformable > 0);
     const progressState = {
       processed: 0,
       applied: 0,
       skipped: 0,
       errors: 0,
-      total: transformableCandidates.length,
+      total: totalTransformable,
     };
 
     const emitProgress = () => {
@@ -149,20 +156,10 @@ export class Transformer {
 
     emitProgress();
 
-    if (shouldProcess) {
+    if (shouldProcess && transformableByFile.size > 0) {
       const fileImportCache = new Map<string, { module: string; hookName: string }>();
-      const pendingByFile = new Map<string, number>();
-      const sourceFilesByPath = new Map<string, SourceFile>();
 
-      for (const candidate of transformableCandidates) {
-        pendingByFile.set(candidate.filePath, (pendingByFile.get(candidate.filePath) ?? 0) + 1);
-        if (!sourceFilesByPath.has(candidate.filePath)) {
-          sourceFilesByPath.set(candidate.filePath, candidate.raw.sourceFile);
-        }
-      }
-
-      const finalizeSourceFile = async (filePath: string) => {
-        const sourceFile = sourceFilesByPath.get(filePath);
+      const finalizeSourceFile = async (filePath: string, sourceFile?: SourceFile) => {
         if (!sourceFile) {
           return;
         }
@@ -180,133 +177,155 @@ export class Transformer {
         if (!this.usesExternalProject) {
           sourceFile.forget();
         }
-        sourceFilesByPath.delete(filePath);
       };
 
-      for (const candidate of enriched) {
-        if (candidate.status !== 'pending' && candidate.status !== 'existing') {
-          continue;
-        }
-
-        progressState.processed += 1;
-        let skipCounted = false;
-        const wasExisting = candidate.status === 'existing';
-        let didMutate = false;
-
+      for (const [relativePath, plans] of transformableByFile.entries()) {
+        let sourceFile: SourceFile | undefined;
         try {
-          const sourceFile = candidate.raw.sourceFile;
-          const filePath = candidate.filePath;
+          const detailedSummary = scanner.scan({
+            collectNodes: true,
+            targets: [relativePath],
+            scanCalls: runOptions.migrateTextKeys,
+          });
+          const detailedCandidates = detailedSummary.detailedCandidates;
+          sourceFile = detailedCandidates[0]?.sourceFile;
 
-          if (!sourceFilesByPath.has(filePath)) {
-            sourceFilesByPath.set(filePath, sourceFile);
+          if (!sourceFile) {
+            const reason = `Failed to process file: ${relativePath} produced no candidates`;
+            for (const plan of plans) {
+              progressState.processed += 1;
+              plan.status = 'skipped';
+              plan.reason = reason;
+              skippedFiles.push({ filePath: plan.filePath, reason });
+              progressState.skipped += 1;
+              progressState.errors += 1;
+              emitProgress();
+            }
+            continue;
           }
 
           let adapterForFile = this.translationAdapter;
-          if (!fileImportCache.has(filePath)) {
+          if (!fileImportCache.has(relativePath)) {
             const detected = detectExistingTranslationImport(sourceFile);
             if (detected) {
-              fileImportCache.set(filePath, {
+              fileImportCache.set(relativePath, {
                 module: detected.moduleSpecifier,
                 hookName: detected.namedImport,
               });
             }
           }
 
-          const cachedAdapter = fileImportCache.get(filePath);
+          const cachedAdapter = fileImportCache.get(relativePath);
           if (cachedAdapter) {
             adapterForFile = cachedAdapter;
           }
 
-          if (write) {
-            const relativeModulePath = this.getRelativeModulePath(adapterForFile.module, filePath);
-            ensureUseTranslationImport(sourceFile, {
-              moduleSpecifier: relativeModulePath,
-              namedImport: adapterForFile.hookName,
-            });
-          }
+          const candidateLookup = new Map(
+            detailedCandidates.map((candidate) => [candidate.id, candidate])
+          );
 
-          const scope = findNearestFunctionScope(candidate.raw.node);
-          if (!scope) {
-            candidate.status = 'skipped';
-            candidate.reason = 'No React component/function scope found';
-            skippedFiles.push({ filePath: candidate.filePath, reason: candidate.reason });
-            progressState.skipped += 1;
-            skipCounted = true;
-            emitProgress();
-            if (pendingByFile.has(candidate.filePath)) {
-              const remaining = (pendingByFile.get(candidate.filePath) ?? 0) - 1;
-              if (remaining <= 0) {
-                pendingByFile.delete(candidate.filePath);
-                await finalizeSourceFile(candidate.filePath);
-              } else {
-                pendingByFile.set(candidate.filePath, remaining);
-              }
+          for (const plan of plans) {
+            progressState.processed += 1;
+            let skipCounted = false;
+            const wasExisting = plan.status === 'existing';
+            let didMutate = false;
+
+            const rawCandidate = candidateLookup.get(plan.id);
+            if (!rawCandidate) {
+              plan.status = 'skipped';
+              plan.reason = 'Candidate not found during apply pass';
+              skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
+              progressState.skipped += 1;
+              skipCounted = true;
+              emitProgress();
+              continue;
             }
-            continue;
-          }
 
-          if (write) {
-            ensureUseTranslationBinding(scope, adapterForFile.hookName);
-            ensureClientDirective(sourceFile);
-            didMutate = this.applyCandidate(candidate);
-            if (didMutate) {
-              candidate.status = 'applied';
-              changedFiles.add(candidate.filePath);
-              progressState.applied += 1;
-            } else {
-              candidate.status = 'skipped';
-              candidate.reason = candidate.reason ?? 'Already translated';
+            const internalCandidate: InternalCandidate = { ...plan, raw: rawCandidate };
+
+            try {
+              if (write) {
+                const relativeModulePath = this.getRelativeModulePath(
+                  adapterForFile.module,
+                  plan.filePath
+                );
+                ensureUseTranslationImport(sourceFile, {
+                  moduleSpecifier: relativeModulePath,
+                  namedImport: adapterForFile.hookName,
+                });
+              }
+
+              const scope = findNearestFunctionScope(internalCandidate.raw.node);
+              if (!scope) {
+                plan.status = 'skipped';
+                plan.reason = 'No React component/function scope found';
+                skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
+                progressState.skipped += 1;
+                skipCounted = true;
+                emitProgress();
+                continue;
+              }
+
+              if (write) {
+                ensureUseTranslationBinding(scope, adapterForFile.hookName);
+                ensureClientDirective(sourceFile);
+                didMutate = this.applyCandidate(internalCandidate);
+                if (didMutate) {
+                  plan.status = 'applied';
+                  changedFiles.add(plan.filePath);
+                  progressState.applied += 1;
+                } else {
+                  plan.status = 'skipped';
+                  plan.reason = plan.reason ?? 'Already translated';
+                  progressState.skipped += 1;
+                  skipCounted = true;
+                }
+              }
+
+              if (didMutate && !wasExisting) {
+                const sourceValue =
+                  (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
+                  plan.text ??
+                  generateValueFromKey(plan.suggestedKey);
+                await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);
+
+                const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
+                if (shouldMigrate) {
+                  for (const locale of this.targetLocales) {
+                    const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
+                    await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
+                  }
+                }
+              }
+            } catch (error) {
+              plan.status = 'skipped';
+              plan.reason = (error as Error).message;
+              skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
+              progressState.skipped += 1;
+              progressState.errors += 1;
+              skipCounted = true;
+            }
+
+            if (plan.status === 'skipped' && !skipCounted) {
               progressState.skipped += 1;
               skipCounted = true;
             }
-          }
 
-          if (didMutate && !wasExisting) {
-            const sourceValue =
-              (await this.findLegacyLocaleValue(this.sourceLocale, candidate.text)) ??
-              candidate.text ??
-              generateValueFromKey(candidate.suggestedKey);
-            await this.localeStore.upsert(this.sourceLocale, candidate.suggestedKey, sourceValue);
-
-            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
-            if (shouldMigrate) {
-              for (const locale of this.targetLocales) {
-                const legacyValue = await this.findLegacyLocaleValue(locale, candidate.text);
-                await this.localeStore.upsert(locale, candidate.suggestedKey, legacyValue ?? '');
-              }
-            }
+            emitProgress();
           }
         } catch (error) {
-          candidate.status = 'skipped';
-          candidate.reason = (error as Error).message;
-          skippedFiles.push({ filePath: candidate.filePath, reason: candidate.reason });
-          progressState.skipped += 1;
-          progressState.errors += 1;
-          skipCounted = true;
-        }
-
-        if (candidate.status === 'skipped' && !skipCounted) {
-          progressState.skipped += 1;
-          skipCounted = true;
-        }
-
-        emitProgress();
-
-        if (pendingByFile.has(candidate.filePath)) {
-          const remaining = (pendingByFile.get(candidate.filePath) ?? 0) - 1;
-          if (remaining <= 0) {
-            pendingByFile.delete(candidate.filePath);
-            await finalizeSourceFile(candidate.filePath);
-          } else {
-            pendingByFile.set(candidate.filePath, remaining);
+          const reason = `Failed to process file: ${(error as Error).message}`;
+          for (const plan of plans) {
+            progressState.processed += 1;
+            plan.status = 'skipped';
+            plan.reason = reason;
+            skippedFiles.push({ filePath: plan.filePath, reason });
+            progressState.skipped += 1;
+            progressState.errors += 1;
+            emitProgress();
           }
-        }
-      }
-
-      if (sourceFilesByPath.size) {
-        const pendingFiles = Array.from(sourceFilesByPath.keys());
-        for (const filePath of pendingFiles) {
-          await finalizeSourceFile(filePath);
+        } finally {
+          await finalizeSourceFile(relativePath, sourceFile);
         }
       }
     }
@@ -318,9 +337,9 @@ export class Transformer {
       : [];
 
     return {
-      filesScanned: summary.filesScanned,
+      filesScanned: scanSummary.filesScanned,
       filesChanged: Array.from(changedFiles),
-      candidates: enriched.map(({ raw: _raw, ...rest }) => rest),
+      candidates: preparedCandidates,
       localeStats,
       diffs,
       skippedFiles,
@@ -384,17 +403,13 @@ export class Transformer {
     }
   }
 
-  private async enrichCandidates(nodes: ScannerNodeCandidate[]): Promise<InternalCandidate[]> {
-    const result: InternalCandidate[] = [];
+  private async prepareCandidates(candidates: ScanCandidate[]): Promise<TransformCandidate[]> {
+    const result: TransformCandidate[] = [];
 
-    for (const candidate of nodes) {
+    for (const candidate of candidates) {
       const generated = this.keyGenerator.generate(candidate.text, this.buildContext(candidate));
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;
-
-  // Extract only serializable fields from ScannerNodeCandidate (exclude node, sourceFile)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { node, sourceFile, ...serializableCandidate } = candidate;
 
       // Pre-flight validation: check if generated key is suspicious
       const validation = this.keyValidator.validate(generated.key, candidate.text);
@@ -402,12 +417,11 @@ export class Transformer {
         status = 'skipped';
         reason = validation.suggestion ?? `Suspicious key: ${validation.reason}`;
         result.push({
-          ...serializableCandidate,
+          ...candidate,
           suggestedKey: generated.key,
           hash: generated.hash,
           status,
           reason,
-          raw: candidate,
         });
         continue;
       }
@@ -424,19 +438,18 @@ export class Transformer {
       }
 
       result.push({
-        ...serializableCandidate,
+        ...candidate,
         suggestedKey: generated.key,
         hash: generated.hash,
         status,
         reason,
-        raw: candidate,
       });
     }
 
     return result;
   }
 
-  private buildContext(candidate: ScannerNodeCandidate): KeyGenerationContext {
+  private buildContext(candidate: ScanCandidate): KeyGenerationContext {
     return {
       filePath: path.resolve(this.workspaceRoot, candidate.filePath),
       kind: candidate.kind,
