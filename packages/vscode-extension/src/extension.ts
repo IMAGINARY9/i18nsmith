@@ -45,6 +45,7 @@ import {
 import { executePreviewPlan, type PlannedChange } from './preview-flow';
 import {
   deriveWhitelistSuggestions,
+  resolveWhitelistAssumption,
   mergeAssumptions,
   normalizeManualAssumption,
   type WhitelistSuggestion,
@@ -98,6 +99,7 @@ let previewManager: PreviewManager | undefined;
 let lastSyncDynamicWarnings: DynamicKeyWarning[] = [];
 let lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
 let dynamicWarningSuppressUntil = 0;
+const pendingDynamicWhitelistEntries = new Set<string>();
 const fsp = fs.promises;
 
 function beginDynamicWarningSuppression(durationMs = 45000) {
@@ -108,6 +110,49 @@ function beginDynamicWarningSuppression(durationMs = 45000) {
 
 function clearDynamicWarningSuppression() {
   dynamicWarningSuppressUntil = 0;
+  pendingDynamicWhitelistEntries.clear();
+}
+function applyOptimisticDynamicWhitelist(additions: WhitelistSuggestion[]) {
+  if (!additions.length) {
+    return;
+  }
+
+  const normalizedEntries = new Set<string>();
+  for (const addition of additions) {
+    const normalized = normalizeManualAssumption(addition.assumption);
+    if (normalized) {
+      normalizedEntries.add(normalized);
+    }
+  }
+
+  if (!normalizedEntries.size) {
+    return;
+  }
+
+  normalizedEntries.forEach((value) => pendingDynamicWhitelistEntries.add(value));
+  lastSyncDynamicWarnings = filterOutPendingDynamicWarnings(lastSyncDynamicWarnings);
+  diagnosticsManager?.pruneDynamicWarnings(normalizedEntries);
+}
+
+function filterOutPendingDynamicWarnings(warnings: DynamicKeyWarning[]): DynamicKeyWarning[] {
+  if (!warnings.length || !pendingDynamicWhitelistEntries.size) {
+    return warnings;
+  }
+
+  return warnings.filter((warning) => !isWarningCoveredByPendingWhitelist(warning));
+}
+
+function isWarningCoveredByPendingWhitelist(warning: DynamicKeyWarning): boolean {
+  if (!pendingDynamicWhitelistEntries.size) {
+    return false;
+  }
+
+  const derived = resolveWhitelistAssumption(warning);
+  if (!derived) {
+    return false;
+  }
+
+  return pendingDynamicWhitelistEntries.has(derived.assumption);
 }
 
 function areDynamicWarningsSuppressed(): boolean {
@@ -1149,6 +1194,7 @@ async function whitelistDynamicKeys() {
     return;
   }
 
+  applyOptimisticDynamicWhitelist(additions);
   beginDynamicWarningSuppression();
 
   const { globsAdded, assumptionsAdded } = persistResult;
@@ -1167,6 +1213,8 @@ async function whitelistDynamicKeys() {
 
   vscode.window.showInformationMessage(`Added ${parts.join(' and ')} to i18n.config.json.`);
 
+  let shouldClearPendingWhitelists = false;
+
   if (smartScanner) {
     try {
       const scanResult = await smartScanner.scan('whitelist-dynamic');
@@ -1174,6 +1222,8 @@ async function whitelistDynamicKeys() {
         vscode.window.showWarningMessage(
           'i18nsmith check could not refresh automatically. Run "i18nsmith check" to ensure diagnostics are up to date.'
         );
+      } else {
+        shouldClearPendingWhitelists = true;
       }
     } catch (error) {
       logVerbose(`whitelistDynamicKeys: smartScanner scan failed - ${(error as Error).message}`);
@@ -1187,6 +1237,10 @@ async function whitelistDynamicKeys() {
 
   if (reportWatcher) {
     await reportWatcher.refresh();
+  }
+
+  if (shouldClearPendingWhitelists) {
+    pendingDynamicWhitelistEntries.clear();
   }
   await refreshDiagnosticsWithMessage('quick-action');
 }
@@ -1312,16 +1366,19 @@ async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder
   }
 
   if (lastSyncDynamicWarnings.length) {
-    return lastSyncDynamicWarnings;
+    return filterOutPendingDynamicWarnings(lastSyncDynamicWarnings);
   }
 
-  const diagnosticsWarnings = getDiagnosticsDynamicWarnings(workspaceFolder.uri.fsPath);
+  const diagnosticsWarnings = filterOutPendingDynamicWarnings(
+    getDiagnosticsDynamicWarnings(workspaceFolder.uri.fsPath)
+  );
   const hasDiagnosticsReport = Boolean(diagnosticsManager?.getReport?.());
   if (diagnosticsWarnings.length || hasDiagnosticsReport) {
     return diagnosticsWarnings;
   }
 
-  return await readLatestSyncPreviewDynamicWarnings(workspaceFolder.uri.fsPath);
+  const previewWarnings = await readLatestSyncPreviewDynamicWarnings(workspaceFolder.uri.fsPath);
+  return filterOutPendingDynamicWarnings(previewWarnings);
 }
 
 function getDiagnosticsDynamicKeySection(report: unknown): unknown {
