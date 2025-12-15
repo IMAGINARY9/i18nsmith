@@ -60,7 +60,21 @@ export function expandLocaleTree(
 		let node: Record<string, unknown> = root;
 		segments.forEach((segment, index) => {
 			if (index === segments.length - 1) {
+				if (isPlainRecord(node[segment])) {
+					// Collision: Trying to set a string value where an object exists
+					// We preserve the object (children) and skip this value to prevent data loss
+					// In a real scenario, this should be caught by validation before saving
+					console.warn(`[i18nsmith] Warning: Key collision detected. '${key}' cannot be set to a string because it is already a container.`);
+					return;
+				}
 				node[segment] = flat[key];
+				return;
+			}
+
+			if (typeof node[segment] === 'string') {
+				// Collision: Trying to create a child under a key that is already a string
+				// We preserve the string value and skip creating children to prevent data loss
+				console.warn(`[i18nsmith] Warning: Key collision detected. Cannot create child '${segments[index + 1]}' under '${segment}' because '${segment}' is already a string value.`);
 				return;
 			}
 

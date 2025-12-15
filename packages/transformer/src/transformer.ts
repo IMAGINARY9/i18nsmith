@@ -410,15 +410,43 @@ export class Transformer {
       const generated = this.keyGenerator.generate(candidate.text, this.buildContext(candidate));
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;
+      let suggestedKey = generated.key;
+
+      // Check for path collisions with existing keys
+      let collision = await this.localeStore.checkKeyCollision(this.sourceLocale, suggestedKey);
+      let attempts = 0;
+      while (collision && attempts < 5) {
+        attempts++;
+        // Resolve collision by appending suffix
+        if (collision === 'parent-is-leaf') {
+          // e.g. 'a.b' exists, trying to add 'a.b.c' -> 'a.b_c'
+          // Try to flatten the last segment separator
+          const lastDot = suggestedKey.lastIndexOf('.');
+          if (lastDot !== -1) {
+            suggestedKey = suggestedKey.substring(0, lastDot) + '_' + suggestedKey.substring(lastDot + 1);
+          } else {
+            suggestedKey = `${suggestedKey}_${attempts}`;
+          }
+        } else {
+          // e.g. 'a.b.c.d' exists, trying to add 'a.b.c' -> 'a.b.c_text'
+          suggestedKey = `${suggestedKey}_text`;
+        }
+        collision = await this.localeStore.checkKeyCollision(this.sourceLocale, suggestedKey);
+      }
+
+      if (collision) {
+        status = 'skipped';
+        reason = `Key collision detected: ${collision}`;
+      }
 
       // Pre-flight validation: check if generated key is suspicious
-      const validation = this.keyValidator.validate(generated.key, candidate.text);
+      const validation = this.keyValidator.validate(suggestedKey, candidate.text);
       if (!validation.valid) {
         status = 'skipped';
         reason = validation.suggestion ?? `Suspicious key: ${validation.reason}`;
         result.push({
           ...candidate,
-          suggestedKey: generated.key,
+          suggestedKey,
           hash: generated.hash,
           status,
           reason,
@@ -431,7 +459,7 @@ export class Transformer {
         reason = `Duplicate of ${this.seenHashes.get(generated.hash)}`;
       } else {
         this.seenHashes.set(generated.hash, candidate.id);
-        const existing = await this.localeStore.getValue(this.sourceLocale, generated.key);
+        const existing = await this.localeStore.getValue(this.sourceLocale, suggestedKey);
         if (existing) {
           status = 'existing';
         }
@@ -439,7 +467,7 @@ export class Transformer {
 
       result.push({
         ...candidate,
-        suggestedKey: generated.key,
+        suggestedKey,
         hash: generated.hash,
         status,
         reason,

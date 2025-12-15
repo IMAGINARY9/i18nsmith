@@ -1,4 +1,6 @@
 import type { ActionableItem, CheckReport } from './diagnostics';
+import type { SyncSummary } from '@i18nsmith/core';
+import type { TransformSummary } from '@i18nsmith/transformer';
 
 export type IssueSeverityLevel = 'none' | 'info' | 'warn' | 'error';
 
@@ -265,4 +267,76 @@ export function getSeverityLabel(level: IssueSeverityLevel): string {
     default:
       return 'none';
   }
+}
+
+export function formatSyncSummaryAsMarkdown(summary: SyncSummary, title: string = 'Sync Preview'): string {
+  const lines: string[] = [];
+  lines.push(`# ${title}`);
+  lines.push('');
+
+  // Stats
+  const added = summary.missingKeys.length;
+  const removed = summary.unusedKeys.length;
+  const stats: string[] = [];
+  if (added > 0) stats.push(`${added} addition${added === 1 ? '' : 's'}`);
+  if (removed > 0) stats.push(`${removed} removal${removed === 1 ? '' : 's'}`);
+
+  lines.push(`## Summary: ${stats.join(', ') || 'No changes'}`);
+  lines.push('');
+  lines.push('─'.repeat(80));
+  lines.push('');
+
+  // Diffs
+  if (summary.diffs && summary.diffs.length > 0) {
+    for (const diff of summary.diffs) {
+      lines.push(`## ${diff.locale} (${diff.path})`);
+      lines.push('');
+
+      const fileStats: string[] = [];
+      if (diff.added.length) fileStats.push(`+${diff.added.length} added`);
+      if (diff.updated.length) fileStats.push(`~${diff.updated.length} updated`);
+      if (diff.removed.length) fileStats.push(`-${diff.removed.length} removed`);
+
+      if (fileStats.length) {
+        lines.push(`Changes: ${fileStats.join(', ')}`);
+        lines.push('');
+      }
+
+      lines.push('```diff');
+      lines.push(diff.diff.trim());
+      lines.push('```');
+      lines.push('');
+    }
+  } else {
+    lines.push('_No file changes._');
+  }
+
+  return lines.join('\n');
+}
+
+export function formatTransformSummaryAsMarkdown(summary: TransformSummary, title: string = 'Transform Preview'): string {
+  const lines: string[] = [];
+  lines.push(`# ${title}`);
+  lines.push('');
+
+  const filesChanged = summary.filesChanged.length;
+  const candidates = summary.candidates.filter(c => c.status === 'applied' || c.status === 'pending').length;
+
+  lines.push(`## Summary: ${filesChanged} file${filesChanged === 1 ? '' : 's'} changed, ${candidates} candidate${candidates === 1 ? '' : 's'}`);
+  lines.push('');
+  lines.push('─'.repeat(80));
+  lines.push('');
+
+  if (summary.diffs && summary.diffs.length > 0) {
+    for (const diff of summary.diffs) {
+      lines.push(`## ${diff.locale} (${diff.path})`);
+      lines.push('');
+      lines.push('```diff');
+      lines.push(diff.diff.trim());
+      lines.push('```');
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
 }

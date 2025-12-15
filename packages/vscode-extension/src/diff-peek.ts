@@ -31,10 +31,18 @@ export class DiffPeekProvider {
 
     // Create a virtual document with the diff content
     const content = this.formatDiffsForPeek(diffs, title);
-    const uri = vscode.Uri.parse(`i18nsmith-diff:${title.replace(/\s/g, '-')}.diff`);
+    const timestamp = Date.now();
+    const uri = vscode.Uri.parse(`i18nsmith-diff:${title.replace(/\s/g, '-')}-${timestamp}.diff`);
     
     // Register a text document content provider for our custom scheme
     const provider = new DiffContentProvider(content);
+    // We use a unique scheme or handle the provider registration globally?
+    // Registering repeatedly for the same scheme 'i18nsmith-diff' is problematic if we don't dispose correctly.
+    // But here we dispose after 60s.
+    // If we use the same scheme, the *latest* registration wins.
+    // But VS Code might cache the *content* for a URI.
+    // By adding timestamp to URI, we bypass content caching.
+    
     const registration = vscode.workspace.registerTextDocumentContentProvider('i18nsmith-diff', provider);
 
     try {

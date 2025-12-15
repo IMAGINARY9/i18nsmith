@@ -141,6 +141,44 @@ export class LocaleStore {
     return 'renamed';
   }
 
+  public async ensureFilesExist(locales: string[]): Promise<void> {
+    for (const locale of locales) {
+      const entry = await this.ensureLocale(locale);
+      try {
+        await fs.access(entry.path);
+      } catch {
+        entry.dirty = true;
+      }
+    }
+  }
+
+  public async checkKeyCollision(
+    locale: string,
+    key: string
+  ): Promise<'parent-is-leaf' | 'key-is-container' | null> {
+    const entry = await this.ensureLocale(locale);
+    const keys = Object.keys(entry.data);
+
+    // Check if any parent path is already a leaf key
+    const parts = key.split(this.delimiter);
+    for (let i = 1; i < parts.length; i++) {
+      const parentPath = parts.slice(0, i).join(this.delimiter);
+      if (Object.prototype.hasOwnProperty.call(entry.data, parentPath)) {
+        return 'parent-is-leaf';
+      }
+    }
+
+    // Check if this key is a prefix of any existing key (meaning it would be a container)
+    const prefix = key + this.delimiter;
+    for (const existingKey of keys) {
+      if (existingKey.startsWith(prefix)) {
+        return 'key-is-container';
+      }
+    }
+
+    return null;
+  }
+
   public async flush(): Promise<LocaleFileStats[]> {
     const summaries: LocaleFileStats[] = [];
 

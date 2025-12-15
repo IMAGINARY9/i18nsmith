@@ -15,9 +15,9 @@ import { DiffPeekProvider } from './diff-peek';
 import {
   ensureGitignore,
   KeyGenerator,
-  loadConfigWithMeta,
   LocaleStore,
   SUSPICIOUS_KEY_REASON_DESCRIPTIONS,
+  loadConfigWithMeta,
 } from '@i18nsmith/core';
 import type {
   SyncSummary,
@@ -26,7 +26,6 @@ import type {
   KeyRenameSummary,
   SourceFileDiffEntry,
   TranslationPlan,
-  I18nConfig,
   DynamicKeyWarning,
   SuspiciousKeyWarning,
   SuspiciousKeyReason,
@@ -42,11 +41,10 @@ import {
   normalizeTargetForCli,
   quoteCliArg,
 } from './command-helpers';
-import { executePreviewPlan, type PlannedChange } from './preview-flow';
+import { executePreviewPlan, applyPreviewPlan, type PlannedChange } from './preview-flow';
 import {
   deriveWhitelistSuggestions,
   resolveWhitelistAssumption,
-  mergeAssumptions,
   normalizeManualAssumption,
   type WhitelistSuggestion,
 } from './dynamic-key-whitelist';
@@ -58,9 +56,10 @@ import {
 import { summarizeReportIssues } from './report-utils';
 import {
   getWorkspaceConfigSnapshot,
-  invalidateWorkspaceConfigCache,
-  readWorkspaceConfigSnapshot,
+  loadDynamicWhitelistSnapshot,
+  persistDynamicKeyAssumptions,
 } from './workspace-config';
+import { registerMarkdownPreviewProvider } from './markdown-preview';
 
 interface QuickActionPick extends vscode.QuickPickItem {
   command?: string;
@@ -299,6 +298,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(cliOutputChannel);
   previewManager = new PreviewManager(cliOutputChannel);
 
+  registerMarkdownPreviewProvider(context);
+
   const renamePreviewProvider = new SuspiciousRenamePreviewProvider(() => currentSuspiciousRenamePlan);
   suspiciousRenamePreviewProvider = renamePreviewProvider;
   context.subscriptions.push(
@@ -443,6 +444,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.showSuspiciousRenamePreview', async () => {
       await revealSuspiciousRenamePreview();
+    }),
+    vscode.commands.registerCommand('i18nsmith.applyPreviewPlan', async () => {
+      await applyPreviewPlan();
     })
   );
 
@@ -552,16 +556,6 @@ interface SyncQuickPickItem extends vscode.QuickPickItem {
 interface WhitelistQuickPickItem extends vscode.QuickPickItem {
   suggestion: WhitelistSuggestion;
   normalized: string;
-}
-
-type WritableConfig = Partial<I18nConfig> & {
-  sync?: I18nConfig['sync'];
-};
-
-interface DynamicWhitelistSnapshot {
-  configPath: string;
-  config: WritableConfig;
-  normalizedEntries: Set<string>;
 }
 
 interface SyncSelectionResult {
@@ -1928,72 +1922,8 @@ function sanitizeSuspiciousWarnings(rawWarnings: unknown, workspaceRoot: string)
   return normalized;
 }
 
-async function persistDynamicKeyAssumptions(
-  workspaceRoot: string,
-  selections: WhitelistSuggestion[],
-  snapshot?: DynamicWhitelistSnapshot
-): Promise<{ globsAdded: number; assumptionsAdded: number } | null> {
-  const state = snapshot ?? (await loadDynamicWhitelistSnapshot(workspaceRoot));
-  if (!state) {
-    return null;
-  }
-
-  const { config, configPath } = state;
-  config.sync = config.sync ?? {};
-
-  const globEntries = selections.filter((item) => item.bucket === 'globs').map((item) => item.assumption);
-  const assumptionEntries = selections
-    .filter((item) => item.bucket === 'assumptions')
-    .map((item) => item.assumption);
-
-  const globMerge = mergeAssumptions(config.sync.dynamicKeyGlobs, globEntries);
-  const assumptionMerge = mergeAssumptions(config.sync.dynamicKeyAssumptions, assumptionEntries);
-
-  if (!globMerge.added.length && !assumptionMerge.added.length) {
-    return { globsAdded: 0, assumptionsAdded: 0 };
-  }
-
-  config.sync.dynamicKeyGlobs = globMerge.next;
-  config.sync.dynamicKeyAssumptions = assumptionMerge.next;
-
-  await fsp.writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
-  invalidateWorkspaceConfigCache(workspaceRoot);
-
-  return {
-    globsAdded: globMerge.added.length,
-    assumptionsAdded: assumptionMerge.added.length,
-  };
-}
-
-async function loadDynamicWhitelistSnapshot(
-  workspaceRoot: string
-): Promise<DynamicWhitelistSnapshot | null> {
-  const result = readWorkspaceConfigSnapshot(workspaceRoot);
-  if (!result.ok) {
-    vscode.window.showErrorMessage(`Unable to read i18n.config.json: ${result.error.message}`);
-    return null;
-  }
-
-  const config = (result.snapshot.raw ?? {}) as WritableConfig;
-  const configPath = result.snapshot.configPath;
-
-  config.sync = config.sync ?? {};
-
-  const normalizedEntries = new Set<string>();
-  collectNormalizedWhitelistEntries(config.sync.dynamicKeyGlobs, normalizedEntries);
-  collectNormalizedWhitelistEntries(config.sync.dynamicKeyAssumptions, normalizedEntries);
-
-  return { configPath, config, normalizedEntries };
-}
-
-function collectNormalizedWhitelistEntries(values: string[] | undefined, target: Set<string>) {
-  for (const value of values ?? []) {
-    const normalized = normalizeManualAssumption(value);
-    if (normalized) {
-      target.add(normalized);
-    }
-  }
-}
+// Removed local definitions of persistDynamicKeyAssumptions, loadDynamicWhitelistSnapshot, DynamicWhitelistSnapshot
+// as they are now imported from workspace-config.ts
 
 async function syncCurrentFile() {
   const editor = vscode.window.activeTextEditor;
@@ -2578,22 +2508,19 @@ async function extractKeyFromSelection(uri: vscode.Uri, range: vscode.Range, tex
     ...localePlan.detailLines.slice(1),
   ];
 
-  const applied = await executePreviewPlan({
+  await executePreviewPlan({
     title: 'Extract selection as translation key',
     detail: detailLines.join('\n'),
     changes: [sourceChange.change, ...localePlan.changes],
     cleanup: async () => {
       await Promise.all(cleanupTasks.map((fn) => fn().catch(() => {})));
     },
+    onApply: async () => {
+      hoverProvider.clearCache();
+      reportWatcher.refresh();
+      vscode.window.showInformationMessage(`Extracted as '${key}'`);
+    },
   });
-
-  if (!applied) {
-    return;
-  }
-
-  hoverProvider.clearCache();
-  reportWatcher.refresh();
-  vscode.window.showInformationMessage(`Extracted as '${key}'`);
 }
 
 async function addPlaceholderWithPreview(key: string, workspaceRoot?: string): Promise<void> {
@@ -2633,26 +2560,23 @@ async function addPlaceholderWithPreview(key: string, workspaceRoot?: string): P
   }
 
   const detail = [`Key: ${key}`, ...localePlan.detailLines].join('\n');
-  const applied = await executePreviewPlan({
+  await executePreviewPlan({
     title: `Add placeholder for ${key}`,
     detail,
     changes: localePlan.changes,
     cleanup: localePlan.cleanup,
+    onApply: async () => {
+      hoverProvider.clearCache();
+      reportWatcher.refresh();
+
+      if (localePlan.primaryLocalePath) {
+        const doc = await vscode.workspace.openTextDocument(localePlan.primaryLocalePath);
+        await vscode.window.showTextDocument(doc);
+      }
+
+      vscode.window.showInformationMessage(`Placeholder added for '${key}'`);
+    },
   });
-
-  if (!applied) {
-    return;
-  }
-
-  hoverProvider.clearCache();
-  reportWatcher.refresh();
-
-  if (localePlan.primaryLocalePath) {
-    const doc = await vscode.workspace.openTextDocument(localePlan.primaryLocalePath);
-    await vscode.window.showTextDocument(doc);
-  }
-
-  vscode.window.showInformationMessage(`Placeholder added for '${key}'`);
 }
 
 function normalizeSelectedLiteral(input: string): string {
@@ -2932,7 +2856,7 @@ async function showQuickActions() {
         interactive: previewIntent ? false : interactive,
       });
     }
-    picks.push({ label: 'Recommended actions', kind: vscode.QuickPickItemKind.Separator });
+    picks.push({ label: 'Default actions', kind: vscode.QuickPickItemKind.Separator });
   }
 
   if (hasSelection) {
@@ -3536,12 +3460,18 @@ async function openSourceLocaleFile() {
   const snapshot = getWorkspaceConfigSnapshot(root);
   const localesDir = snapshot?.localesDir ?? 'locales';
   const sourceLanguage = snapshot?.sourceLanguage ?? 'en';
+
   const filePath = path.join(root, localesDir, `${sourceLanguage}.json`);
-  if (!fs.existsSync(filePath)) {
-    vscode.window.showWarningMessage(`Locale file not found: ${path.relative(root, filePath)}`);
+  const uri = vscode.Uri.file(filePath);
+
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    vscode.window.showErrorMessage(`Source locale file not found: ${filePath}`);
     return;
   }
-  const doc = await vscode.workspace.openTextDocument(filePath);
+
+  const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc, { preview: false });
 }
 
