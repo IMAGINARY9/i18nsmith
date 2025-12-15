@@ -1,0 +1,387 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import { ServiceContainer } from '../services/container';
+import { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
+import { quoteCliArg } from '../command-helpers';
+import { resolveCliCommand } from '../cli-utils';
+import { runResolvedCliCommand } from '../cli-runner';
+
+const fsp = fs.promises;
+
+export interface TransformRunOptions {
+  targets?: string[];
+  label?: string;
+  workspaceFolder?: vscode.WorkspaceFolder;
+}
+
+export class TransformController implements vscode.Disposable {
+  constructor(private readonly services: ServiceContainer) {}
+
+  dispose() {
+    // No resources to dispose
+  }
+
+  public async runTransform(options: TransformRunOptions = {}) {
+    const workspaceFolder = options.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    const manager = this.services.previewManager;
+    const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
+    const label = options.label ?? (options.targets?.length === 1 ? options.targets[0] : 'workspace');
+
+    this.services.logVerbose(`runTransform: Starting preview for ${label}`);
+
+    const previewResult = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'i18nsmith: Analyzing transform candidates…',
+        cancellable: false,
+      },
+      () =>
+        manager.run<TransformSummary>({
+          kind: 'transform',
+          args: baseArgs,
+          workspaceRoot: workspaceFolder.uri.fsPath,
+          label: `transform preview (${label})`,
+        })
+    );
+
+    const preview = previewResult.payload.summary;
+    const transformable = preview.candidates.filter(
+      (candidate: TransformCandidate) => candidate.status === 'pending' || candidate.status === 'existing'
+    );
+
+    this.services.logVerbose(`runTransform: Preview complete - ${transformable.length} transformable candidates`);
+    this.services.logVerbose(`runTransform: Preview stored at ${previewResult.previewPath}`);
+    
+    if (!transformable.length) {
+      this.handleNoCandidates(preview, options);
+      return;
+    }
+
+    const multiPassTip = 'Tip: Transform runs are incremental. After applying, rerun the command to keep processing remaining candidates.';
+    const detail = `${this.formatTransformPreview(preview)}\n\n${multiPassTip}`;
+    
+    const decision = await this.promptPreviewDecision({
+      title: `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${label}?`,
+      detail,
+      previewAvailable: Boolean(preview.diffs && preview.diffs.length > 0),
+      allowDryRun: true,
+      previewLabel: 'Preview Diff',
+    });
+
+    if (decision === 'cancel') {
+      this.services.logVerbose('runTransform: User cancelled');
+      return;
+    }
+
+    if (decision === 'preview') {
+      this.services.logVerbose('runTransform: Showing diff preview');
+      await this.showTransformDiff(preview);
+
+      const applyConfirmed = await this.showPersistentApplyNotification({
+        title: `Apply transform to ${label}?`,
+        detail,
+        applyLabel: 'Apply',
+        cancelLabel: 'Cancel',
+      });
+
+      if (!applyConfirmed) {
+        this.services.logVerbose('runTransform: User cancelled after viewing diff');
+        return;
+      }
+    } else if (decision === 'dry-run') {
+      this.services.logVerbose('runTransform: Dry run only, showing preview');
+      vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
+      return;
+    }
+
+    this.services.logVerbose(`runTransform: Applying ${transformable.length} transformations via CLI`);
+
+    const writeCommand = this.buildTransformWriteCommand(baseArgs);
+    const writeResult = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `i18nsmith: Applying transforms (${label})…`,
+        cancellable: false,
+      },
+      (progress) => this.runCliCommand(writeCommand, { progress })
+    );
+
+    if (writeResult?.success) {
+      await this.cleanupPreviewArtifacts(previewResult.previewPath);
+    }
+
+    this.services.hoverProvider.clearCache();
+    this.services.reportWatcher.refresh();
+    this.services.smartScanner.scan('transform');
+
+    vscode.window.showInformationMessage(
+      `Applied ${transformable.length} safe transform${transformable.length === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`
+    );
+  }
+
+  private handleNoCandidates(preview: TransformSummary, options: TransformRunOptions) {
+    let message = options.targets?.length === 1
+      ? 'No transformable strings found in the selected target.'
+      : 'No transformable strings found.';
+    if (preview.filesScanned === 0 && options.targets?.length === 1) {
+      message += '\n\n⚠️ Target was not scanned. This might be because:';
+      message += '\n• The file is not in your i18n.config.json "include" patterns';
+      message += '\n• The file extension is not supported (.tsx, .jsx, .ts, .js)';
+      message += `\n\nTarget: ${options.targets[0]}`;
+      message += `\n\nTry adding the file pattern to your include array in i18n.config.json`;
+    } else if (preview.skippedFiles.length > 0) {
+      const skipped = preview.skippedFiles[0];
+      message += `\n\nReason: ${skipped.reason}`;
+    } else if (preview.candidates.length > 0) {
+      message += '\n\nAll candidates were filtered out (already translated, duplicates, or too short).';
+    }
+    vscode.window.showWarningMessage(message);
+  }
+
+  private async showTransformDiff(summary: TransformSummary) {
+    if (!summary.diffs || summary.diffs.length === 0) {
+      vscode.window.showInformationMessage('No diffs available for preview.');
+      return;
+    }
+
+    let editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      const doc = await vscode.workspace.openTextDocument({ content: '', language: 'plaintext' });
+      editor = await vscode.window.showTextDocument(doc, { preview: true });
+    }
+
+    if (!editor) {
+      vscode.window.showWarningMessage('Open a file to show diff previews.');
+      return;
+    }
+
+    // Cast to any because DiffPeekProvider expects LocaleDiffEntry but we have SourceFileDiffEntry
+    // They are likely compatible or DiffPeekProvider handles it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await this.services.diffPeekProvider.showDiffPeek(editor, summary.diffs as any, 'Transform Preview');
+  }
+
+  private buildTransformTargetArgs(targets: string | string[]): string[] {
+    const list = Array.isArray(targets) ? targets : [targets];
+    const args: string[] = [];
+    for (const target of list) {
+      if (!target) {
+        continue;
+      }
+      args.push('--target', quoteCliArg(target));
+    }
+    return args;
+  }
+
+  private buildTransformWriteCommand(baseArgs: string[]): string {
+    const parts = ['i18nsmith transform', ...baseArgs, '--write', '--json'].filter(Boolean);
+    return parts.join(' ');
+  }
+
+  private formatTransformPreview(summary: TransformSummary, limit = 5): string {
+    const candidates = summary.candidates.filter(
+      (c) => c.status === 'pending' || c.status === 'existing'
+    );
+    const count = candidates.length;
+    if (!count) {
+      return 'No transformable strings found.';
+    }
+
+    const lines: string[] = [];
+    lines.push(`${count} string${count === 1 ? '' : 's'} will be replaced with t("key") calls.`);
+    lines.push('');
+    
+    const sample = candidates.slice(0, limit);
+    for (const c of sample) {
+      const text = c.text.length > 40 ? c.text.slice(0, 37) + '...' : c.text;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      lines.push(`• "${text}" → t("${(c as any).key}")`);
+    }
+
+    if (count > limit) {
+      lines.push(`...and ${count - limit} more.`);
+    }
+
+    return lines.join('\n');
+  }
+
+  private async promptPreviewDecision(options: {
+    title: string;
+    detail: string;
+    previewAvailable: boolean;
+    allowDryRun?: boolean;
+    previewLabel?: string;
+  }): Promise<'apply' | 'preview' | 'dry-run' | 'cancel'> {
+    const items: vscode.QuickPickItem[] = [];
+    
+    if (options.previewAvailable) {
+      items.push({
+        label: `$(eye) ${options.previewLabel || 'Preview Changes'}`,
+        description: 'Review diffs before applying',
+        detail: 'Opens a side-by-side diff view',
+      });
+    }
+
+    items.push({
+      label: '$(check) Apply Changes',
+      description: 'Write changes to disk immediately',
+      detail: 'Updates source files and locale files',
+    });
+
+    if (options.allowDryRun) {
+      items.push({
+        label: '$(list-flat) Dry Run',
+        description: 'Show what would happen without writing',
+      });
+    }
+
+    const choice = await vscode.window.showQuickPick(items, {
+      title: options.title,
+      placeHolder: 'Select an action',
+      ignoreFocusOut: true,
+    });
+
+    if (!choice) {
+      return 'cancel';
+    }
+
+    if (choice.label.includes('Apply')) {
+      return 'apply';
+    }
+    if (choice.label.includes('Preview')) {
+      return 'preview';
+    }
+    if (choice.label.includes('Dry Run')) {
+      return 'dry-run';
+    }
+
+    return 'cancel';
+  }
+
+  private async showPersistentApplyNotification(options: {
+    title: string;
+    detail: string;
+    applyLabel: string;
+    cancelLabel: string;
+  }): Promise<boolean> {
+    const choice = await vscode.window.showInformationMessage(
+      options.title,
+      { modal: true, detail: options.detail },
+      options.applyLabel,
+      options.cancelLabel
+    );
+    return choice === options.applyLabel;
+  }
+
+  private async cleanupPreviewArtifacts(...paths: Array<string | null | undefined>): Promise<void> {
+    for (const target of paths) {
+      if (!target) {
+        continue;
+      }
+      try {
+        await fsp.unlink(target);
+        this.services.logVerbose(`Removed preview artifact: ${target}`);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code && code !== 'ENOENT') {
+          this.services.logVerbose(`Failed to remove preview artifact ${target}: ${(error as Error).message}`);
+        }
+      }
+    }
+  }
+
+  private async runCliCommand(
+    rawCommand: string,
+    options: {
+      interactive?: boolean;
+      confirmMessage?: string;
+      progress?: vscode.Progress<{ message?: string; increment?: number }>;
+    } = {}
+  ): Promise<{ success: boolean; stdout: string; stderr: string; warnings: string[] } | undefined> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    const resolved = resolveCliCommand(rawCommand);
+    if (!resolved.command) {
+      vscode.window.showErrorMessage('Unable to determine CLI command to run.');
+      return;
+    }
+
+    this.services.logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${resolved.display}'`);
+
+    // ... (Simplified version of runCliCommand from extension.ts)
+    // I'll use runResolvedCliCommand directly
+
+    const out = this.services.cliOutputChannel;
+    out.show();
+    out.appendLine(`$ ${resolved.display}`);
+
+    const progressTracker = this.createCliProgressTracker(options.progress);
+
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+
+    const result = await runResolvedCliCommand(resolved, {
+      cwd: workspaceFolder.uri.fsPath,
+      onStdout: (text) => {
+        stdoutChunks.push(text);
+        out.append(text);
+        progressTracker?.handleChunk(text);
+      },
+      onStderr: (text) => {
+        stderrChunks.push(text);
+        out.append(text);
+      },
+    });
+
+    progressTracker?.flush();
+    progressTracker?.complete();
+
+    const stdout = stdoutChunks.join('');
+    const stderr = stderrChunks.join('');
+    
+    // Basic warning extraction (simplified)
+    const warnings: string[] = [];
+
+    if (result.code !== 0 || result.error) {
+      const message = result.error?.message || `Command exited with code ${result.code}`;
+      out.appendLine(`[error] ${message}`);
+      vscode.window.showErrorMessage(`Command failed: ${message}`);
+      return { success: false, stdout, stderr, warnings };
+    }
+
+    return { success: true, stdout, stderr, warnings };
+  }
+
+  private createCliProgressTracker(
+    progress?: vscode.Progress<{ message?: string; increment?: number }>
+  ): null | {
+    handleChunk: (text: string) => void;
+    flush: () => void;
+    complete: () => void;
+  } {
+    if (!progress) {
+      return null;
+    }
+    // Simplified tracker
+    return {
+      handleChunk: (text: string) => {
+        // Try to parse progress
+        const match = text.match(/Applying transforms .*\((\d+)%\)/i);
+        if (match) {
+          progress.report({ message: `Applying... ${match[1]}%` });
+        }
+      },
+      flush: () => {},
+      complete: () => progress.report({ message: 'Completed.' }),
+    };
+  }
+}
