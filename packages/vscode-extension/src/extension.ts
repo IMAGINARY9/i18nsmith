@@ -99,6 +99,9 @@ let previewManager: PreviewManager | undefined;
 let lastSyncDynamicWarnings: DynamicKeyWarning[] = [];
 let lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
 let dynamicWarningSuppressUntil = 0;
+const suspiciousRenamePreviewUri = vscode.Uri.parse('i18nsmith-preview:suspicious-renames.md');
+let suspiciousRenamePreviewProvider: SuspiciousRenamePreviewProvider | undefined;
+let currentSuspiciousRenamePlan: SuspiciousRenamePlanContext | null = null;
 const pendingDynamicWhitelistEntries = new Set<string>();
 const fsp = fs.promises;
 
@@ -296,6 +299,15 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(cliOutputChannel);
   previewManager = new PreviewManager(cliOutputChannel);
 
+  const renamePreviewProvider = new SuspiciousRenamePreviewProvider(() => currentSuspiciousRenamePlan);
+  suspiciousRenamePreviewProvider = renamePreviewProvider;
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      suspiciousRenamePreviewUri.scheme,
+      renamePreviewProvider
+    )
+  );
+
   // Ensure .gitignore has i18nsmith artifacts listed (non-blocking)
   ensureGitignoreEntries();
 
@@ -425,6 +437,12 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('i18nsmith.renameSuspiciousKeysInFile', async (target?: vscode.Uri) => {
       await renameSuspiciousKeysInFile(target);
+    }),
+    vscode.commands.registerCommand('i18nsmith.applySuspiciousRenamePlan', async () => {
+      await applyStoredSuspiciousRenamePlan();
+    }),
+    vscode.commands.registerCommand('i18nsmith.showSuspiciousRenamePreview', async () => {
+      await revealSuspiciousRenamePreview();
     })
   );
 
@@ -556,6 +574,13 @@ interface TranslatePreviewSummary {
   dryRun: boolean;
   plan: TranslationPlan;
   totalCharacters: number;
+}
+
+interface SuspiciousRenamePlanContext {
+  report: ExtensionSuspiciousRenameReport;
+  workspaceFolder: vscode.WorkspaceFolder;
+  scopeLabel: string;
+  generatedAt: Date;
 }
 
 async function runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {}) {
@@ -1307,12 +1332,21 @@ async function runSuspiciousRenameFlow(
   const existingKeys = await collectExistingTranslationKeys(meta);
   const renameReport = buildSuspiciousRenameReport(warnings, meta, existingKeys);
 
+  const previewContext: SuspiciousRenamePlanContext = {
+    report: renameReport,
+    workspaceFolder,
+    scopeLabel: options.scopeLabel,
+    generatedAt: new Date(),
+  };
+
+  updateSuspiciousRenamePlanContext(previewContext);
+  await revealSuspiciousRenamePreview();
+
   if (!renameReport.safeProposals.length) {
     if (renameReport.conflictProposals.length) {
       vscode.window.showWarningMessage(
         `All suspicious keys in ${options.scopeLabel} conflict with existing keys. Review the rename plan and resolve conflicts manually.`
       );
-      await showSuspiciousRenamePlan(renameReport);
     } else {
       vscode.window.showInformationMessage(`No auto-rename suggestions were generated for suspicious keys in ${options.scopeLabel}.`);
     }
@@ -1320,7 +1354,6 @@ async function runSuspiciousRenameFlow(
   }
 
   const summaryDetail = formatSuspiciousRenameSummary(renameReport);
-  await showSuspiciousRenamePlan(renameReport);
 
   const applyLabel = options.scopeLabel === 'workspace' ? 'Apply All Renames' : 'Apply Renames';
   const notificationDetail = [
@@ -1328,6 +1361,7 @@ async function runSuspiciousRenameFlow(
     renameReport.conflictProposals.length
       ? 'Conflicts are highlighted in the preview document. Resolve them before applying.'
       : 'Review the preview document before applying.',
+    'Need to see the plan again later? Run “i18nsmith: Show Suspicious Rename Preview”.',
   ].join('\n\n');
 
   const confirmed = await showPersistentApplyNotification({
@@ -1340,24 +1374,7 @@ async function runSuspiciousRenameFlow(
     return;
   }
 
-  const mapEntries = renameReport.safeProposals.map((proposal) => ({
-    from: proposal.originalKey,
-    to: proposal.proposedKey,
-  }));
-
-  const { mapPath, cleanup } = await writeRenameMapFile(mapEntries);
-  const command = buildRenameKeysCommand(mapPath, true);
-  try {
-    const result = await runCliCommand(command);
-    if (result?.success) {
-      lastSyncSuspiciousWarnings = [];
-      vscode.window.showInformationMessage(
-        `Applied ${renameReport.safeProposals.length} auto-renamed key${renameReport.safeProposals.length === 1 ? '' : 's'} in ${options.scopeLabel}.`
-      );
-    }
-  } finally {
-    await cleanup();
-  }
+  await applyStoredSuspiciousRenamePlan();
 }
 
 async function collectDynamicKeyWarnings(workspaceFolder: vscode.WorkspaceFolder): Promise<DynamicKeyWarning[]> {
@@ -1671,9 +1688,43 @@ function formatSuspiciousRenameSummary(report: ExtensionSuspiciousRenameReport):
   return lines.join('\n');
 }
 
-async function showSuspiciousRenamePlan(report: ExtensionSuspiciousRenameReport) {
-  const lines: string[] = ['# Suspicious key rename plan', ''];
-  lines.push(`## Ready (${report.safeProposals.length})`, '');
+function updateSuspiciousRenamePlanContext(context: SuspiciousRenamePlanContext | null) {
+  currentSuspiciousRenamePlan = context;
+  suspiciousRenamePreviewProvider?.refresh(suspiciousRenamePreviewUri);
+}
+
+async function revealSuspiciousRenamePreview(preserveFocus = false) {
+  const doc = await vscode.workspace.openTextDocument(suspiciousRenamePreviewUri);
+  await vscode.window.showTextDocument(doc, { preview: true, preserveFocus });
+}
+
+function buildSuspiciousRenamePlanMarkdown(context: SuspiciousRenamePlanContext | null): string {
+  if (!context) {
+    return [
+      '# Suspicious key rename plan',
+      '',
+      '_No active rename plan._',
+      '',
+      'Run “Rename suspicious keys” from the i18nsmith Quick Actions to generate suggestions.',
+    ].join('\n');
+  }
+
+  const { report, scopeLabel, generatedAt } = context;
+  const lines: string[] = [];
+  lines.push(`# Suspicious key rename plan (${scopeLabel})`, '');
+  lines.push(`Generated ${generatedAt.toLocaleString()}`);
+  lines.push('', formatSuspiciousRenameSummary(report));
+
+  if (report.safeProposals.length) {
+    lines.push(
+      '',
+      `[Apply ${report.safeProposals.length} rename${report.safeProposals.length === 1 ? '' : 's'} now](command:i18nsmith.applySuspiciousRenamePlan)`
+    );
+  } else {
+    lines.push('', '_No safe proposals to apply automatically._');
+  }
+
+  lines.push('', `## Ready (${report.safeProposals.length})`, '');
   if (report.safeProposals.length) {
     for (const proposal of report.safeProposals) {
       const note = proposal.targetExists ? ' (target exists)' : '';
@@ -1699,8 +1750,63 @@ async function showSuspiciousRenamePlan(report: ExtensionSuspiciousRenameReport)
     report.skippedKeys.forEach((key) => lines.push(`- ${key}`));
   }
 
-  const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'markdown' });
-  await vscode.window.showTextDocument(doc, { preview: true });
+  return lines.join('\n');
+}
+
+class SuspiciousRenamePreviewProvider implements vscode.TextDocumentContentProvider {
+  private readonly changeEmitter = new vscode.EventEmitter<vscode.Uri>();
+
+  constructor(private readonly getContext: () => SuspiciousRenamePlanContext | null) {}
+
+  get onDidChange(): vscode.Event<vscode.Uri> {
+    return this.changeEmitter.event;
+  }
+
+  provideTextDocumentContent(): string {
+    return buildSuspiciousRenamePlanMarkdown(this.getContext());
+  }
+
+  refresh(uri: vscode.Uri) {
+    this.changeEmitter.fire(uri);
+  }
+}
+
+async function applyStoredSuspiciousRenamePlan(): Promise<boolean> {
+  const context = currentSuspiciousRenamePlan;
+  if (!context) {
+    vscode.window.showInformationMessage('No rename plan available. Run “Rename suspicious keys” to generate one.');
+    return false;
+  }
+  return await applySuspiciousRenamePlan(context);
+}
+
+async function applySuspiciousRenamePlan(context: SuspiciousRenamePlanContext): Promise<boolean> {
+  if (!context.report.safeProposals.length) {
+    vscode.window.showWarningMessage('No ready-to-apply renames are available in the current plan.');
+    return false;
+  }
+
+  const mapEntries = context.report.safeProposals.map((proposal) => ({
+    from: proposal.originalKey,
+    to: proposal.proposedKey,
+  }));
+
+  const { mapPath, cleanup } = await writeRenameMapFile(mapEntries);
+  const command = buildRenameKeysCommand(mapPath, true);
+  try {
+    const result = await runCliCommand(command);
+    if (result?.success) {
+      lastSyncSuspiciousWarnings = [];
+      vscode.window.showInformationMessage(
+        `Applied ${context.report.safeProposals.length} auto-renamed key${context.report.safeProposals.length === 1 ? '' : 's'} in ${context.scopeLabel}.`
+      );
+      updateSuspiciousRenamePlanContext(null);
+      return true;
+    }
+    return false;
+  } finally {
+    await cleanup();
+  }
 }
 
 async function writeRenameMapFile(mappings: Array<{ from: string; to: string }>): Promise<{ mapPath: string; cleanup: () => Promise<void> }> {

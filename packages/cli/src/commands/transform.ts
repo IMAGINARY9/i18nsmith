@@ -103,9 +103,13 @@ function createProgressLogger() {
   let lastLogTime = 0;
   let pendingCarriageReturn = false;
   let lastPlainLog = 0;
+  let emittedZero = false;
+  const isTTY = Boolean(process.stdout.isTTY);
+  const minPercentStep = isTTY ? 5 : 15;
+  const minIntervalMs = isTTY ? 1000 : 4000;
 
   const writeLine = (line: string, final = false) => {
-    if (process.stdout.isTTY) {
+    if (isTTY) {
       process.stdout.write(`\r${line}`);
       pendingCarriageReturn = !final;
       if (final) {
@@ -115,7 +119,7 @@ function createProgressLogger() {
     }
 
     const now = Date.now();
-    if (final || now - lastPlainLog >= 2000) {
+    if (final || now - lastPlainLog >= minIntervalMs) {
       console.log(line);
       lastPlainLog = now;
     }
@@ -135,11 +139,16 @@ function createProgressLogger() {
           ? Math.round((progress.processed / progress.total) * 100)
           : 0;
       const reachedEnd = progress.processed === progress.total;
-      const percentAdvanced = computedPercent === 0 || computedPercent >= lastPercent + 5 || reachedEnd;
-      const timedOut = now - lastLogTime >= 2000;
+      const percentAdvanced =
+        (!emittedZero && computedPercent === 0) || computedPercent >= lastPercent + minPercentStep || reachedEnd;
+      const timedOut = now - lastLogTime >= minIntervalMs;
 
       if (!percentAdvanced && !timedOut) {
         return;
+      }
+
+      if (!emittedZero && computedPercent === 0) {
+        emittedZero = true;
       }
 
       lastPercent = Math.max(lastPercent, computedPercent);

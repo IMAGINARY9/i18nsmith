@@ -466,7 +466,11 @@ export class Transformer {
       }
       const newInitializer = `{${keyCall}}`;
       const initializer = node.getInitializer();
-      if (initializer && initializer.getText() === newInitializer) {
+      if (
+        initializer &&
+        this.normalizeTranslationSnippet(initializer.getText()) ===
+          this.normalizeTranslationSnippet(newInitializer)
+      ) {
         return false;
       }
       node.setInitializer(newInitializer);
@@ -479,14 +483,20 @@ export class Transformer {
       }
       const expression = node.getExpression();
       if (expression) {
-        if (expression.getText() === keyCall) {
+        if (
+          this.normalizeTranslationSnippet(expression.getText()) ===
+          this.normalizeTranslationSnippet(keyCall)
+        ) {
           return false;
         }
         expression.replaceWithText(keyCall);
         return true;
       }
       const wrapped = `{${keyCall}}`;
-      if (node.getText() === wrapped) {
+      if (
+        this.normalizeTranslationSnippet(node.getText()) ===
+        this.normalizeTranslationSnippet(wrapped)
+      ) {
         return false;
       }
       node.replaceWithText(wrapped);
@@ -564,5 +574,14 @@ export class Transformer {
     }
 
     return withoutExtension;
+  }
+
+  private normalizeTranslationSnippet(text: string): string {
+    return text
+      .replace(/\s+/g, '')
+      .replace(/`/g, '\'')
+      .replace(/"/g, '\'')
+      .replace(/[{}]/g, '')
+      .trim();
   }
 }
