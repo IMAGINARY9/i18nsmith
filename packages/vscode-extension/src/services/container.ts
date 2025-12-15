@@ -7,6 +7,7 @@ import { StatusBarManager } from '../statusbar';
 import { CheckIntegration } from '../check-integration';
 import { DiffPeekProvider } from '../diff-peek';
 import { PreviewManager } from '../preview-manager';
+import { CliService } from './cli-service';
 
 export class ServiceContainer implements vscode.Disposable {
   public readonly verboseOutputChannel: vscode.OutputChannel;
@@ -19,6 +20,7 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly checkIntegration: CheckIntegration;
   public readonly diffPeekProvider: DiffPeekProvider;
   public readonly previewManager: PreviewManager;
+  public readonly cliService: CliService;
 
   constructor(context: vscode.ExtensionContext) {
     this.verboseOutputChannel = vscode.window.createOutputChannel('i18nsmith (Verbose)');
@@ -45,16 +47,19 @@ export class ServiceContainer implements vscode.Disposable {
     this.checkIntegration = new CheckIntegration();
     this.diffPeekProvider = new DiffPeekProvider();
     this.previewManager = new PreviewManager(this.cliOutputChannel);
+    this.cliService = new CliService(this.verboseOutputChannel, this.smartScanner, this.reportWatcher);
+  }
+
+  public logVerbose(message: string) {
+    const config = vscode.workspace.getConfiguration('i18nsmith');
+    if (config.get<boolean>('enableVerboseLogging', false)) {
+      this.verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
+    }
   }
 
   dispose() {
     // Most services are disposed via context.subscriptions
   }
 
-  logVerbose(message: string) {
-    const config = vscode.workspace.getConfiguration('i18nsmith');
-    if (config.get<boolean>('enableVerboseLogging', false)) {
-      this.verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
-    }
-  }
+
 }
