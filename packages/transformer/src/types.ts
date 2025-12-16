@@ -4,6 +4,7 @@ import type {
   LocaleFileStats,
   LocaleStore,
   ScanCandidate,
+  SourceFileDiffEntry,
 } from '@i18nsmith/core';
 
 export type CandidateStatus =
@@ -26,6 +27,7 @@ export interface TransformSummary {
   candidates: TransformCandidate[];
   localeStats: LocaleFileStats[];
   diffs: LocaleDiffEntry[];
+  sourceDiffs?: SourceFileDiffEntry[];
   skippedFiles: Array<{ filePath: string; reason: string }>;
   write: boolean;
 }

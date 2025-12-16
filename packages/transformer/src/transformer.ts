@@ -7,6 +7,7 @@ import {
 } from 'ts-morph';
 import {
   buildLocaleDiffs,
+  createSourceDiff,
   I18nConfig,
   KeyGenerationContext,
   KeyGenerator,
@@ -15,6 +16,7 @@ import {
   ScanCandidate,
   Scanner,
   ScannerNodeCandidate,
+  SourceFileDiffEntry,
   generateValueFromKey,
 } from '@i18nsmith/core';
 import {
@@ -94,7 +96,9 @@ export class Transformer {
 
     const originalLocaleData = new Map<string, Record<string, string>>();
     if (generateDiffs) {
-      for (const locale of [this.sourceLocale, ...this.targetLocales]) {
+      const storedLocales = await this.localeStore.getStoredLocales();
+      const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
+      for (const locale of allLocales) {
         originalLocaleData.set(locale, await this.localeStore.get(locale));
       }
     }
@@ -109,10 +113,18 @@ export class Transformer {
     });
 
     const preparedCandidates = await this.prepareCandidates(scanSummary.candidates);
+    const sourceDiffs: SourceFileDiffEntry[] = [];
     const changedFiles = new Set<string>();
     const skippedFiles: FileTransformRecord[] = [];
 
     const shouldProcess = write || generateDiffs;
+    const allTargetLocales = new Set(this.targetLocales);
+    if (shouldProcess) {
+      const stored = await this.localeStore.getStoredLocales();
+      stored.forEach((l) => allTargetLocales.add(l));
+      allTargetLocales.delete(this.sourceLocale);
+    }
+
     const transformableByFile = new Map<string, TransformCandidate[]>();
     for (const candidate of preparedCandidates) {
       if (candidate.status !== 'pending' && candidate.status !== 'existing') {
@@ -181,6 +193,7 @@ export class Transformer {
 
       for (const [relativePath, plans] of transformableByFile.entries()) {
         let sourceFile: SourceFile | undefined;
+        let originalContent = '';
         try {
           const detailedSummary = scanner.scan({
             collectNodes: true,
@@ -189,6 +202,10 @@ export class Transformer {
           });
           const detailedCandidates = detailedSummary.detailedCandidates;
           sourceFile = detailedCandidates[0]?.sourceFile;
+
+          if (generateDiffs && sourceFile) {
+            originalContent = sourceFile.getFullText();
+          }
 
           if (!sourceFile) {
             const reason = `Failed to process file: ${relativePath} produced no candidates`;
@@ -244,7 +261,7 @@ export class Transformer {
             const internalCandidate: InternalCandidate = { ...plan, raw: rawCandidate };
 
             try {
-              if (write) {
+              if (write || generateDiffs) {
                 const relativeModulePath = this.getRelativeModulePath(
                   adapterForFile.module,
                   plan.filePath
@@ -266,14 +283,16 @@ export class Transformer {
                 continue;
               }
 
-              if (write) {
+              if (write || generateDiffs) {
                 ensureUseTranslationBinding(scope, adapterForFile.hookName);
                 ensureClientDirective(sourceFile);
                 didMutate = this.applyCandidate(internalCandidate);
                 if (didMutate) {
-                  plan.status = 'applied';
+                  if (write) {
+                    plan.status = 'applied';
+                    progressState.applied += 1;
+                  }
                   changedFiles.add(plan.filePath);
-                  progressState.applied += 1;
                 } else {
                   plan.status = 'skipped';
                   plan.reason = plan.reason ?? 'Already translated';
@@ -291,7 +310,7 @@ export class Transformer {
 
                 const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
                 if (shouldMigrate) {
-                  for (const locale of this.targetLocales) {
+                  for (const locale of allTargetLocales) {
                     const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
                     await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
                   }
@@ -325,6 +344,17 @@ export class Transformer {
             emitProgress();
           }
         } finally {
+          if (generateDiffs && sourceFile && changedFiles.has(relativePath)) {
+            const newContent = sourceFile.getFullText();
+            if (originalContent !== newContent) {
+              sourceDiffs.push({
+                path: relativePath,
+                relativePath: path.relative(this.workspaceRoot, relativePath),
+                diff: createSourceDiff(path.relative(this.workspaceRoot, relativePath), originalContent, newContent),
+                changes: 1,
+              });
+            }
+          }
           await finalizeSourceFile(relativePath, sourceFile);
         }
       }
@@ -342,6 +372,7 @@ export class Transformer {
       candidates: preparedCandidates,
       localeStats,
       diffs,
+      sourceDiffs,
       skippedFiles,
       write,
     };
@@ -349,7 +380,9 @@ export class Transformer {
 
   private async generateDiffs(originalData: Map<string, Record<string, string>>) {
     const projectedData = new Map<string, Record<string, string>>();
-    for (const locale of [this.sourceLocale, ...this.targetLocales]) {
+    const storedLocales = await this.localeStore.getStoredLocales();
+    const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
+    for (const locale of allLocales) {
       projectedData.set(locale, await this.localeStore.get(locale));
     }
 

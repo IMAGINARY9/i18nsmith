@@ -81,7 +81,7 @@ export function Profile() {
     const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
     const summary = await renamer.rename('old.key', 'new.key', { write: true });
 
-  expect(summary.filesUpdated).toEqual(['src/App.tsx']);
+    expect(summary.filesUpdated).toEqual(['src/App.tsx']);
     expect(summary.localeStats.length).toBeGreaterThan(0);
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
@@ -152,5 +152,36 @@ export function Profile() {
     expect(summary.localePreview.some((preview) => preview.duplicate)).toBe(true);
     const appContents = await fs.readFile(path.join(tempDir, 'src', 'App.tsx'), 'utf8');
     expect(appContents).toContain("t('old.key')");
+  });
+
+  it('renames keys in unconfigured locales', async () => {
+    // Add unconfigured locale
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'fr.json'),
+      JSON.stringify({ 'old.key': 'Bonjour' }, null, 2)
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    await renamer.rename('old.key', 'new.key', { write: true });
+
+    const frContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'fr.json'), 'utf8'));
+    expect(frContents).toMatchObject({ 'new.key': 'Bonjour' });
+    expect(frContents).not.toHaveProperty('old.key');
+  });
+
+  it('generates diffs for unconfigured locales', async () => {
+    // Add unconfigured locale
+    await fs.writeFile(
+      path.join(tempDir, 'locales', 'fr.json'),
+      JSON.stringify({ 'old.key': 'Bonjour' }, null, 2)
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key', { diff: true });
+
+    const frDiff = summary.localeDiffs?.find((d) => d.locale === 'fr');
+    expect(frDiff).toBeDefined();
+    expect(frDiff?.diff).toContain('old.key');
+    expect(frDiff?.diff).toContain('new.key');
   });
 });

@@ -197,3 +197,10 @@ export function buildSourceFileDiffs(
 
   return diffs;
 }
+
+/**
+ * Create a source diff using the diff library.
+ */
+export function createSourceDiff(fileName: string, originalContent: string, newContent: string): string {
+  return createPatch(fileName, originalContent, newContent);
+}

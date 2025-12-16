@@ -20,12 +20,15 @@ export interface PreviewPlan {
 let currentPlan: PreviewPlan | null = null;
 
 export async function applyPreviewPlan(): Promise<void> {
+  console.log('[i18nsmith] applyPreviewPlan triggered');
   if (!currentPlan) {
+    console.log('[i18nsmith] No active plan found');
     vscode.window.showInformationMessage('No active plan to apply.');
     return;
   }
 
   try {
+    console.log(`[i18nsmith] Applying ${currentPlan.changes.length} changes`);
     for (const change of currentPlan.changes) {
       await change.apply();
     }
@@ -36,6 +39,7 @@ export async function applyPreviewPlan(): Promise<void> {
     
     vscode.window.showInformationMessage(`Applied ${currentPlan.changes.length} changes.`);
   } catch (e) {
+    console.error('[i18nsmith] Failed to apply plan:', e);
     vscode.window.showErrorMessage(`Failed to apply plan: ${e}`);
   } finally {
     if (currentPlan.cleanup) {

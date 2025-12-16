@@ -285,6 +285,17 @@ export class LocaleStore {
     return summaries;
   }
 
+  public async getStoredLocales(): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(this.localesDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => path.basename(entry.name, '.json'));
+    } catch {
+      return [];
+    }
+  }
+
   public getLocalesInMemory(): string[] {
     return Array.from(this.cache.keys());
   }

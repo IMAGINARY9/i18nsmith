@@ -65,12 +65,31 @@ export class TransformController implements vscode.Disposable {
     const multiPassTip = 'Tip: Transform runs are incremental. After applying, rerun the command to keep processing remaining candidates.';
     const detail = `${this.formatTransformPreview(preview)}\n\n${multiPassTip}`;
     
+    const allDiffs = [
+      ...(preview.diffs || []),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...((preview as any).sourceDiffs || [])
+    ];
+
+    if (allDiffs.length > 0) {
+      await this.services.diffPreviewService.showPreview(
+        allDiffs,
+        async () => {
+          await this.applyTransform(baseArgs, label, transformable.length, previewResult.previewPath);
+        },
+        {
+          title: `Transform Preview (${label})`,
+          detail: `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'}. Apply changes?`,
+        }
+      );
+      return;
+    }
+
     const decision = await this.promptPreviewDecision({
       title: `Transform ${transformable.length} candidate${transformable.length === 1 ? '' : 's'} in ${label}?`,
       detail,
-      previewAvailable: Boolean(preview.diffs && preview.diffs.length > 0),
+      previewAvailable: false,
       allowDryRun: true,
-      previewLabel: 'Preview Diff',
     });
 
     if (decision === 'cancel') {
@@ -78,28 +97,17 @@ export class TransformController implements vscode.Disposable {
       return;
     }
 
-    if (decision === 'preview') {
-      this.services.logVerbose('runTransform: Showing diff preview');
-      await this.showTransformDiff(preview);
-
-      const applyConfirmed = await this.showPersistentApplyNotification({
-        title: `Apply transform to ${label}?`,
-        detail,
-        applyLabel: 'Apply',
-        cancelLabel: 'Cancel',
-      });
-
-      if (!applyConfirmed) {
-        this.services.logVerbose('runTransform: User cancelled after viewing diff');
-        return;
-      }
-    } else if (decision === 'dry-run') {
+    if (decision === 'dry-run') {
       this.services.logVerbose('runTransform: Dry run only, showing preview');
       vscode.window.showInformationMessage(`Preview only. Re-run the command and choose Apply to write changes.`, { detail });
       return;
+    } else if (decision === 'apply') {
+       await this.applyTransform(baseArgs, label, transformable.length, previewResult.previewPath);
     }
+  }
 
-    this.services.logVerbose(`runTransform: Applying ${transformable.length} transformations via CLI`);
+  private async applyTransform(baseArgs: string[], label: string, count: number, previewPath: string) {
+    this.services.logVerbose(`runTransform: Applying ${count} transformations via CLI`);
 
     const writeCommand = this.buildTransformWriteCommand(baseArgs);
     const writeResult = await vscode.window.withProgress(
@@ -112,7 +120,7 @@ export class TransformController implements vscode.Disposable {
     );
 
     if (writeResult?.success) {
-      await this.cleanupPreviewArtifacts(previewResult.previewPath);
+      await this.cleanupPreviewArtifacts(previewPath);
     }
 
     this.services.hoverProvider.clearCache();
@@ -120,7 +128,7 @@ export class TransformController implements vscode.Disposable {
     this.services.smartScanner.scan('transform');
 
     vscode.window.showInformationMessage(
-      `Applied ${transformable.length} safe transform${transformable.length === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`
+      `Applied ${count} safe transform${count === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`
     );
   }
 
@@ -141,29 +149,6 @@ export class TransformController implements vscode.Disposable {
       message += '\n\nAll candidates were filtered out (already translated, duplicates, or too short).';
     }
     vscode.window.showWarningMessage(message);
-  }
-
-  private async showTransformDiff(summary: TransformSummary) {
-    if (!summary.diffs || summary.diffs.length === 0) {
-      vscode.window.showInformationMessage('No diffs available for preview.');
-      return;
-    }
-
-    let editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      const doc = await vscode.workspace.openTextDocument({ content: '', language: 'plaintext' });
-      editor = await vscode.window.showTextDocument(doc, { preview: true });
-    }
-
-    if (!editor) {
-      vscode.window.showWarningMessage('Open a file to show diff previews.');
-      return;
-    }
-
-    // Cast to any because DiffPeekProvider expects LocaleDiffEntry but we have SourceFileDiffEntry
-    // They are likely compatible or DiffPeekProvider handles it.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await this.services.diffPeekProvider.showDiffPeek(editor, summary.diffs as any, 'Transform Preview');
   }
 
   private buildTransformTargetArgs(targets: string | string[]): string[] {
@@ -261,21 +246,6 @@ export class TransformController implements vscode.Disposable {
     }
 
     return 'cancel';
-  }
-
-  private async showPersistentApplyNotification(options: {
-    title: string;
-    detail: string;
-    applyLabel: string;
-    cancelLabel: string;
-  }): Promise<boolean> {
-    const choice = await vscode.window.showInformationMessage(
-      options.title,
-      { modal: false, detail: options.detail },
-      options.applyLabel,
-      options.cancelLabel
-    );
-    return choice === options.applyLabel;
   }
 
   private async cleanupPreviewArtifacts(...paths: Array<string | null | undefined>): Promise<void> {

@@ -3,7 +3,7 @@ import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
-import { createUnifiedDiff, SourceFileDiffEntry } from './diff-utils.js';
+import { createUnifiedDiff, SourceFileDiffEntry, LocaleDiffEntry, buildLocaleDiffs } from './diff-utils.js';
 import { createDefaultProject } from './project-factory.js';
 
 export interface KeyRenamerOptions {
@@ -41,6 +41,7 @@ export interface KeyRenameSummary {
   write: boolean;
   actionableItems: ActionableItem[];
   diffs: SourceFileDiffEntry[];
+  localeDiffs?: LocaleDiffEntry[];
 }
 
 export interface KeyRenameMappingSummary {
@@ -60,6 +61,7 @@ export interface KeyRenameBatchSummary {
   write: boolean;
   actionableItems: ActionableItem[];
   diffs: SourceFileDiffEntry[];
+  localeDiffs?: LocaleDiffEntry[];
 }
 
 type MappingLocaleAnalysis = {
@@ -109,6 +111,7 @@ export class KeyRenamer {
       write: batchResult.write,
       actionableItems: batchResult.actionableItems,
       diffs: batchResult.diffs,
+      localeDiffs: batchResult.localeDiffs,
     };
   }
 
@@ -152,6 +155,15 @@ export class KeyRenamer {
 
     // Store original content for diff generation
     const originalContents = new Map<string, string>();
+    const originalLocaleData = new Map<string, Record<string, string>>();
+
+    if (generateDiffs) {
+      const storedLocales = await this.localeStore.getStoredLocales();
+      const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
+      for (const locale of allLocales) {
+        originalLocaleData.set(locale, await this.localeStore.get(locale));
+      }
+    }
 
     for (const mapping of mappings) {
       if (mappingBySource.has(mapping.from)) {
@@ -247,7 +259,7 @@ export class KeyRenamer {
       };
     });
 
-    if (write) {
+    if (write || generateDiffs) {
       for (const mapping of mappings) {
         const analysis = localeAnalysis.get(mapping.from);
         if (!analysis) {
@@ -274,6 +286,25 @@ export class KeyRenamer {
     }
 
     const localeStats = write ? await this.localeStore.flush() : [];
+    
+    const currentLocaleData = new Map<string, Record<string, string>>();
+    if (generateDiffs) {
+      const storedLocales = await this.localeStore.getStoredLocales();
+      const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
+      for (const locale of allLocales) {
+        currentLocaleData.set(locale, await this.localeStore.get(locale));
+      }
+    }
+
+    const localeDiffs = generateDiffs
+      ? buildLocaleDiffs(
+          originalLocaleData,
+          currentLocaleData,
+          (locale) => this.localeStore.getFilePath(locale),
+          this.workspaceRoot
+        )
+      : [];
+
     const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
     const actionableItems = this.buildActionableItems(mappingSummaries);
 
@@ -286,6 +317,7 @@ export class KeyRenamer {
       write,
       actionableItems,
       diffs,
+      localeDiffs,
     };
   }
 
@@ -328,7 +360,8 @@ export class KeyRenamer {
   }
 
   private async buildLocaleAnalysis(mappings: KeyRenameMapping[]): Promise<Map<string, MappingLocaleAnalysis>> {
-    const locales = [this.sourceLocale, ...this.targetLocales];
+    const storedLocales = await this.localeStore.getStoredLocales();
+    const locales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
     const cache = new Map<string, Record<string, string>>();
     const getLocaleData = async (locale: string) => {
       if (!cache.has(locale)) {

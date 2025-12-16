@@ -107,6 +107,10 @@
       {
         "command": "i18nsmith.exportMissingTranslations",
         "title": "i18nsmith: Export Missing Translations"
+      },
+      {
+        "command": "i18nsmith.applyPreviewPlan",
+        "title": "i18nsmith: Apply Preview Plan"
       }
     ],
     "menus": {
