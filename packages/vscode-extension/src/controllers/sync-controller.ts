@@ -267,6 +267,50 @@ export class SyncController implements vscode.Disposable {
     );
   }
 
+  public async renameKey(from: string, to: string) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return;
+    }
+
+    // Use preview flow
+    const previewResult = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Analyzing rename of "${from}"...`,
+      },
+      () =>
+        this.services.previewManager.run<{ diffs: SourceFileDiffEntry[], localeDiffs?: LocaleDiffEntry[] }>({
+          kind: 'rename-key',
+          args: [quoteCliArg(from), quoteCliArg(to), '--diff'],
+          workspaceRoot: workspaceFolder.uri.fsPath,
+          label: `rename-key ${from}`,
+        })
+    );
+
+    const summary = previewResult.payload.summary;
+    const allDiffs = [
+      ...(summary.diffs || []),
+      ...(summary.localeDiffs || [])
+    ];
+
+    if (allDiffs.length > 0) {
+      await this.services.diffPreviewService.showPreview(
+        allDiffs,
+        async () => {
+          const command = `i18nsmith rename-key ${quoteCliArg(from)} ${quoteCliArg(to)} --write`;
+          await this.runApplyCommand(command, `Renaming "${from}" to "${to}"`);
+        },
+        {
+          title: 'Rename Key Preview',
+          detail: `Rename "${from}" to "${to}". Apply changes?`,
+        }
+      );
+    } else {
+      vscode.window.showInformationMessage('No changes detected for rename.');
+    }
+  }
+
   public async renameSuspiciousKey(warning: SuspiciousKeyWarning) {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -335,6 +379,74 @@ export class SyncController implements vscode.Disposable {
       targets: [targetFile],
       extraArgs: ['--auto-rename-suspicious'],
     });
+  }
+
+  public async renameAllSuspiciousKeys() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    // Try to refresh from diagnostics report if empty
+    if (this.lastSyncSuspiciousWarnings.length === 0) {
+      const report = this.services.diagnosticsManager.getReport();
+      if (report?.sync?.suspiciousKeys && Array.isArray(report.sync.suspiciousKeys)) {
+        this.lastSyncSuspiciousWarnings = report.sync.suspiciousKeys as SuspiciousKeyWarning[];
+      }
+    }
+
+    if (this.lastSyncSuspiciousWarnings.length === 0) {
+      vscode.window.showInformationMessage('No suspicious keys found to rename. Run a sync first.');
+      return;
+    }
+
+    // We can use the sync command with --auto-rename-suspicious
+    // But we should preview it first.
+    // Actually, 'sync' command doesn't support --auto-rename-suspicious in the CLI yet?
+    // Let's check the CLI options.
+    // Assuming 'sync' supports it or we need to implement it.
+    // If not, we might need to iterate or use a specific command.
+    // Based on renameSuspiciousKeysInFile, it seems we expect 'sync' to handle it.
+    
+    const args = ['--diff', '--auto-rename-suspicious'];
+
+    const previewResult = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `i18nsmith: Analyzing bulk rename…`,
+        cancellable: false,
+      },
+      () =>
+        this.services.previewManager.run<SyncSummary>({
+          kind: 'sync',
+          args,
+          workspaceRoot: workspaceFolder.uri.fsPath,
+          label: 'Bulk Rename Suspicious Keys',
+        })
+    );
+
+    const summary = previewResult.payload.summary;
+    const allDiffs = [
+      ...(summary.diffs || []),
+      ...(summary.localeDiffs || []),
+      ...(summary.renameDiffs || [])
+    ];
+
+    if (allDiffs.length > 0) {
+      await this.services.diffPreviewService.showPreview(
+        allDiffs,
+        async () => {
+           await this.applySync(previewResult.previewPath, workspaceFolder.uri.fsPath);
+        },
+        {
+          title: 'Bulk Rename Preview',
+          detail: `Rename ${this.lastSyncSuspiciousWarnings.length} suspicious keys?`,
+        }
+      );
+    } else {
+      vscode.window.showInformationMessage('No changes detected for bulk rename.');
+    }
   }
 
   private async runApplyCommand(command: string, title: string) {

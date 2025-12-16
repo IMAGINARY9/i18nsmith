@@ -1,11 +1,9 @@
 import { DEFAULT_ADAPTER_MODULE } from './config/defaults.js';
 import { EmptyValuePolicy, I18nConfig } from './config.js';
-import { Syncer, SyncSummary, SuspiciousKeyWarning } from './syncer.js';
+import { Syncer, SyncSummary } from './syncer.js';
 import { diagnoseWorkspace, DiagnosisReport } from './diagnostics.js';
 import { ActionableItem, ActionableSeverity } from './actionable.js';
 import { Scanner, ScanCandidate, ScanSummary } from './scanner.js';
-import { KeyGenerator } from './key-generator.js';
-import path from 'node:path';
 
 export interface CheckRunnerOptions {
   workspaceRoot?: string;
@@ -158,7 +156,7 @@ function buildSuggestedCommands(
   sync: SyncSummary,
   scan: ScanSummary,
   config: I18nConfig,
-  workspaceRoot: string
+  _workspaceRoot: string
 ): CheckSuggestedCommand[] {
   const items: CheckSuggestedCommand[] = [];
   const diagKinds = new Set(report.actionableItems.map((item) => item.kind));
@@ -341,57 +339,17 @@ function buildSuggestedCommands(
   }
 
   if (sync.suspiciousKeys.length) {
-    sync.suspiciousKeys.slice(0, 5).forEach((warning) => {
-      const suggestedKey = buildSuspiciousKeySuggestion(warning, config, workspaceRoot);
-      add({
-        label: `Rename suspicious key "${warning.key}"`,
-        command: `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(suggestedKey)}`,
-        reason: `Suspicious key format (${warning.reason}). Rename to ${suggestedKey} for consistency.`,
-        severity: 'info',
-        category: 'quality',
-        relevantFiles: [warning.filePath],
-        priority: 35,
-      });
+    const relevantFiles = [...new Set(sync.suspiciousKeys.map((w) => w.filePath))].slice(0, 5);
+    add({
+      label: 'Rename suspicious keys',
+      command: 'i18nsmith sync --auto-rename-suspicious --write',
+      reason: `${sync.suspiciousKeys.length} key${sync.suspiciousKeys.length === 1 ? '' : 's'} flagged as raw text`,
+      severity: 'info',
+      category: 'quality',
+      relevantFiles,
+      priority: 35,
     });
   }
 
   return items;
-}
-
-function quoteCliArg(value: string): string {
-  if (!value) {
-    return '""';
-  }
-  const escaped = value.replace(/(["\\])/g, '\\$1');
-  return `"${escaped}"`;
-}
-
-function buildSuspiciousKeySuggestion(
-  warning: SuspiciousKeyWarning,
-  config: I18nConfig,
-  workspaceRoot: string
-): string {
-  // Use core KeyGenerator for consistent key generation (respects namespace and hashLength config)
-  const generator = new KeyGenerator({
-    namespace: config.keyGeneration?.namespace,
-    hashLength: config.keyGeneration?.shortHashLen,
-    workspaceRoot,
-  });
-
-  // Extract the base text from the suspicious key (strip hash if present)
-  const baseText = warning.key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
-  
-  // Determine if filePath is a locale file (should be avoided for key generation context)
-  const localesDir = path.resolve(workspaceRoot, config.localesDir ?? 'locales');
-  const isLocaleFile = warning.filePath?.startsWith(localesDir);
-  
-  // Generate a properly formatted key
-  // If filePath is a locale file, use empty path to avoid locale name pollution (e.g., "en" from "locales/en.json")
-  const contextPath = isLocaleFile ? '' : warning.filePath ?? '';
-  const generated = generator.generate(baseText, {
-    filePath: contextPath,
-    kind: 'jsx-text',
-  });
-  
-  return generated.key;
 }

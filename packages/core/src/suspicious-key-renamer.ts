@@ -5,8 +5,9 @@
  * key names for suspicious translation keys detected during sync.
  */
 
-import { KeyValidator, KeyNormalizationOptions, normalizeToKey, SuspiciousKeyReason } from './key-validator.js';
+import { KeyNormalizationOptions, normalizeToKey, SuspiciousKeyReason } from './key-validator.js';
 import { SuspiciousKeyWarning } from './syncer.js';
+import { KeyGenerator } from './key-generator.js';
 
 export interface SuspiciousKeyRenameProposal {
   /** Original suspicious key */
@@ -43,6 +44,10 @@ export interface AutoRenameOptions extends KeyNormalizationOptions {
   existingKeys?: Set<string>;
   /** Filter to specific reasons */
   filterReasons?: SuspiciousKeyReason[];
+  /** Workspace root for key generation context */
+  workspaceRoot?: string;
+  /** Allow proposals that conflict with existing keys */
+  allowExistingConflicts?: boolean;
 }
 
 /**
@@ -64,6 +69,11 @@ export function generateRenameProposals(
   const skippedKeys: string[] = [];
   const renameMapping: Record<string, string> = {};
 
+  const keyGenerator = new KeyGenerator({
+    namespace: options.defaultNamespace,
+    workspaceRoot: options.workspaceRoot,
+  });
+
   for (const warning of suspiciousKeys) {
     // Skip if we've already processed this key
     if (seenOriginals.has(warning.key)) {
@@ -76,12 +86,22 @@ export function generateRenameProposals(
       continue;
     }
 
-    // Generate proposed key
-    const proposedKey = normalizeToKey(warning.key, {
-      defaultNamespace: options.defaultNamespace,
-      namingConvention: options.namingConvention,
-      maxWords: options.maxWords,
-    });
+    // Generate proposed key using KeyGenerator for consistent hashing
+    let proposedKey: string;
+    try {
+      const generated = keyGenerator.generate(warning.key, {
+        filePath: warning.filePath,
+        kind: 'call-expression', // Assume call expression for suspicious keys
+      });
+      proposedKey = generated.key;
+    } catch (e) {
+      // Fallback to simple normalization if generator fails
+      proposedKey = normalizeToKey(warning.key, {
+        defaultNamespace: options.defaultNamespace,
+        namingConvention: options.namingConvention,
+        maxWords: options.maxWords,
+      });
+    }
 
     // Skip if the normalized key is the same as original
     if (proposedKey === warning.key) {
@@ -102,11 +122,18 @@ export function generateRenameProposals(
     const hasSelfConflict = proposedKeySet.has(proposedKey);
 
     if (hasExistingConflict || hasSelfConflict) {
-      proposal.hasConflict = true;
-      proposal.conflictsWith = hasExistingConflict
-        ? proposedKey
-        : `(duplicate proposal from "${[...seenOriginals].find((k) => renameMapping[k] === proposedKey)}")`;
-      conflictProposals.push(proposal);
+      if (hasExistingConflict && options.allowExistingConflicts) {
+        // Allow existing conflicts - treat as safe
+        safeProposals.push(proposal);
+        proposedKeySet.add(proposedKey);
+        renameMapping[warning.key] = proposedKey;
+      } else {
+        proposal.hasConflict = true;
+        proposal.conflictsWith = hasExistingConflict
+          ? proposedKey
+          : `(duplicate proposal from "${[...seenOriginals].find((k) => renameMapping[k] === proposedKey)}")`;
+        conflictProposals.push(proposal);
+      }
     } else {
       safeProposals.push(proposal);
       proposedKeySet.add(proposedKey);

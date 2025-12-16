@@ -16,6 +16,7 @@ export interface KeyRenamerOptions {
 export interface KeyRenameOptions {
   write?: boolean;
   diff?: boolean;
+  allowConflicts?: boolean;
 }
 
 export interface KeyRenameMapping {
@@ -126,6 +127,7 @@ export class KeyRenamer {
 
     const write = options.write ?? false;
     const generateDiffs = options.diff ?? false;
+    const allowConflicts = options.allowConflicts ?? false;
     const localeAnalysis = await this.buildLocaleAnalysis(mappings);
     const duplicateConflicts = mappings
       .map((mapping) => {
@@ -137,7 +139,7 @@ export class KeyRenamer {
       })
       .filter((entry): entry is { mapping: KeyRenameMapping; locales: string[] } => Boolean(entry));
 
-    if (duplicateConflicts.length && write) {
+    if (duplicateConflicts.length && write && !allowConflicts) {
       const conflictSummary = duplicateConflicts
         .slice(0, 5)
         .map(({ mapping, locales }) => `${mapping.from} → ${mapping.to} (${locales.join(', ')})`)
@@ -267,15 +269,23 @@ export class KeyRenamer {
         }
 
         for (const preview of analysis.localePreview) {
-          if (preview.missing || preview.duplicate) {
+          if (preview.missing) {
             continue;
           }
 
-          const result = await this.localeStore.renameKey(preview.locale, mapping.from, mapping.to);
-          if (result === 'duplicate') {
-            throw new Error(
-              `Target key "${mapping.to}" already exists in locale ${preview.locale}. Rename aborted to prevent data loss.`
-            );
+          // If target exists (duplicate), we still want to remove the old key (merge behavior)
+          // If target doesn't exist, we rename (move behavior)
+          if (preview.duplicate) {
+            // Just remove the old key, as the new key already exists
+            await this.localeStore.remove(preview.locale, mapping.from);
+          } else {
+            const result = await this.localeStore.renameKey(preview.locale, mapping.from, mapping.to);
+            if (result === 'duplicate') {
+              // This shouldn't happen given the check above, but safety first
+              throw new Error(
+                `Target key "${mapping.to}" already exists in locale ${preview.locale}. Rename aborted to prevent data loss.`
+              );
+            }
           }
         }
       }
