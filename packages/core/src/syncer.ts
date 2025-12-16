@@ -14,7 +14,7 @@ import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
 import { createDefaultProject } from './project-factory.js';
 import { ActionableItem } from './actionable.js';
-import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview } from './diff-utils.js';
+import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview, SourceFileDiffEntry } from './diff-utils.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
 import type {
   TranslationReference,
@@ -86,6 +86,8 @@ export interface SyncSummary {
   localeStats: LocaleFileStats[];
   localePreview: LocaleDiffPreview[];
   diffs: LocaleDiffEntry[];
+  localeDiffs?: LocaleDiffEntry[];
+  renameDiffs?: SourceFileDiffEntry[];
   placeholderIssues: PlaceholderIssue[];
   emptyValueViolations: EmptyValueViolation[];
   dynamicKeyWarnings: DynamicKeyWarning[];
@@ -366,6 +368,7 @@ export class Syncer {
           this.workspaceRoot
         )
       : [];
+    const localeDiffs = diffs; // Alias for consistency with KeyRenamer
     await saveReferenceCache(
       this.referenceCachePath,
       this.cacheDir,
@@ -396,6 +399,7 @@ export class Syncer {
       localeStats,
       localePreview,
       diffs,
+      localeDiffs,
       placeholderIssues,
       emptyValueViolations,
       dynamicKeyWarnings: scopedDynamicKeyWarnings,

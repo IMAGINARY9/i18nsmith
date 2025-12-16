@@ -66,23 +66,23 @@ export interface BuildActionableItemsInput {
 export function buildActionableItems(input: BuildActionableItemsInput): ActionableItem[] {
   const items: ActionableItem[] = [];
 
-  const suspiciousSeverity = input.suspiciousKeyPolicy === 'error' ? 'error' : 'warn';
-  const skipWrite = input.suspiciousKeyPolicy !== 'allow';
-  input.suspiciousKeys.forEach((warning) => {
+  if (input.suspiciousKeys.length > 0) {
+    const suspiciousSeverity = input.suspiciousKeyPolicy === 'error' ? 'error' : 'warn';
+    const skipWrite = input.suspiciousKeyPolicy !== 'allow';
+    
     items.push({
-      kind: 'suspicious-key',
+      kind: 'suspicious-keys',
       severity: suspiciousSeverity,
-      key: warning.key,
-      filePath: warning.filePath,
-      message: `Suspicious key format detected: "${warning.key}" (contains spaces)${
-        skipWrite ? ' — auto-insert skipped until the key is renamed.' : ''
+      message: `${input.suspiciousKeys.length} suspicious key${input.suspiciousKeys.length === 1 ? '' : 's'} detected (contains spaces or special chars)${
+        skipWrite ? ' — auto-insert skipped until keys are renamed.' : ''
       }`,
       details: {
-        reason: warning.reason,
+        count: input.suspiciousKeys.length,
         policy: input.suspiciousKeyPolicy,
+        keys: input.suspiciousKeys.map((k) => k.key),
       },
     });
-  });
+  }
 
   input.missingKeys.forEach((record) => {
     const reference = record.references[0];

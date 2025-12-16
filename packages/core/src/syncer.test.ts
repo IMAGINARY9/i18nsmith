@@ -157,7 +157,7 @@ export default Suspicious;
 
     const missing = summary.missingKeys.find((entry) => entry.key === keyWithSpaces);
     expect(missing?.suspicious).toBe(true);
-    expect(summary.actionableItems.some((item) => item.kind === 'suspicious-key')).toBe(true);
+    expect(summary.actionableItems.some((item) => item.kind === 'suspicious-keys')).toBe(true);
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).not.toHaveProperty(keyWithSpaces);

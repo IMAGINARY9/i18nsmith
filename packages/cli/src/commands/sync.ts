@@ -253,6 +253,56 @@ export function registerSync(program: Command) {
           targets: options.target,
         });
 
+        // If previewing with auto-rename, calculate the rename diffs and include them
+        if (previewMode && options.autoRenameSuspicious && summary.suspiciousKeys.length > 0) {
+          const localesDir = path.resolve(process.cwd(), config.localesDir ?? 'locales');
+          const localeStore = new LocaleStore(localesDir, {
+            sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+          });
+          const sourceLocale = config.sourceLanguage ?? 'en';
+          const sourceData = await localeStore.get(sourceLocale);
+          const existingKeys = new Set(Object.keys(sourceData));
+
+          const namingConvention = options.namingConvention ?? 'kebab-case';
+          const report = generateRenameProposals(summary.suspiciousKeys, {
+            existingKeys,
+            namingConvention,
+            workspaceRoot: projectRoot,
+            allowExistingConflicts: true,
+          });
+
+          if (report.safeProposals.length > 0) {
+            const mappings = report.safeProposals.map((proposal) => ({
+              from: proposal.originalKey,
+              to: proposal.proposedKey,
+            }));
+
+            const renamer = new KeyRenamer(config, { workspaceRoot: projectRoot });
+            // Run rename batch in dry-run mode with diffs
+            const batchSummary = await renamer.renameBatch(mappings, {
+              write: false,
+              diff: true,
+              allowConflicts: true,
+            });
+            
+            // Merge rename diffs into summary
+            summary.renameDiffs = batchSummary.diffs;
+            
+            // Merge locale diffs if any (renamer returns localeDiffs)
+            if (batchSummary.localeDiffs && batchSummary.localeDiffs.length > 0) {
+              summary.localeDiffs = [
+                ...(summary.localeDiffs || []),
+                ...batchSummary.localeDiffs
+              ];
+              // Also update main diffs array if it's used for preview
+              summary.diffs = [
+                ...(summary.diffs || []),
+                ...batchSummary.localeDiffs
+              ];
+            }
+          }
+        }
+
         if (previewMode && options.previewOutput) {
           const savedPath = await writePreviewFile('sync', summary, options.previewOutput);
           console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
@@ -519,6 +569,7 @@ async function handleAutoRenameSuspicious(
   const report = generateRenameProposals(summary.suspiciousKeys, {
     existingKeys,
     namingConvention,
+    allowExistingConflicts: true,
   });
 
   // Print summary
@@ -578,7 +629,11 @@ async function handleAutoRenameSuspicious(
       }));
 
       const renamer = new KeyRenamer(config, { workspaceRoot: projectRoot });
-      const applySummary = await renamer.renameBatch(mappings, { write: true, diff: Boolean(options.diff) });
+      const applySummary = await renamer.renameBatch(mappings, {
+        write: true,
+        diff: Boolean(options.diff),
+        allowConflicts: true,
+      });
       printRenameBatchSummary(applySummary);
 
       if (!options.renameMapFile && hasMappings) {

@@ -161,9 +161,6 @@ function buildHealthCheckSummary(result: ScanResult | null): { title: string; de
   if (filesWithIssues.size) {
     details.push(`• ${filesWithIssues.size} file${filesWithIssues.size === 1 ? '' : 's'} with diagnostics`);
   }
-  if (missingKeys || unusedKeys) {
-    details.push(`• Locale drift: ${missingKeys} missing / ${unusedKeys} unused keys`);
-  }
   if (suggestionCount) {
     details.push(`• ${suggestionCount} recommended action${suggestionCount === 1 ? '' : 's'} ready in Quick Actions`);
   }
@@ -279,17 +276,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (warning: SuspiciousKeyWarning) => {
       await syncController.renameSuspiciousKey(warning);
     }),
-    // vscode.commands.registerCommand('i18nsmith.renameAllSuspiciousKeys', async () => {
-    //   await renameAllSuspiciousKeys();
-    // }),
+    vscode.commands.registerCommand('i18nsmith.renameAllSuspiciousKeys', async () => {
+      await syncController.renameAllSuspiciousKeys();
+    }),
     // vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
     //   await insertIgnoreComment(uri, line, 'suspicious-key');
     // }),
     // vscode.commands.registerCommand('i18nsmith.openLocaleFile', async () => {
     //   await openSourceLocaleFile();
-    // }),
-    // vscode.commands.registerCommand('i18nsmith.renameKey', async () => {
-    //   await renameKeyAtCursor();
     // }),
     // vscode.commands.registerCommand('i18nsmith.checkFile', async () => {
     //   await checkCurrentFile();
@@ -693,8 +687,7 @@ async function showQuickActions() {
       break;
     }
     case 'rename-suspicious': {
-      // await renameAllSuspiciousKeys();
-      vscode.window.showInformationMessage('Rename all suspicious keys is currently disabled during refactoring.');
+      await syncController.renameAllSuspiciousKeys();
       break;
     }
 
@@ -754,8 +747,7 @@ async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
   }
 
   if (intent.kind === 'rename-key') {
-    // await runRenameCommand({ from: intent.from, to: intent.to });
-    vscode.window.showInformationMessage('Rename key preview is currently disabled during refactoring.');
+    await syncController.renameKey(intent.from, intent.to);
     return;
   }
 

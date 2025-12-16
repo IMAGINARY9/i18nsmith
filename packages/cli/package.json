@@ -21,6 +21,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@i18nsmith/core": "workspace:*",
+    "@i18nsmith/transformer": "workspace:*",
+    "@i18nsmith/translation": "workspace:*",
+    "@i18nsmith/translator-mock": "workspace:*",
     "chalk": "^5.0.0",
     "commander": "^11.0.0",
     "diff": "^8.0.2",
@@ -31,10 +35,6 @@
     "ts-morph": "^21.0.0"
   },
   "devDependencies": {
-    "@i18nsmith/core": "workspace:*",
-    "@i18nsmith/transformer": "workspace:*",
-    "@i18nsmith/translation": "workspace:*",
-    "@i18nsmith/translator-mock": "workspace:*",
     "esbuild": "^0.25.0"
   }
 }
