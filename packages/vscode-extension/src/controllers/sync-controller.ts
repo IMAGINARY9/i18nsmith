@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ServiceContainer } from '../services/container';
 import { ConfigurationController } from './configuration-controller';
 import { executePreviewPlan, type PlannedChange } from '../preview-flow';
-import { SyncSummary, SuspiciousKeyWarning } from '@i18nsmith/core';
+import { SyncSummary, SuspiciousKeyWarning, LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
 import { PreviewPayload } from '../preview-manager';
 import { resolveCliCommand } from '../cli-utils';
 import { runResolvedCliCommand } from '../cli-runner';
@@ -25,7 +25,7 @@ export class SyncController implements vscode.Disposable {
     return this.lastSyncSuspiciousWarnings;
   }
 
-  public async runSync(options: { targets?: string[]; dryRunOnly?: boolean } = {}) {
+  public async runSync(options: { targets?: string[]; dryRunOnly?: boolean; extraArgs?: string[] } = {}) {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder found');
@@ -38,6 +38,14 @@ export class SyncController implements vscode.Disposable {
 
     this.services.logVerbose(`runSync: Starting ${label}`);
 
+    const args = ['--diff'];
+    if (options.targets) {
+      args.push('--target', ...options.targets);
+    }
+    if (options.extraArgs) {
+      args.push(...options.extraArgs);
+    }
+
     const previewResult = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -47,7 +55,7 @@ export class SyncController implements vscode.Disposable {
       () =>
         this.services.previewManager.run<SyncSummary>({
           kind: 'sync',
-          args: options.targets ? ['--target', ...options.targets] : [],
+          args,
           workspaceRoot: workspaceFolder.uri.fsPath,
           label,
         })
@@ -79,8 +87,27 @@ export class SyncController implements vscode.Disposable {
       return;
     }
 
-    // Show preview plan
-    await this.showSyncPreview(previewResult.payload, previewResult.previewPath, workspaceFolder.uri.fsPath);
+    // Show diff preview if available
+    if (summary.diffs && summary.diffs.length > 0) {
+      const missingCount = summary.missingKeys?.length ?? 0;
+      const unusedCount = summary.unusedKeys?.length ?? 0;
+      const label = `${missingCount} missing, ${unusedCount} unused`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await this.services.diffPreviewService.showPreview(
+        summary.diffs,
+        async () => {
+          await this.applySync(previewResult.previewPath, workspaceFolder.uri.fsPath);
+        },
+        {
+          title: 'Sync Preview',
+          detail: `Sync Locales: ${label}. Apply changes?`,
+        }
+      );
+    } else {
+      // Fallback to markdown preview if no diffs (shouldn't happen with --diff)
+      await this.showSyncPreview(previewResult.payload, previewResult.previewPath, workspaceFolder.uri.fsPath);
+    }
   }
 
   public async syncCurrentFile() {
@@ -115,6 +142,28 @@ export class SyncController implements vscode.Disposable {
       'This will update locale files to match source code usage.',
     ];
 
+    if (missingCount > 0) {
+      detailLines.push('', '## Missing Keys');
+      const limit = 10;
+      for (const k of summary.missingKeys.slice(0, limit)) {
+        detailLines.push(`- ${k.key}`);
+      }
+      if (missingCount > limit) {
+        detailLines.push(`...and ${missingCount - limit} more`);
+      }
+    }
+
+    if (unusedCount > 0) {
+      detailLines.push('', '## Unused Keys');
+      const limit = 10;
+      for (const k of summary.unusedKeys.slice(0, limit)) {
+        detailLines.push(`- ${k.key}`);
+      }
+      if (unusedCount > limit) {
+        detailLines.push(`...and ${unusedCount - limit} more`);
+      }
+    }
+
     // Create a "virtual" change that represents the sync application
     // In a real implementation of Phase 2, we would parse the diffs from the preview payload
     changes.push({
@@ -138,13 +187,24 @@ export class SyncController implements vscode.Disposable {
         // In real impl we'd delete previewPath
       },
     });
+
+    // Also show a persistent notification with an Apply button, as a backup to the markdown link
+    const applyLabel = 'Apply Changes';
+    const choice = await vscode.window.showInformationMessage(
+      `Sync Locales: ${missingCount} missing, ${unusedCount} unused keys.`,
+      applyLabel,
+      'Cancel'
+    );
+
+    if (choice === applyLabel) {
+      // Close the preview editor first to avoid confusion
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await this.applySync(previewPath, workspaceRoot);
+    }
   }
 
   private async applySync(previewPath: string, workspaceRoot: string) {
-    // For now, we re-run with --apply-preview or just --write if CLI doesn't support it yet
-    // The plan says "Extension runs cmd --write" for V1 if apply-preview isn't ready
-    
-    const command = 'i18nsmith sync --write'; // Simplified for V1
+    const command = `i18nsmith sync --apply-preview ${quoteCliArg(previewPath)}`;
     
     await vscode.window.withProgress(
       {
@@ -154,8 +214,13 @@ export class SyncController implements vscode.Disposable {
       },
       async () => {
         const resolved = resolveCliCommand(command);
-        await runResolvedCliCommand(resolved, { cwd: workspaceRoot });
+        const result = await runResolvedCliCommand(resolved, { cwd: workspaceRoot });
         
+        if (result.code !== 0) {
+          vscode.window.showErrorMessage(`Sync failed: ${result.stderr || result.stdout}`);
+          return;
+        }
+
         this.services.hoverProvider.clearCache();
         this.services.reportWatcher.refresh();
         this.services.smartScanner.scan('sync');
@@ -220,54 +285,72 @@ export class SyncController implements vscode.Disposable {
       return;
     }
 
-    const command = `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(newKey)} --write`;
-    
-    await vscode.window.withProgress(
+    // Use preview flow
+    const previewResult = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `Renaming key to "${newKey}"...`,
+        title: `Analyzing rename of "${warning.key}"...`,
       },
-      async () => {
-        const result = await this.services.cliService.runCliCommand(command);
-
-        if (result?.success) {
-          vscode.window.showInformationMessage(`Renamed "${warning.key}" to "${newKey}"`);
-          // Refresh diagnostics
-          this.services.reportWatcher.refresh();
-        } else {
-          vscode.window.showErrorMessage(`Rename failed: ${result?.stderr ?? 'Unknown error'}`);
-        }
-      }
+      () =>
+        this.services.previewManager.run<{ diffs: SourceFileDiffEntry[], localeDiffs?: LocaleDiffEntry[] }>({
+          kind: 'rename-key',
+          args: [quoteCliArg(warning.key), quoteCliArg(newKey), '--diff'],
+          workspaceRoot: workspaceFolder.uri.fsPath,
+          label: `rename-key ${warning.key}`,
+        })
     );
+
+    const summary = previewResult.payload.summary;
+    const allDiffs = [
+      ...(summary.diffs || []),
+      ...(summary.localeDiffs || [])
+    ];
+
+    if (allDiffs.length > 0) {
+      await this.services.diffPreviewService.showPreview(
+        allDiffs,
+        async () => {
+          const command = `i18nsmith rename-key ${quoteCliArg(warning.key)} ${quoteCliArg(newKey)} --write`;
+          await this.runApplyCommand(command, `Renaming "${warning.key}" to "${newKey}"`);
+        },
+        {
+          title: 'Rename Key Preview',
+          detail: `Rename "${warning.key}" to "${newKey}". Apply changes?`,
+        }
+      );
+    } else {
+      vscode.window.showInformationMessage('No changes detected for rename.');
+    }
   }
 
   public async renameSuspiciousKeysInFile(target?: vscode.Uri) {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      return;
-    }
-
     const targetFile = target?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
     if (!targetFile) {
       vscode.window.showErrorMessage('No file selected for renaming suspicious keys.');
       return;
     }
 
-    const command = `i18nsmith sync --target ${quoteCliArg(targetFile)} --auto-rename-suspicious --write`;
+    // Reuse runSync with auto-rename flag
+    await this.runSync({
+      targets: [targetFile],
+      extraArgs: ['--auto-rename-suspicious'],
+    });
+  }
 
+  private async runApplyCommand(command: string, title: string) {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Renaming suspicious keys in file...',
+        title: `${title}...`,
       },
       async () => {
         const result = await this.services.cliService.runCliCommand(command);
         
         if (result?.success) {
-          vscode.window.showInformationMessage('Renamed suspicious keys.');
+          vscode.window.showInformationMessage(`${title} completed.`);
           this.services.reportWatcher.refresh();
         } else {
-          vscode.window.showErrorMessage(`Rename failed: ${result?.stderr ?? 'Unknown error'}`);
+          vscode.window.showErrorMessage(`Operation failed: ${result?.stderr ?? 'Unknown error'}`);
         }
       }
     );

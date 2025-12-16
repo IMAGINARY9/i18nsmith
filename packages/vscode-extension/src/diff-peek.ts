@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
+import { LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
 
-export interface LocaleDiffEntry {
-  locale: string;
-  path: string;
-  diff: string;
-  added: string[];
-  updated: string[];
-  removed: string[];
+export { LocaleDiffEntry, SourceFileDiffEntry };
+
+export type DiffEntry = LocaleDiffEntry | SourceFileDiffEntry;
+
+function isLocaleDiff(diff: DiffEntry): diff is LocaleDiffEntry {
+  return 'locale' in diff;
 }
 
 /**
@@ -21,11 +21,11 @@ export class DiffPeekProvider {
    */
   async showDiffPeek(
     editor: vscode.TextEditor,
-    diffs: LocaleDiffEntry[],
-    title: string = 'Locale Changes Preview'
+    diffs: DiffEntry[],
+    title: string = 'Changes Preview'
   ): Promise<void> {
     if (!diffs.length) {
-      vscode.window.showInformationMessage('No locale changes to preview');
+      vscode.window.showInformationMessage('No changes to preview');
       return;
     }
 
@@ -64,40 +64,53 @@ export class DiffPeekProvider {
   /**
    * Format diffs into a readable text format
    */
-  private formatDiffsForPeek(diffs: LocaleDiffEntry[], title: string): string {
+  private formatDiffsForPeek(diffs: DiffEntry[], title: string): string {
     const lines: string[] = [];
     
     lines.push(`# ${title}`);
     lines.push('');
     
     // Summary
-    const totalAdded = diffs.reduce((sum, d) => sum + d.added.length, 0);
-    const totalUpdated = diffs.reduce((sum, d) => sum + d.updated.length, 0);
-    const totalRemoved = diffs.reduce((sum, d) => sum + d.removed.length, 0);
+    const localeDiffs = diffs.filter(isLocaleDiff);
+    const sourceDiffs = diffs.filter(d => !isLocaleDiff(d));
+
+    const totalAdded = localeDiffs.reduce((sum, d) => sum + d.added.length, 0);
+    const totalUpdated = localeDiffs.reduce((sum, d) => sum + d.updated.length, 0);
+    const totalRemoved = localeDiffs.reduce((sum, d) => sum + d.removed.length, 0);
+    const totalSourceChanges = sourceDiffs.length;
     
     const summary: string[] = [];
     if (totalAdded > 0) summary.push(`${totalAdded} addition${totalAdded === 1 ? '' : 's'}`);
     if (totalUpdated > 0) summary.push(`${totalUpdated} update${totalUpdated === 1 ? '' : 's'}`);
     if (totalRemoved > 0) summary.push(`${totalRemoved} removal${totalRemoved === 1 ? '' : 's'}`);
+    if (totalSourceChanges > 0) summary.push(`${totalSourceChanges} source file${totalSourceChanges === 1 ? '' : 's'} changed`);
     
     lines.push(`## Summary: ${summary.join(', ')}`);
     lines.push('');
     lines.push('─'.repeat(80));
     lines.push('');
 
-    // Per-locale diffs
+    // Per-file diffs
     for (const diff of diffs) {
-      lines.push(`## ${diff.locale} (${diff.path})`);
-      lines.push('');
-      
-      // Show statistics
-      const stats: string[] = [];
-      if (diff.added.length > 0) stats.push(`+${diff.added.length} added`);
-      if (diff.updated.length > 0) stats.push(`~${diff.updated.length} updated`);
-      if (diff.removed.length > 0) stats.push(`-${diff.removed.length} removed`);
-      
-      if (stats.length > 0) {
-        lines.push(`Changes: ${stats.join(', ')}`);
+      if (isLocaleDiff(diff)) {
+        lines.push(`## ${diff.locale} (${diff.path})`);
+        lines.push('');
+        
+        // Show statistics
+        const stats: string[] = [];
+        if (diff.added.length > 0) stats.push(`+${diff.added.length} added`);
+        if (diff.updated.length > 0) stats.push(`~${diff.updated.length} updated`);
+        if (diff.removed.length > 0) stats.push(`-${diff.removed.length} removed`);
+        
+        if (stats.length > 0) {
+          lines.push(`Changes: ${stats.join(', ')}`);
+          lines.push('');
+        }
+      } else {
+        // Source file diff
+        lines.push(`## ${diff.relativePath}`);
+        lines.push('');
+        lines.push(`Changes: modified`);
         lines.push('');
       }
 
@@ -116,21 +129,25 @@ export class DiffPeekProvider {
   /**
    * Format diffs as a compact summary (for status bar or notifications)
    */
-  formatDiffSummary(diffs: LocaleDiffEntry[]): string {
+  formatDiffSummary(diffs: DiffEntry[]): string {
     if (!diffs.length) {
       return 'No changes';
     }
 
-    const totalAdded = diffs.reduce((sum, d) => sum + d.added.length, 0);
-    const totalUpdated = diffs.reduce((sum, d) => sum + d.updated.length, 0);
-    const totalRemoved = diffs.reduce((sum, d) => sum + d.removed.length, 0);
+    const localeDiffs = diffs.filter(isLocaleDiff);
+    const sourceDiffs = diffs.filter(d => !isLocaleDiff(d));
+
+    const totalAdded = localeDiffs.reduce((sum, d) => sum + d.added.length, 0);
+    const totalUpdated = localeDiffs.reduce((sum, d) => sum + d.updated.length, 0);
+    const totalRemoved = localeDiffs.reduce((sum, d) => sum + d.removed.length, 0);
 
     const parts: string[] = [];
     if (totalAdded > 0) parts.push(`+${totalAdded}`);
     if (totalUpdated > 0) parts.push(`~${totalUpdated}`);
     if (totalRemoved > 0) parts.push(`-${totalRemoved}`);
+    if (sourceDiffs.length > 0) parts.push(`${sourceDiffs.length} files`);
 
-    return `${diffs.length} locale${diffs.length === 1 ? '' : 's'} (${parts.join(', ')})`;
+    return `${diffs.length} file${diffs.length === 1 ? '' : 's'} (${parts.join(', ')})`;
   }
 }
 

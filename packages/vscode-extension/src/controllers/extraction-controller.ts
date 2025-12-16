@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
+import { createPatch } from 'diff';
 import { ServiceContainer } from '../services/container';
-import { loadConfigWithMeta, LocaleStore, KeyGenerator } from '@i18nsmith/core';
-import { executePreviewPlan, PlannedChange } from '../preview-flow';
+import { loadConfigWithMeta, LocaleStore, KeyGenerator, LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
+import { PlannedChange } from '../preview-flow';
 
 const fsp = fs.promises;
 
@@ -12,6 +13,7 @@ interface SourcePreviewPlan {
   change: PlannedChange;
   cleanup: () => Promise<void>;
   relativePath: string;
+  diffEntry: SourceFileDiffEntry;
 }
 
 interface LocalePreviewPlanResult {
@@ -19,6 +21,7 @@ interface LocalePreviewPlanResult {
   cleanup: () => Promise<void>;
   detailLines: string[];
   primaryLocalePath?: string;
+  diffs: LocaleDiffEntry[];
 }
 
 export class ExtractionController implements vscode.Disposable {
@@ -95,26 +98,30 @@ export class ExtractionController implements vscode.Disposable {
     }
 
     const cleanupTasks = [sourceChange.cleanup, localePlan.cleanup];
-    const detailLines = [
-      `Key: ${key}`,
-      `Source file: ${sourceChange.relativePath}`,
-      `Locales: ${Array.from(localeValues.keys()).join(', ')}`,
-      ...localePlan.detailLines.slice(1),
-    ];
-
-    await executePreviewPlan({
-      title: 'Extract selection as translation key',
-      detail: detailLines.join('\n'),
-      changes: [sourceChange.change, ...localePlan.changes],
-      cleanup: async () => {
-        await Promise.all(cleanupTasks.map((fn) => fn().catch(() => {})));
+    
+    // Use the shared DiffPreviewService
+    await this.services.diffPreviewService.showPreview(
+      [sourceChange.diffEntry, ...localePlan.diffs],
+      async () => {
+        try {
+          await sourceChange.change.apply();
+          for (const change of localePlan.changes) {
+            await change.apply();
+          }
+          this.services.hoverProvider.clearCache();
+          this.services.reportWatcher.refresh();
+          vscode.window.showInformationMessage(`Extracted as '${key}'`);
+        } catch (e) {
+          vscode.window.showErrorMessage(`Failed to apply extraction: ${e}`);
+        } finally {
+          await Promise.all(cleanupTasks.map((fn) => fn().catch(() => {})));
+        }
       },
-      onApply: async () => {
-        this.services.hoverProvider.clearCache();
-        this.services.reportWatcher.refresh();
-        vscode.window.showInformationMessage(`Extracted as '${key}'`);
-      },
-    });
+      {
+        title: 'Extract Key Preview',
+        detail: `Extract '${key}' and update ${localePlan.changes.length} locale files. Apply changes?`,
+      }
+    );
   }
 
   private normalizeSelectedLiteral(text: string): string {
@@ -201,6 +208,14 @@ export class ExtractionController implements vscode.Disposable {
 
     const relativePath = workspaceRoot ? path.relative(workspaceRoot, document.uri.fsPath) : document.uri.fsPath;
 
+    const diff = createPatch(relativePath, beforeText, afterText);
+    const diffEntry: SourceFileDiffEntry = {
+      path: document.uri.fsPath,
+      relativePath,
+      diff,
+      changes: 1,
+    };
+
     const change: PlannedChange = {
       label: relativePath,
       beforeUri: vscode.Uri.file(beforePath),
@@ -220,7 +235,7 @@ export class ExtractionController implements vscode.Disposable {
       await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     };
 
-    return { change, cleanup, relativePath };
+    return { change, cleanup, relativePath, diffEntry };
   }
 
   private async createLocalePreviewPlan(
@@ -273,6 +288,7 @@ export class ExtractionController implements vscode.Disposable {
 
     const changes: PlannedChange[] = [];
     const detailLines: string[] = ['Locale files:'];
+    const diffs: LocaleDiffEntry[] = [];
 
     for (const locale of localeValues.keys()) {
       const originalContent = beforeSnapshots.get(locale) || '';
@@ -299,6 +315,17 @@ export class ExtractionController implements vscode.Disposable {
         },
       });
       
+      // Generate diff entry for preview
+      const patch = createPatch(`${locale}.json`, originalContent, newContent);
+      diffs.push({
+        locale,
+        path: path.join(localesDir, `${locale}.json`),
+        diff: patch,
+        added: [key],
+        updated: [],
+        removed: [],
+      });
+
       detailLines.push(`- ${locale}.json: +1 key`);
     }
 
@@ -306,6 +333,6 @@ export class ExtractionController implements vscode.Disposable {
       await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     };
 
-    return { changes, cleanup, detailLines };
+    return { changes, cleanup, detailLines, diffs };
   }
 }

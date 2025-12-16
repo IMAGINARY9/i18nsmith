@@ -8,6 +8,7 @@ import { CheckIntegration } from '../check-integration';
 import { DiffPeekProvider } from '../diff-peek';
 import { PreviewManager } from '../preview-manager';
 import { CliService } from './cli-service';
+import { DiffPreviewService } from './diff-preview';
 
 export class ServiceContainer implements vscode.Disposable {
   public readonly verboseOutputChannel: vscode.OutputChannel;
@@ -21,6 +22,7 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly diffPeekProvider: DiffPeekProvider;
   public readonly previewManager: PreviewManager;
   public readonly cliService: CliService;
+  public readonly diffPreviewService: DiffPreviewService;
 
   constructor(context: vscode.ExtensionContext) {
     this.verboseOutputChannel = vscode.window.createOutputChannel('i18nsmith (Verbose)');
@@ -48,6 +50,7 @@ export class ServiceContainer implements vscode.Disposable {
     this.diffPeekProvider = new DiffPeekProvider();
     this.previewManager = new PreviewManager(this.cliOutputChannel);
     this.cliService = new CliService(this.verboseOutputChannel, this.smartScanner, this.reportWatcher);
+    this.diffPreviewService = new DiffPreviewService(this.diffPeekProvider);
   }
 
   public logVerbose(message: string) {
