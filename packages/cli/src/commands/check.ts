@@ -7,6 +7,12 @@ import type { CheckSummary } from '@i18nsmith/core';
 import { printLocaleDiffs } from '../utils/diff-utils.js';
 import { getDiagnosisExitSignal } from '../utils/diagnostics-exit.js';
 import { CHECK_EXIT_CODES } from '../utils/exit-codes.js';
+import {
+  runLocaleAudit,
+  printLocaleAuditResults,
+  hasAuditFindings,
+  type LocaleAuditSummary,
+} from '../utils/locale-audit.js';
 
 interface CheckCommandOptions {
   config?: string;
@@ -24,6 +30,8 @@ interface CheckCommandOptions {
   diff?: boolean;
   invalidateCache?: boolean;
   preferDiagnosticsExit?: boolean;
+  audit?: boolean;
+  auditStrict?: boolean;
 }
 
 const collectAssumedKeys = (value: string, previous: string[]) => {
@@ -114,78 +122,105 @@ export function registerCheck(program: Command) {
     .option('--invalidate-cache', 'Ignore cached sync analysis and rescan all source files', false)
     .option('--target <pattern...>', 'Limit translation reference scanning to specific files or patterns', collectTargetPatterns, [])
     .option('--prefer-diagnostics-exit', 'Prefer diagnostics exit codes when --fail-on=conflicts and blocking conflicts exist', false)
-    .action(async (options: CheckCommandOptions) => {
-      console.log(chalk.blue('Running guided repository health check...'));
-      try {
-        const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
-        
-        // Inform user if config was found in a parent directory
-        const cwd = process.cwd();
-        if (projectRoot !== cwd) {
-          console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
-          console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
-        }
-        
-        // Merge --assume-globs with config
-        if (options.assumeGlobs?.length) {
-          config.sync = config.sync ?? {};
-          config.sync.dynamicKeyGlobs = [
-            ...(config.sync.dynamicKeyGlobs ?? []),
-            ...options.assumeGlobs,
-          ];
-        }
-        const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
-        const summary = await runner.run({
-          assumedKeys: options.assume,
-          validateInterpolations: options.validateInterpolations,
-          emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
-          diff: options.diff,
-          targets: options.target,
-          invalidateCache: options.invalidateCache,
-        });
+    .option('--audit', 'Include locale quality audit (duplicates, inconsistent keys, orphaned namespaces)', false)
+    .option('--audit-strict', 'Fail if locale audit finds issues (implies --audit)', false)
+    .action(async (options: CheckCommandOptions) => runCheck(options));
+}
 
-        if (options.report) {
-          const outputPath = path.resolve(process.cwd(), options.report);
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
-          console.log(chalk.green(`Health report written to ${outputPath}`));
-        }
+export async function runCheck(options: CheckCommandOptions): Promise<void> {
+  const auditEnabled = Boolean(options.audit || options.auditStrict);
+  console.log(chalk.blue('Running guided repository health check...'));
+  try {
+    const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
 
-        if (options.json) {
-          console.log(JSON.stringify(summary, null, 2));
-        } else {
-          printCheckSummary(summary);
-          if (options.diff) {
-            printLocaleDiffs(summary.sync.diffs);
-          }
-        }
+    // Inform user if config was found in a parent directory
+    const cwd = process.cwd();
+    if (projectRoot !== cwd) {
+      console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+      console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+    }
 
-        // If diagnostics discovered blocking conflicts, prefer the diagnostics' exit
-        // signal so CI can branch on specific failure modes (missing source locale,
-        // invalid JSON, etc.). This mirrors `i18nsmith diagnose` behavior.
-        // Only when --prefer-diagnostics-exit is true and --fail-on=conflicts.
-        const diagExit = getDiagnosisExitSignal(summary.diagnostics);
-        if (diagExit && options.preferDiagnosticsExit && options.failOn === 'conflicts') {
-          console.error(chalk.red(`\nBlocking diagnostic conflict detected: ${diagExit.reason}`));
-          console.error(chalk.red(`Exit code ${diagExit.code}`));
-          process.exitCode = diagExit.code;
-          return;
-        }
-
-        const failMode = (options.failOn ?? 'conflicts').toLowerCase();
-        const hasErrors = summary.actionableItems.some((item) => item.severity === 'error');
-        const hasWarnings = summary.actionableItems.some((item) => item.severity === 'warn');
-
-        if (failMode === 'conflicts' && hasErrors) {
-          console.error(chalk.red('\nBlocking issues detected. Resolve the actionable errors above.'));
-          process.exitCode = CHECK_EXIT_CODES.CONFLICTS;
-        } else if (failMode === 'warnings' && (hasErrors || hasWarnings)) {
-          console.error(chalk.red('\nWarnings detected. Use --fail-on conflicts to limit failures to blocking issues.'));
-          process.exitCode = CHECK_EXIT_CODES.WARNINGS;
-        }
-      } catch (error) {
-        console.error(chalk.red('Check failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
+    // Merge --assume-globs with config
+    if (options.assumeGlobs?.length) {
+      config.sync = config.sync ?? {};
+      config.sync.dynamicKeyGlobs = [
+        ...(config.sync.dynamicKeyGlobs ?? []),
+        ...options.assumeGlobs,
+      ];
+    }
+    const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
+    const summary = await runner.run({
+      assumedKeys: options.assume,
+      validateInterpolations: options.validateInterpolations,
+      emptyValuePolicy: options.emptyValues === false ? 'fail' : undefined,
+      diff: options.diff,
+      targets: options.target,
+      invalidateCache: options.invalidateCache,
     });
+
+    let localeAudit: LocaleAuditSummary | undefined;
+    if (auditEnabled) {
+      localeAudit = await runLocaleAudit(
+        { config, projectRoot },
+        {
+          checkDuplicates: true,
+          checkInconsistent: true,
+          checkOrphaned: true,
+        }
+      );
+    }
+
+    const payload = localeAudit ? { ...summary, audit: localeAudit } : summary;
+
+    if (options.report) {
+      const outputPath = path.resolve(process.cwd(), options.report);
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, JSON.stringify(payload, null, 2));
+      console.log(chalk.green(`Health report written to ${outputPath}`));
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      printCheckSummary(summary);
+      if (options.diff) {
+        printLocaleDiffs(summary.sync.diffs);
+      }
+      if (localeAudit) {
+        console.log(chalk.blue('\nLocale quality audit')); 
+        printLocaleAuditResults(localeAudit);
+      }
+    }
+
+    // Diagnostics exit override
+    const diagExit = getDiagnosisExitSignal(summary.diagnostics);
+    if (diagExit && options.preferDiagnosticsExit && (options.failOn ?? 'conflicts') === 'conflicts') {
+      console.error(chalk.red(`\nBlocking diagnostic conflict detected: ${diagExit.reason}`));
+      console.error(chalk.red(`Exit code ${diagExit.code}`));
+      process.exitCode = diagExit.code;
+      return;
+    }
+
+    const failMode = (options.failOn ?? 'conflicts').toLowerCase();
+    const hasErrors = summary.actionableItems.some((item) => item.severity === 'error');
+    const hasWarnings = summary.actionableItems.some((item) => item.severity === 'warn');
+    const auditHasIssues = Boolean(localeAudit && hasAuditFindings(localeAudit));
+
+    if (options.auditStrict && auditHasIssues) {
+      console.error(chalk.red('\nAudit detected locale quality issues (--audit-strict).'));
+      process.exitCode = CHECK_EXIT_CODES.WARNINGS;
+      return;
+    }
+
+    if (failMode === 'conflicts' && hasErrors) {
+      console.error(chalk.red('\nBlocking issues detected. Resolve the actionable errors above.'));
+      process.exitCode = CHECK_EXIT_CODES.CONFLICTS;
+    } else if (failMode === 'warnings' && (hasErrors || hasWarnings || auditHasIssues)) {
+      console.error(chalk.red('\nWarnings detected. Use --fail-on conflicts to limit failures to blocking issues.'));
+      process.exitCode = CHECK_EXIT_CODES.WARNINGS;
+    }
+  } catch (error) {
+    console.error(chalk.red('Check failed:'), (error as Error).message);
+    process.exitCode = 1;
+  }
 }
