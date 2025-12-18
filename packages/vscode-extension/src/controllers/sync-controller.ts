@@ -6,14 +6,17 @@ import { SyncSummary, SuspiciousKeyWarning, LocaleDiffEntry, SourceFileDiffEntry
 import { PreviewPayload } from '../preview-manager';
 import { quoteCliArg } from '../command-helpers';
 import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
+import { PreviewApplyController } from './preview-apply-controller';
 
-export class SyncController implements vscode.Disposable {
+export class SyncController extends PreviewApplyController implements vscode.Disposable {
   private lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
 
   constructor(
-    private readonly services: ServiceContainer,
+    services: ServiceContainer,
     private readonly configController: ConfigurationController
-  ) {}
+  ) {
+    super(services);
+  }
 
   dispose() {
     // No resources to dispose
@@ -44,20 +47,13 @@ export class SyncController implements vscode.Disposable {
       args.push(...options.extraArgs);
     }
 
-    const previewResult = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `i18nsmith: Analyzing sync…`,
-        cancellable: false,
-      },
-      () =>
-        this.services.previewManager.run<SyncSummary>({
-          kind: 'sync',
-          args,
-          workspaceRoot: workspaceFolder.uri.fsPath,
-          label,
-        })
-    );
+    const previewResult = await this.runPreview<SyncSummary>({
+      kind: 'sync',
+      args,
+      workspaceFolder,
+      label,
+      progressTitle: 'i18nsmith: Analyzing sync…',
+    });
 
     const summary = previewResult.payload.summary;
     
@@ -216,27 +212,13 @@ export class SyncController implements vscode.Disposable {
       command += ' --prune';
     }
 
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'i18nsmith: Applying sync changes…',
-        cancellable: false,
-      },
-      async () => {
-        const result = await this.services.cliService.runCliCommand(command, { showOutput: false });
-
-        if (!result?.success) {
-          vscode.window.showErrorMessage(result?.stderr?.trim() || 'Sync failed. Check the i18nsmith output channel.');
-          return;
-        }
-
-        this.services.hoverProvider.clearCache();
-        this.services.reportWatcher.refresh();
-        this.services.smartScanner.scan('sync');
-
-        vscode.window.showInformationMessage('Sync applied successfully.');
-      }
-    );
+    await this.applyPreviewCommand({
+      command,
+      progressTitle: 'i18nsmith: Applying sync changes…',
+      successMessage: 'Sync applied successfully.',
+      scannerTrigger: 'sync',
+      failureMessage: 'Sync failed. Check the i18nsmith output channel.',
+    });
   }
 
   public async exportMissingTranslations() {

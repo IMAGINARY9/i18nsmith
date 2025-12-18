@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { ServiceContainer } from '../services/container';
 import { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { quoteCliArg } from '../command-helpers';
+import { PreviewApplyController } from './preview-apply-controller';
 
 const fsp = fs.promises;
 
@@ -12,8 +13,10 @@ export interface TransformRunOptions {
   workspaceFolder?: vscode.WorkspaceFolder;
 }
 
-export class TransformController implements vscode.Disposable {
-  constructor(private readonly services: ServiceContainer) {}
+export class TransformController extends PreviewApplyController implements vscode.Disposable {
+  constructor(services: ServiceContainer) {
+    super(services);
+  }
 
   dispose() {
     // No resources to dispose
@@ -26,26 +29,18 @@ export class TransformController implements vscode.Disposable {
       return;
     }
 
-    const manager = this.services.previewManager;
     const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
     const label = options.label ?? (options.targets?.length === 1 ? options.targets[0] : 'workspace');
 
     this.services.logVerbose(`runTransform: Starting preview for ${label}`);
 
-    const previewResult = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'i18nsmith: Analyzing transform candidates…',
-        cancellable: false,
-      },
-      () =>
-        manager.run<TransformSummary>({
-          kind: 'transform',
-          args: baseArgs,
-          workspaceRoot: workspaceFolder.uri.fsPath,
-          label: `transform preview (${label})`,
-        })
-    );
+    const previewResult = await this.runPreview<TransformSummary>({
+      kind: 'transform',
+      args: baseArgs,
+      workspaceFolder,
+      label: `transform preview (${label})`,
+      progressTitle: 'i18nsmith: Analyzing transform candidates…',
+    });
 
     const preview = previewResult.payload.summary;
     const transformable = preview.candidates.filter(
@@ -107,36 +102,21 @@ export class TransformController implements vscode.Disposable {
   private async applyTransform(baseArgs: string[], label: string, count: number, previewPath: string) {
     this.services.logVerbose(`runTransform: Applying ${count} transformations via CLI`);
 
-    // Use apply-preview instead of reconstructing the command
-    // This ensures we apply exactly what was previewed
     const writeCommand = `i18nsmith transform --apply-preview ${quoteCliArg(previewPath)}`;
-    
-    const writeResult = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `i18nsmith: Applying transforms (${label})…`,
-        cancellable: false,
+
+    await this.applyPreviewCommand({
+      command: writeCommand,
+      progressTitle: `i18nsmith: Applying transforms (${label})…`,
+      successMessage: `Applied ${count} safe transform${count === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`,
+      scannerTrigger: 'transform',
+      failureMessage: 'Transform failed. Check the i18nsmith output channel.',
+      cliOptions: {
+        showOutput: false,
+        suppressNotifications: true,
+        skipReportRefresh: true,
       },
-      (progress) =>
-        this.services.cliService.runCliCommand(writeCommand, {
-          progress,
-          showOutput: false,
-          suppressNotifications: true,
-          skipReportRefresh: true,
-        })
-    );
-
-    if (writeResult?.success) {
-      await this.cleanupPreviewArtifacts(previewPath);
-    }
-
-    this.services.hoverProvider.clearCache();
-    this.services.reportWatcher.refresh();
-    this.services.smartScanner.scan('transform');
-
-    vscode.window.showInformationMessage(
-      `Applied ${count} safe transform${count === 1 ? '' : 's'}. Rerun the transform command if more hardcoded strings remain.`
-    );
+      onAfterSuccess: () => this.cleanupPreviewArtifacts(previewPath),
+    });
   }
 
   private handleNoCandidates(preview: TransformSummary, options: TransformRunOptions) {
@@ -168,11 +148,6 @@ export class TransformController implements vscode.Disposable {
       args.push('--target', quoteCliArg(target));
     }
     return args;
-  }
-
-  private buildTransformWriteCommand(baseArgs: string[]): string {
-    const parts = ['i18nsmith transform', ...baseArgs, '--write', '--json'].filter(Boolean);
-    return parts.join(' ');
   }
 
   private formatTransformPreview(summary: TransformSummary, limit = 5): string {
