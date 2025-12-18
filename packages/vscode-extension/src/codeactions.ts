@@ -1,7 +1,8 @@
-import * as vscode from 'vscode';
-import type { SuspiciousKeyWarning } from '@i18nsmith/core';
-import { DiagnosticsManager } from './diagnostics';
-import { buildSuspiciousKeySuggestion } from './suspicious-key-helpers';
+import * as vscode from "vscode";
+import type { SuspiciousKeyWarning } from "@i18nsmith/core";
+import { DiagnosticsManager } from "./diagnostics";
+import { buildSuspiciousKeySuggestion } from "./suspicious-key-helpers";
+import type { ConfigurationService } from "./services/configuration-service";
 
 /**
  * Code Action provider for i18nsmith quick fixes
@@ -14,7 +15,10 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 
   private static readonly MAX_SUSPICIOUS_KEY_ACTIONS = 10;
 
-  constructor(private diagnosticsManager: DiagnosticsManager) {}
+  constructor(
+    private diagnosticsManager: DiagnosticsManager,
+    private readonly configurationService: ConfigurationService
+  ) {}
 
   provideCodeActions(
     document: vscode.TextDocument,
@@ -25,21 +29,28 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     const actions: vscode.CodeAction[] = [];
 
     // Get diagnostics for this document
-    const diagnostics = context.diagnostics.filter(d => d.source === 'i18nsmith');
+    const diagnostics = context.diagnostics.filter(
+      (d) => d.source === "i18nsmith"
+    );
 
     const suspiciousDiagnostics: vscode.Diagnostic[] = [];
     let suspiciousRefactorActions = 0;
 
     for (const diagnostic of diagnostics) {
       // Check if this is a missing key issue
-      if (diagnostic.code === 'missing-key' || 
-          diagnostic.code === 'sync-missing-key' ||
-          diagnostic.message.includes('missing')) {
-        
+      if (
+        diagnostic.code === "missing-key" ||
+        diagnostic.code === "sync-missing-key" ||
+        diagnostic.message.includes("missing")
+      ) {
         const key = this.extractKeyFromDiagnostic(diagnostic);
         if (key) {
           // Add placeholder to source locale
-          const addAction = this.createAddPlaceholderAction(document, diagnostic, key);
+          const addAction = this.createAddPlaceholderAction(
+            document,
+            diagnostic,
+            key
+          );
           if (addAction) {
             actions.push(addAction);
           }
@@ -50,18 +61,27 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
         }
       }
 
-      if (diagnostic.code === 'suspicious-key') {
+      if (diagnostic.code === "suspicious-key") {
         suspiciousDiagnostics.push(diagnostic);
 
-        if (suspiciousRefactorActions < I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS) {
-          const refactorAction = this.createRefactorSuspiciousKeyAction(document, diagnostic);
+        if (
+          suspiciousRefactorActions <
+          I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS
+        ) {
+          const refactorAction = this.createRefactorSuspiciousKeyAction(
+            document,
+            diagnostic
+          );
           if (refactorAction) {
             actions.push(refactorAction);
           }
           suspiciousRefactorActions += 1;
         }
 
-        const ignoreAction = this.createIgnoreSuspiciousKeyAction(document, diagnostic);
+        const ignoreAction = this.createIgnoreSuspiciousKeyAction(
+          document,
+          diagnostic
+        );
         if (ignoreAction) {
           actions.push(ignoreAction);
         }
@@ -77,8 +97,14 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
       actions.push(checkAction);
     }
 
-    if (suspiciousDiagnostics.length > I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS) {
-      const renameAllAction = this.createRenameSuspiciousKeysInFileAction(document, suspiciousDiagnostics.length);
+    if (
+      suspiciousDiagnostics.length >
+      I18nCodeActionProvider.MAX_SUSPICIOUS_KEY_ACTIONS
+    ) {
+      const renameAllAction = this.createRenameSuspiciousKeysInFileAction(
+        document,
+        suspiciousDiagnostics.length
+      );
       if (renameAllAction) {
         actions.push(renameAllAction);
       }
@@ -97,18 +123,20 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     document: vscode.TextDocument,
     diagnostic: vscode.Diagnostic
   ): vscode.CodeAction | null {
-  const key = extractSuspiciousKeyFromMessage(diagnostic.message);
+    const key = extractSuspiciousKeyFromMessage(diagnostic.message);
     if (!key) {
       return null;
     }
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const warning = buildSuspiciousKeyWarning(key, document, diagnostic);
-    const suggestedKey = buildSuspiciousKeySuggestion(
-      key,
+    const config = workspaceRoot
+      ? this.configurationService.getSnapshot(workspaceRoot)
+      : null;
+    const suggestedKey = buildSuspiciousKeySuggestion(key, config, {
       workspaceRoot,
-      warning.filePath ?? document.uri.fsPath
-    );
+      filePath: warning.filePath ?? document.uri.fsPath,
+    });
 
     const action = new vscode.CodeAction(
       `Refactor suspicious key to "${suggestedKey}"`,
@@ -118,8 +146,8 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     action.diagnostics = [diagnostic];
     action.isPreferred = true;
     action.command = {
-      command: 'i18nsmith.renameSuspiciousKey',
-      title: 'Rename suspicious key',
+      command: "i18nsmith.renameSuspiciousKey",
+      title: "Rename suspicious key",
       arguments: [warning],
     };
 
@@ -136,8 +164,8 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     );
     action.diagnostics = [diagnostic];
     action.command = {
-      command: 'i18nsmith.ignoreSuspiciousKey',
-      title: 'Ignore suspicious key',
+      command: "i18nsmith.ignoreSuspiciousKey",
+      title: "Ignore suspicious key",
       arguments: [document.uri, diagnostic.range.start.line],
     };
     return action;
@@ -148,12 +176,12 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     totalCount: number
   ): vscode.CodeAction | null {
     const action = new vscode.CodeAction(
-      `Rename ${totalCount} suspicious key${totalCount === 1 ? '' : 's'} in this file`,
+      `Rename ${totalCount} suspicious key${totalCount === 1 ? "" : "s"} in this file`,
       vscode.CodeActionKind.RefactorRewrite
     );
     action.command = {
-      command: 'i18nsmith.renameSuspiciousKeysInFile',
-      title: 'Rename suspicious keys in file',
+      command: "i18nsmith.renameSuspiciousKeysInFile",
+      title: "Rename suspicious keys in file",
       arguments: [document.uri],
     };
     return action;
@@ -162,7 +190,9 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   /**
    * Extract key from diagnostic message
    */
-  private extractKeyFromDiagnostic(diagnostic: vscode.Diagnostic): string | null {
+  private extractKeyFromDiagnostic(
+    diagnostic: vscode.Diagnostic
+  ): string | null {
     // Try to extract key from message patterns like:
     // "Key 'common.greeting' is missing"
     // "Missing key: common.greeting"
@@ -205,8 +235,8 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 
     // Create command to add the key
     action.command = {
-      command: 'i18nsmith.addPlaceholder',
-      title: 'Add Placeholder',
+      command: "i18nsmith.addPlaceholder",
+      title: "Add Placeholder",
       arguments: [key, workspaceFolder.uri.fsPath],
     };
 
@@ -216,16 +246,18 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   /**
    * Create action to run sync
    */
-  private createRunSyncAction(diagnostic: vscode.Diagnostic): vscode.CodeAction {
+  private createRunSyncAction(
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction {
     const action = new vscode.CodeAction(
-      'Run i18nsmith sync to fix',
+      "Run i18nsmith sync to fix",
       vscode.CodeActionKind.QuickFix
     );
 
     action.diagnostics = [diagnostic];
     action.command = {
-      command: 'i18nsmith.sync',
-      title: 'Sync Locales',
+      command: "i18nsmith.sync",
+      title: "Sync Locales",
     };
 
     return action;
@@ -234,16 +266,18 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   /**
    * Create action to run check
    */
-  private createRunCheckAction(diagnostic: vscode.Diagnostic): vscode.CodeAction {
+  private createRunCheckAction(
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction {
     const action = new vscode.CodeAction(
-      'Run i18nsmith check',
+      "Run i18nsmith check",
       vscode.CodeActionKind.QuickFix
     );
 
     action.diagnostics = [diagnostic];
     action.command = {
-      command: 'i18nsmith.check',
-      title: 'Run Health Check',
+      command: "i18nsmith.check",
+      title: "Run Health Check",
     };
 
     return action;
@@ -267,23 +301,23 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     if (
       (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
       (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-      (trimmed.startsWith('`') && trimmed.endsWith('`'))
+      (trimmed.startsWith("`") && trimmed.endsWith("`"))
     ) {
       const stringContent = trimmed.slice(1, -1);
-      
+
       // Don't offer for already translated strings or very short strings
-      if (stringContent.length < 2 || stringContent.includes('t(')) {
+      if (stringContent.length < 2 || stringContent.includes("t(")) {
         return null;
       }
 
       const action = new vscode.CodeAction(
-        `Extract "${stringContent.slice(0, 20)}${stringContent.length > 20 ? '...' : ''}" as translation key`,
+        `Extract "${stringContent.slice(0, 20)}${stringContent.length > 20 ? "..." : ""}" as translation key`,
         vscode.CodeActionKind.RefactorExtract
       );
 
       action.command = {
-        command: 'i18nsmith.extractKey',
-        title: 'Extract Translation Key',
+        command: "i18nsmith.extractKey",
+        title: "Extract Translation Key",
         arguments: [document.uri, range, stringContent],
       };
 
@@ -306,7 +340,8 @@ function buildSuspiciousKeyWarning(
       line: diagnostic.range.start.line + 1,
       column: diagnostic.range.start.character + 1,
     },
-    reason: extractSuspiciousReasonCode(diagnostic.message) ?? 'contains-spaces',
+    reason:
+      extractSuspiciousReasonCode(diagnostic.message) ?? "contains-spaces",
   };
 }
 
@@ -315,7 +350,7 @@ function extractSuspiciousReasonCode(message: string): string | undefined {
   if (!match) {
     return undefined;
   }
-  return match[1].trim().toLowerCase().replace(/\s+/g, '-');
+  return match[1].trim().toLowerCase().replace(/\s+/g, "-");
 }
 
 function extractSuspiciousKeyFromMessage(message: string): string | null {

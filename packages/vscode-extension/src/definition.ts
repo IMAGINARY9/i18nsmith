@@ -1,9 +1,11 @@
-import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { getWorkspaceConfigSnapshot } from './workspace-config';
+import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import { ConfigurationService } from "./services/configuration-service";
 
 export class I18nDefinitionProvider implements vscode.DefinitionProvider {
+  constructor(private readonly configurationService: ConfigurationService) {}
+
   provideDefinition(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -12,17 +14,23 @@ export class I18nDefinitionProvider implements vscode.DefinitionProvider {
     const keyRange = findKeyRangeAtPosition(document, position);
     if (!keyRange) return null;
 
-    const key = document.getText(keyRange).replace(/^["'`]|["'`]$/g, '');
+    const key = document.getText(keyRange).replace(/^["'`]|["'`]$/g, "");
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return null;
 
-  const config = getWorkspaceConfigSnapshot(workspaceFolder.uri.fsPath);
-  const localesDir = config?.localesDir ?? 'locales';
-  const sourceLanguage = config?.sourceLanguage ?? 'en';
-    const targetPath = path.join(workspaceFolder.uri.fsPath, localesDir, `${sourceLanguage}.json`);
+    const config = this.configurationService.getSnapshot(
+      workspaceFolder.uri.fsPath
+    );
+    const localesDir = config?.localesDir ?? "locales";
+    const sourceLanguage = config?.sourceLanguage ?? "en";
+    const targetPath = path.join(
+      workspaceFolder.uri.fsPath,
+      localesDir,
+      `${sourceLanguage}.json`
+    );
     if (!fs.existsSync(targetPath)) return null;
 
-    const content = fs.readFileSync(targetPath, 'utf8');
+    const content = fs.readFileSync(targetPath, "utf8");
     const loc = findApproxLocationInJson(content, key);
     const uri = vscode.Uri.file(targetPath);
 
@@ -37,7 +45,10 @@ export class I18nDefinitionProvider implements vscode.DefinitionProvider {
   }
 }
 
-function findKeyRangeAtPosition(document: vscode.TextDocument, position: vscode.Position): vscode.Range | null {
+function findKeyRangeAtPosition(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): vscode.Range | null {
   const line = document.lineAt(position.line).text;
   const patterns = [
     /t\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
@@ -57,14 +68,17 @@ function findKeyRangeAtPosition(document: vscode.TextDocument, position: vscode.
   return null;
 }
 
-function findApproxLocationInJson(content: string, key: string): { line: number; character: number } | null {
+function findApproxLocationInJson(
+  content: string,
+  key: string
+): { line: number; character: number } | null {
   // Try flat key first
   const flatNeedle = `"${key}"`;
   let idx = content.indexOf(flatNeedle);
   if (idx !== -1) return offsetToPosition(content, idx);
 
   // Try last segment (best effort for nested structures)
-  const last = key.split('.').pop()!;
+  const last = key.split(".").pop()!;
   const segNeedle = `"${last}"`;
   idx = content.indexOf(segNeedle);
   if (idx !== -1) return offsetToPosition(content, idx);
@@ -72,7 +86,10 @@ function findApproxLocationInJson(content: string, key: string): { line: number;
   return null;
 }
 
-function offsetToPosition(text: string, offset: number): { line: number; character: number } {
+function offsetToPosition(
+  text: string,
+  offset: number
+): { line: number; character: number } {
   const head = text.slice(0, offset);
   const lines = head.split(/\r?\n/);
   const line = lines.length - 1;

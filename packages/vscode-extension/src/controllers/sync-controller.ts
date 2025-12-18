@@ -326,7 +326,11 @@ export class SyncController implements vscode.Disposable {
       return;
     }
 
-    const suggestion = buildSuspiciousKeySuggestion(warning.key, workspaceFolder.uri.fsPath, warning.filePath);
+    const config = this.services.configurationService.getSnapshot(workspaceFolder.uri.fsPath);
+    const suggestion = buildSuspiciousKeySuggestion(warning.key, config, {
+      workspaceRoot: workspaceFolder.uri.fsPath,
+      filePath: warning.filePath ?? workspaceFolder.uri.fsPath,
+    });
     
     const newKey = await vscode.window.showInputBox({
       title: `Rename suspicious key "${warning.key}"`,

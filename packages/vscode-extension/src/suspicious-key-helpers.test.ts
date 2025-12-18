@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { buildSuspiciousKeySuggestion } from './suspicious-key-helpers';
+import { readWorkspaceConfigSnapshot } from './workspace-config';
 
 describe('buildSuspiciousKeySuggestion', () => {
   it('uses the relative file path to build scoped suggestions', async () => {
@@ -27,11 +28,11 @@ describe('buildSuspiciousKeySuggestion', () => {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, 'export const Component = () => null;');
 
-      const suggestion = buildSuspiciousKeySuggestion(
-        'activity.addToFavorites',
-        tempDir,
-        filePath
-      );
+      const configResult = readWorkspaceConfigSnapshot(tempDir);
+      const suggestion = buildSuspiciousKeySuggestion('activity.addToFavorites', configResult.ok ? configResult.snapshot : null, {
+        workspaceRoot: tempDir,
+        filePath,
+      });
 
       expect(suggestion.startsWith('common.app.activity.addtofavorites')).toBe(true);
     } finally {

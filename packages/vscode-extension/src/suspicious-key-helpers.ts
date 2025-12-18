@@ -1,21 +1,25 @@
 import { KeyGenerator } from '@i18nsmith/core';
-import { getWorkspaceConfigSnapshot } from './workspace-config';
+import type { WorkspaceConfigSnapshot } from './workspace-config';
+
+interface SuspiciousKeySuggestionOptions {
+  workspaceRoot?: string;
+  filePath?: string;
+}
 
 export function buildSuspiciousKeySuggestion(
   key: string,
-  workspaceRoot?: string,
-  filePath?: string
+  config: WorkspaceConfigSnapshot | null,
+  options: SuspiciousKeySuggestionOptions = {}
 ): string {
   try {
-    const config = getWorkspaceConfigSnapshot(workspaceRoot);
     const generator = new KeyGenerator({
       namespace: config?.keyGeneration?.namespace,
       hashLength: config?.keyGeneration?.shortHashLen,
-      workspaceRoot,
+      workspaceRoot: options.workspaceRoot,
     });
     const baseText = key.replace(/-[a-f0-9]{6,}$/i, '').replace(/^[^.]+\./, '');
     const generated = generator.generate(baseText || key, {
-      filePath: filePath ?? workspaceRoot ?? '',
+      filePath: options.filePath ?? options.workspaceRoot ?? '',
       kind: 'jsx-text',
     });
     return generated.key;
