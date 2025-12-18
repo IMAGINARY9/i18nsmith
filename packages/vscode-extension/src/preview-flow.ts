@@ -17,78 +17,83 @@ export interface PreviewPlan {
   onApply?: () => Promise<void>;
 }
 
-let currentPlan: PreviewPlan | null = null;
+export class PreviewPlanService implements vscode.Disposable {
+  private currentPlan: PreviewPlan | null = null;
+  private readonly previewUri = vscode.Uri.parse('i18nsmith-preview:Plan Preview');
 
-export async function applyPreviewPlan(): Promise<void> {
-  console.log('[i18nsmith] applyPreviewPlan triggered');
-  if (!currentPlan) {
-    console.log('[i18nsmith] No active plan found');
-    vscode.window.showInformationMessage('No active plan to apply.');
-    return;
-  }
+  async executePlan(plan: PreviewPlan): Promise<void> {
+    console.log('[i18nsmith] executePreviewPlan called with title:', plan.title);
 
-  try {
-    console.log(`[i18nsmith] Applying ${currentPlan.changes.length} changes`);
-    for (const change of currentPlan.changes) {
-      await change.apply();
+    if (!plan.changes.length) {
+      vscode.window.showInformationMessage(`${plan.title}: no changes required.`);
+      await plan.cleanup?.().catch(() => {});
+      return;
     }
-    
-    if (currentPlan.onApply) {
-      await currentPlan.onApply();
+
+    this.currentPlan = plan;
+    this.updatePreview(plan);
+    await vscode.window.showTextDocument(this.previewUri, {
+      preview: true,
+      viewColumn: vscode.ViewColumn.Beside,
+    });
+  }
+
+  async applyActivePlan(): Promise<void> {
+    console.log('[i18nsmith] applyPreviewPlan triggered');
+    if (!this.currentPlan) {
+      console.log('[i18nsmith] No active plan found');
+      vscode.window.showInformationMessage('No active plan to apply.');
+      return;
     }
-    
-    vscode.window.showInformationMessage(`Applied ${currentPlan.changes.length} changes.`);
-  } catch (e) {
-    console.error('[i18nsmith] Failed to apply plan:', e);
-    vscode.window.showErrorMessage(`Failed to apply plan: ${e}`);
-  } finally {
-    if (currentPlan.cleanup) {
-      await currentPlan.cleanup().catch(() => {});
+
+    try {
+      console.log(`[i18nsmith] Applying ${this.currentPlan.changes.length} changes`);
+      for (const change of this.currentPlan.changes) {
+        await change.apply();
+      }
+
+      await this.currentPlan.onApply?.();
+      vscode.window.showInformationMessage(`Applied ${this.currentPlan.changes.length} changes.`);
+    } catch (error) {
+      console.error('[i18nsmith] Failed to apply plan:', error);
+      vscode.window.showErrorMessage(`Failed to apply plan: ${error}`);
+    } finally {
+      await this.currentPlan.cleanup?.().catch(() => {});
+      this.clearPlan();
     }
-    currentPlan = null;
-    markdownPreviewProvider.update(vscode.Uri.parse('i18nsmith-preview:Plan Preview'), buildPreviewPlanMarkdown(null));
   }
-}
 
-export async function executePreviewPlan(plan: PreviewPlan): Promise<void> {
-  console.log("[i18nsmith] executePreviewPlan called with title:", plan.title);
+  clearPlan() {
+    this.currentPlan = null;
+    this.updatePreview(null);
+  }
 
-  if (!plan.changes.length) {
-    vscode.window.showInformationMessage(`${plan.title}: no changes required.`);
-    if (plan.cleanup) {
-      await plan.cleanup().catch(() => {});
+  dispose() {
+    this.clearPlan();
+  }
+
+  private updatePreview(plan: PreviewPlan | null) {
+    markdownPreviewProvider.update(this.previewUri, this.buildPreviewPlanMarkdown(plan));
+  }
+
+  private buildPreviewPlanMarkdown(plan: PreviewPlan | null): string {
+    if (!plan) {
+      return ['# Plan Preview', '', '_No active plan._'].join('\n');
     }
-    return;
-  }
 
-  currentPlan = plan;
-  const uri = vscode.Uri.parse('i18nsmith-preview:Plan Preview');
-  markdownPreviewProvider.update(uri, buildPreviewPlanMarkdown(plan));
-  
-  await vscode.window.showTextDocument(uri, { preview: true, viewColumn: vscode.ViewColumn.Beside });
-}
+    const lines = [`# ${plan.title}`];
+    if (plan.detail) {
+      lines.push('', plan.detail);
+    }
 
-function buildPreviewPlanMarkdown(plan: PreviewPlan | null): string {
-  if (!plan) {
-    return [
-      '# Plan Preview',
-      '',
-      '_No active plan._'
-    ].join('\n');
+    lines.push('');
+    lines.push(`[Apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}](command:i18nsmith.applyPreviewPlan)`);
+
+    lines.push('', `## Changes (${plan.changes.length})`);
+    for (const change of plan.changes) {
+      lines.push(`- ${change.label}`);
+    }
+
+    return lines.join('\n');
   }
-  
-  const lines = [`# ${plan.title}`];
-  if (plan.detail) {
-    lines.push('', plan.detail);
-  }
-  
-  lines.push('');
-  lines.push(`[Apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}](command:i18nsmith.applyPreviewPlan)`);
-  
-  lines.push('', `## Changes (${plan.changes.length})`);
-  for (const change of plan.changes) {
-    lines.push(`- ${change.label}`);
-  }
-  
-  return lines.join('\n');
 }

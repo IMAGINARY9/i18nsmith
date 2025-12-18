@@ -7,6 +7,7 @@ import { StatusBarManager } from "../statusbar";
 import { CheckIntegration } from "../check-integration";
 import { DiffPeekProvider } from "../diff-peek";
 import { PreviewManager } from "../preview-manager";
+import { PreviewPlanService } from "../preview-flow";
 import { CliService } from "./cli-service";
 import { DiffPreviewService } from "./diff-preview";
 import { ConfigurationService } from "./configuration-service";
@@ -25,6 +26,7 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly checkIntegration: CheckIntegration;
   public readonly diffPeekProvider: DiffPeekProvider;
   public readonly previewManager: PreviewManager;
+  public readonly previewPlanService: PreviewPlanService;
   public readonly cliService: CliService;
   public readonly diffPreviewService: DiffPreviewService;
   public readonly configurationService: ConfigurationService;
@@ -70,6 +72,8 @@ export class ServiceContainer implements vscode.Disposable {
       this.cliService,
       this.cliOutputChannel
     );
+    this.previewPlanService = new PreviewPlanService();
+    context.subscriptions.push(this.previewPlanService);
     this.diffPreviewService = new DiffPreviewService(this.diffPeekProvider);
   }
 

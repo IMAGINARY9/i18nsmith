@@ -294,6 +294,8 @@ controllers/
 1. Moving more logic to `PreviewManager`
 2. Reducing state spread across files
 
+**Status (Dec 2025):** ✅ Completed. Preview/apply orchestration now lives in `PreviewPlanService` (instantiated via the service container) plus the new `PreviewApplyController` base class, so sync/transform controllers rely on the same helper for preview execution, plan rendering, and apply commands instead of juggling `preview-manager.ts`, `preview-flow.ts`, and ad-hoc logic in multiple places.
+
 ---
 
 ### 4.3 Output Channel Management
