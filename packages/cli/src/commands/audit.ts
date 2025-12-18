@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { runCheck } from './check.js';
+import { withErrorHandling } from '../utils/errors.js';
 
 interface AuditCommandOptions {
   config?: string;
@@ -25,7 +26,7 @@ export function registerAudit(program: Command) {
     .option('--duplicates', 'Check for duplicate values (consolidation opportunities)', false)
     .option('--inconsistent', 'Detect inconsistent key naming patterns', false)
     .option('--orphaned', 'Detect orphaned namespaces that only contain a few keys', false)
-    .action(async (options: AuditCommandOptions) => {
+    .action(withErrorHandling(async (options: AuditCommandOptions) => {
       console.log(chalk.yellow('⚠️  "i18nsmith audit" is deprecated. Proxying to "i18nsmith check --audit"...'));
       await runCheck({
         config: options.config,
@@ -38,5 +39,5 @@ export function registerAudit(program: Command) {
         auditInconsistent: options.inconsistent,
         auditOrphaned: options.orphaned,
       });
-    });
+    }));
 }

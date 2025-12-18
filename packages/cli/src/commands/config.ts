@@ -3,6 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta, DEFAULT_CONFIG_FILENAME } from '@i18nsmith/core';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ConfigCommandOptions {
   config?: string;
@@ -121,32 +122,33 @@ export function registerConfig(program: Command) {
     .description('Get a configuration value by key path (e.g., translationAdapter.module)')
     .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
     .option('--json', 'Output as JSON', false)
-    .action(async (key: string, options: ConfigGetOptions) => {
-      try {
-        const { config, configPath } = await loadConfigWithMeta(options.config);
-        const keyPath = parseKeyPath(key);
-        const value = getNestedValue(config as unknown as Record<string, unknown>, keyPath);
+    .action(
+      withErrorHandling(async (key: string, options: ConfigGetOptions) => {
+        try {
+          const { config } = await loadConfigWithMeta(options.config);
+          const keyPath = parseKeyPath(key);
+          const value = getNestedValue(config as unknown as Record<string, unknown>, keyPath);
 
-        if (value === undefined) {
-          console.log(chalk.yellow(`Key "${key}" not found in config`));
-          process.exitCode = 1;
-          return;
-        }
+          if (value === undefined) {
+            throw new CliError(`Key "${key}" not found in config`);
+          }
 
-        if (options.json) {
-          console.log(JSON.stringify({ key, value }, null, 2));
-        } else {
-          if (typeof value === 'object' && value !== null) {
+          if (options.json) {
+            console.log(JSON.stringify({ key, value }, null, 2));
+          } else if (typeof value === 'object' && value !== null) {
             console.log(JSON.stringify(value, null, 2));
           } else {
             console.log(String(value));
           }
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to get config: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Failed to get config:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 
   // Subcommand: config set <key> <value>
   configCmd
@@ -154,29 +156,34 @@ export function registerConfig(program: Command) {
     .description('Set a configuration value by key path (e.g., translationAdapter.module "src/i18n.ts")')
     .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
     .option('--json', 'Output result as JSON', false)
-    .action(async (key: string, value: string, options: ConfigSetOptions) => {
-      try {
-        const { configPath } = await loadConfigWithMeta(options.config);
-        const { parsed } = await readRawConfig(configPath);
-        
-        const keyPath = parseKeyPath(key);
-        const parsedValue = parseValue(value);
-        
-        setNestedValue(parsed, keyPath, parsedValue);
-        
-        await writeConfig(configPath, parsed);
+    .action(
+      withErrorHandling(async (key: string, value: string, options: ConfigSetOptions) => {
+        try {
+          const { configPath } = await loadConfigWithMeta(options.config);
+          const { parsed } = await readRawConfig(configPath);
 
-        if (options.json) {
-          console.log(JSON.stringify({ key, value: parsedValue, configPath }, null, 2));
-        } else {
-          console.log(chalk.green(`✓ Set ${key} = ${JSON.stringify(parsedValue)}`));
-          console.log(chalk.dim(`  Updated: ${configPath}`));
+          const keyPath = parseKeyPath(key);
+          const parsedValue = parseValue(value);
+
+          setNestedValue(parsed, keyPath, parsedValue);
+
+          await writeConfig(configPath, parsed);
+
+          if (options.json) {
+            console.log(JSON.stringify({ key, value: parsedValue, configPath }, null, 2));
+          } else {
+            console.log(chalk.green(`✓ Set ${key} = ${JSON.stringify(parsedValue)}`));
+            console.log(chalk.dim(`  Updated: ${configPath}`));
+          }
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to set config: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Failed to set config:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 
   // Subcommand: config list
   configCmd
@@ -184,37 +191,47 @@ export function registerConfig(program: Command) {
     .description('List all configuration values')
     .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
     .option('--json', 'Output as JSON', false)
-    .action(async (options: ConfigCommandOptions) => {
-      try {
-        const { config, configPath } = await loadConfigWithMeta(options.config);
+    .action(
+      withErrorHandling(async (options: ConfigCommandOptions) => {
+        try {
+          const { config, configPath } = await loadConfigWithMeta(options.config);
 
-        if (options.json) {
-          console.log(JSON.stringify(config, null, 2));
-        } else {
-          console.log(chalk.blue(`Configuration from: ${configPath}`));
-          console.log();
-          console.log(JSON.stringify(config, null, 2));
+          if (options.json) {
+            console.log(JSON.stringify(config, null, 2));
+          } else {
+            console.log(chalk.blue(`Configuration from: ${configPath}`));
+            console.log();
+            console.log(JSON.stringify(config, null, 2));
+          }
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to read config: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Failed to read config:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 
   // Subcommand: config path
   configCmd
     .command('path')
     .description('Print the path to the active config file')
     .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
-    .action(async (options: ConfigCommandOptions) => {
-      try {
-        const { configPath } = await loadConfigWithMeta(options.config);
-        console.log(configPath);
-      } catch (error) {
-        console.error(chalk.red('Failed to find config:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+    .action(
+      withErrorHandling(async (options: ConfigCommandOptions) => {
+        try {
+          const { configPath } = await loadConfigWithMeta(options.config);
+          console.log(configPath);
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to find config: ${message}`);
+        }
+      })
+    );
 
   // Subcommand: config init-adapter <path>
   configCmd
@@ -223,41 +240,46 @@ export function registerConfig(program: Command) {
     .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
     .option('--hook <name>', 'Name of the translation hook (default: useTranslation)', 'useTranslation')
     .option('--json', 'Output result as JSON', false)
-    .action(async (adapterPath: string, options: { config?: string; hook: string; json?: boolean }) => {
-      try {
-        const { configPath } = await loadConfigWithMeta(options.config);
-        const { parsed } = await readRawConfig(configPath);
+    .action(
+      withErrorHandling(async (adapterPath: string, options: { config?: string; hook: string; json?: boolean }) => {
+        try {
+          const { configPath } = await loadConfigWithMeta(options.config);
+          const { parsed } = await readRawConfig(configPath);
 
-        // Resolve relative path
-        const projectRoot = path.dirname(configPath);
-        const relativePath = path.isAbsolute(adapterPath)
-          ? path.relative(projectRoot, adapterPath)
-          : adapterPath;
+          // Resolve relative path
+          const projectRoot = path.dirname(configPath);
+          const relativePath = path.isAbsolute(adapterPath)
+            ? path.relative(projectRoot, adapterPath)
+            : adapterPath;
 
-        // Update translationAdapter
-        if (!parsed.translationAdapter || typeof parsed.translationAdapter !== 'object') {
-          parsed.translationAdapter = {};
+          // Update translationAdapter
+          if (!parsed.translationAdapter || typeof parsed.translationAdapter !== 'object') {
+            parsed.translationAdapter = {};
+          }
+          const adapter = parsed.translationAdapter as Record<string, unknown>;
+          adapter.module = relativePath;
+          adapter.hookName = options.hook;
+
+          await writeConfig(configPath, parsed);
+
+          if (options.json) {
+            console.log(JSON.stringify({
+              translationAdapter: parsed.translationAdapter,
+              configPath,
+            }, null, 2));
+          } else {
+            console.log(chalk.green('✓ Translation adapter configured:'));
+            console.log(chalk.dim(`  module: ${relativePath}`));
+            console.log(chalk.dim(`  hookName: ${options.hook}`));
+            console.log(chalk.dim(`  Updated: ${configPath}`));
+          }
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to configure adapter: ${message}`);
         }
-        const adapter = parsed.translationAdapter as Record<string, unknown>;
-        adapter.module = relativePath;
-        adapter.hookName = options.hook;
-
-        await writeConfig(configPath, parsed);
-
-        if (options.json) {
-          console.log(JSON.stringify({
-            translationAdapter: parsed.translationAdapter,
-            configPath,
-          }, null, 2));
-        } else {
-          console.log(chalk.green('✓ Translation adapter configured:'));
-          console.log(chalk.dim(`  module: ${relativePath}`));
-          console.log(chalk.dim(`  hookName: ${options.hook}`));
-          console.log(chalk.dim(`  Updated: ${configPath}`));
-        }
-      } catch (error) {
-        console.error(chalk.red('Failed to configure adapter:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }

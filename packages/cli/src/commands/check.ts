@@ -13,6 +13,7 @@ import {
   hasAuditFindings,
   type LocaleAuditSummary,
 } from '../utils/locale-audit.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface CheckCommandOptions {
   config?: string;
@@ -132,7 +133,7 @@ export function registerCheck(program: Command) {
   .option('--audit-duplicates', 'Include duplicate-value quality check during audit (defaults on when no other audit filters provided)', false)
   .option('--audit-inconsistent', 'Include inconsistent-key quality check during audit', false)
   .option('--audit-orphaned', 'Include orphaned-namespace quality check during audit', false)
-    .action(async (options: CheckCommandOptions) => runCheck(options));
+    .action(withErrorHandling(async (options: CheckCommandOptions) => runCheck(options)));
 }
 
 export async function runCheck(options: CheckCommandOptions): Promise<void> {
@@ -232,7 +233,10 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
       process.exitCode = CHECK_EXIT_CODES.WARNINGS;
     }
   } catch (error) {
-    console.error(chalk.red('Check failed:'), (error as Error).message);
-    process.exitCode = 1;
+    if (error instanceof CliError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(`Check failed: ${message}`);
   }
 }

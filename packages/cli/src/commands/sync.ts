@@ -22,6 +22,7 @@ import {
 import { applyPreviewFile, writePreviewFile } from "../utils/preview.js";
 import { SYNC_EXIT_CODES } from "../utils/exit-codes.js";
 import { runCheck } from "./check.js";
+import { withErrorHandling } from "../utils/errors.js";
 
 interface SyncCommandOptions {
   config?: string;
@@ -205,7 +206,8 @@ export function registerSync(program: Command) {
       "--apply-preview <path>",
       "Apply a previously saved sync preview JSON file safely"
     )
-    .action(async (options: SyncCommandOptions) => {
+    .action(
+      withErrorHandling(async (options: SyncCommandOptions) => {
       if (options.check) {
         console.log(
           chalk.yellow(
@@ -691,7 +693,8 @@ export function registerSync(program: Command) {
         console.error(chalk.red("Sync failed:"), (error as Error).message);
         process.exitCode = 1;
       }
-    });
+      })
+    );
 }
 
 function printSyncSummary(summary: SyncSummary) {
