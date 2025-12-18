@@ -281,6 +281,45 @@ export function App() {
       expect(enData).not.toHaveProperty('existing.key');
     });
 
+    it('should delegate --check to the health check command', async () => {
+      await fs.writeFile(
+        path.join(tmpDir, 'src', 'App.tsx'),
+        `import { useTranslation } from 'react-i18next';
+export function App() {
+  const { t } = useTranslation();
+  return <div>{t('existing.key')}</div>;
+}`
+      );
+
+      const result = runCli(['sync', '--check'], { cwd: tmpDir });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('guided repository health check');
+    });
+
+    it('should fail via delegated check when using --check --strict and audit issues exist', async () => {
+      const duplicateLocale = {
+        'existing.key': 'Existing Value',
+        'buttons.submit': 'Submit',
+        'cta.submit': 'Submit',
+      };
+      await fs.writeFile(path.join(tmpDir, 'locales', 'en.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(path.join(tmpDir, 'locales', 'fr.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(
+        path.join(tmpDir, 'src', 'App.tsx'),
+        `import { useTranslation } from 'react-i18next';
+export function App() {
+  const { t } = useTranslation();
+  return <div>{t('existing.key')}</div>;
+}`
+      );
+
+      const result = runCli(['sync', '--check', '--strict'], { cwd: tmpDir });
+
+      expect(result.exitCode).toBe(10);
+      expect(result.output).toContain('Audit detected');
+    });
+
     it('should create backup when pruning', async () => {
       await fs.writeFile(
         path.join(tmpDir, 'src', 'App.tsx'),
@@ -444,6 +483,53 @@ export function App() {
 
       expect(parsed).toHaveProperty('diagnostics');
       expect(parsed).toHaveProperty('sync');
+    });
+
+    it('should surface locale audit results and fail with --audit-strict', async () => {
+      const duplicateLocale = {
+        'hello': 'Hello',
+        'buttons.submit': 'Submit',
+        'cta.submit': 'Submit',
+      };
+      await fs.writeFile(path.join(tmpDir, 'locales', 'en.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(path.join(tmpDir, 'locales', 'fr.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(
+        path.join(tmpDir, 'src', 'App.tsx'),
+        `import { useTranslation } from 'react-i18next';
+export function App() {
+  const { t } = useTranslation();
+  return <div>{t('hello')}</div>;
+}`
+      );
+
+      const result = runCli(['check', '--audit', '--audit-strict'], { cwd: tmpDir });
+
+      expect(result.exitCode).toBe(10);
+      expect(result.output).toContain('Locale quality audit');
+    });
+
+    it('should include audit payload in JSON output when --audit is set', async () => {
+      const duplicateLocale = {
+        'hello': 'Hello',
+        'buttons.submit': 'Submit',
+        'cta.submit': 'Submit',
+      };
+      await fs.writeFile(path.join(tmpDir, 'locales', 'en.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(path.join(tmpDir, 'locales', 'fr.json'), JSON.stringify(duplicateLocale, null, 2));
+      await fs.writeFile(
+        path.join(tmpDir, 'src', 'App.tsx'),
+        `import { useTranslation } from 'react-i18next';
+export function App() {
+  const { t } = useTranslation();
+  return <div>{t('hello')}</div>;
+}`
+      );
+
+      const result = runCli(['check', '--audit', '--json'], { cwd: tmpDir });
+      const parsed = extractJson<{ audit?: { totalQualityIssues: number } }>(result.stdout);
+
+      expect(parsed).toHaveProperty('audit');
+      expect(parsed.audit?.totalQualityIssues ?? 0).toBeGreaterThan(0);
     });
   });
 });
