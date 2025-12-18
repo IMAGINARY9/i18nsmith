@@ -36,6 +36,9 @@ export interface CheckReport {
     command: string;
     reason?: string;
     severity?: 'error' | 'warn' | 'info';
+    category?: 'extraction' | 'sync' | 'translation' | 'setup' | 'validation' | 'quality';
+    relevantFiles?: string[];
+    priority?: number;
   }>;
   hasConflicts?: boolean;
   hasDrift?: boolean;

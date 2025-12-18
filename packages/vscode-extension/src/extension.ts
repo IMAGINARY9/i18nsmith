@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DiagnosticsManager } from './diagnostics';
 import { I18nCodeLensProvider } from './codelens';
 import { ReportWatcher } from './watcher';
@@ -21,19 +23,17 @@ import { ExtractionController } from './controllers/extraction-controller';
 import { CliService } from './services/cli-service';
 import { applyPreviewPlan } from './preview-flow';
 import { SuspiciousKeyWarning } from '@i18nsmith/core';
+import { getWorkspaceConfigSnapshot } from './workspace-config';
+import {
+  buildQuickActionModel,
+  type QuickActionBuildOutput,
+  type QuickActionDefinition,
+  type QuickActionMetadata,
+} from './quick-actions-data';
+import { QuickActionsProvider } from './views/quick-actions-provider';
 
 interface QuickActionPick extends vscode.QuickPickItem {
-  command?: string;
-  previewIntent?: PreviewableCommand;
-  builtin?:
-    | 'extract-selection'
-    | 'run-check'
-    | 'refresh'
-    | 'show-output'
-    | 'whitelist-dynamic'
-    | 'rename-suspicious';
-  interactive?: boolean;
-  confirmMessage?: string;
+  action?: QuickActionDefinition;
 }
 
 const QUICK_ACTION_SCAN_STALE_MS = 4000;
@@ -51,6 +51,8 @@ let syncController: SyncController;
 let transformController: TransformController;
 let extractionController: ExtractionController;
 let cliService: CliService;
+let quickActionsProvider: QuickActionsProvider | null = null;
+let quickActionSelectionState = false;
 
 
 
@@ -147,8 +149,6 @@ function buildHealthCheckSummary(result: ScanResult | null): { title: string; de
       .filter((filePath): filePath is string => Boolean(filePath))
   );
 
-  const missingKeys = report?.sync?.missingKeys?.length ?? 0;
-  const unusedKeys = report?.sync?.unusedKeys?.length ?? 0;
   const suggestionCount = report?.suggestedCommands?.length ?? 0;
   const issueCount = summary.issueCount || result?.issueCount || 0;
 
@@ -205,6 +205,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Ensure .gitignore has i18nsmith artifacts listed (non-blocking)
   cliService.ensureGitignoreEntries();
+
+  quickActionsProvider = new QuickActionsProvider();
+  const quickActionsView = vscode.window.createTreeView('i18nsmith.quickActionsView', {
+    treeDataProvider: quickActionsProvider,
+    showCollapseAll: false,
+  });
+  context.subscriptions.push(quickActionsProvider, quickActionsView);
 
   const supportedLanguages = [
     { scheme: 'file', language: 'typescript' },
@@ -270,6 +277,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('i18nsmith.actions', async () => {
       await showQuickActions();
     }),
+    vscode.commands.registerCommand('i18nsmith.quickActions.executeDefinition', async (action: QuickActionDefinition) => {
+      await runQuickActionDefinition(action);
+    }),
     vscode.commands.registerCommand('i18nsmith.applyPreviewPlan', async () => {
       await applyPreviewPlan();
     }),
@@ -282,9 +292,9 @@ export function activate(context: vscode.ExtensionContext) {
     // vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
     //   await insertIgnoreComment(uri, line, 'suspicious-key');
     // }),
-    // vscode.commands.registerCommand('i18nsmith.openLocaleFile', async () => {
-    //   await openSourceLocaleFile();
-    // }),
+    vscode.commands.registerCommand('i18nsmith.openLocaleFile', async () => {
+      await openSourceLocaleFile();
+    }),
     // vscode.commands.registerCommand('i18nsmith.checkFile', async () => {
     //   await checkCurrentFile();
     // }),
@@ -327,6 +337,21 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   console.log('[i18nsmith] Commands registered successfully');
+
+  quickActionSelectionState = getQuickActionSelectionState();
+  context.subscriptions.push(
+    reportWatcher.onDidRefresh(() => refreshQuickActionsModel()),
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      const nextSelectionState = getQuickActionSelectionState();
+      if (nextSelectionState === quickActionSelectionState) {
+        return;
+      }
+      quickActionSelectionState = nextSelectionState;
+      refreshQuickActionsModel({ silent: true });
+    })
+  );
+
+  refreshQuickActionsModel({ silent: true });
 
   // Initial load of diagnostics from existing report
   reportWatcher.refresh();
@@ -405,82 +430,104 @@ export function deactivate() {
 
 
 
-type DiagnosticsReport = {
-  sync?: {
-    missingKeys?: unknown[];
-    unusedKeys?: unknown[];
-  };
-};
+function refreshQuickActionsModel(options: { silent?: boolean } = {}): QuickActionBuildOutput {
+  const report = diagnosticsManager?.getReport?.() ?? null;
+  const model = buildQuickActionModel({
+    report,
+    hasSelection: getQuickActionSelectionState(),
+  });
 
-function getDriftStatistics(report: unknown): { missing: number; unused: number } | null {
-  if (!report || typeof report !== 'object' || report === null) {
-    return null;
+  if (quickActionsProvider) {
+    quickActionsProvider.update(model);
   }
 
-  const drift = (report as DiagnosticsReport).sync;
-  if (!drift) {
-    return null;
+  if (!options.silent) {
+    applyQuickActionContexts(model);
+  } else if (!quickActionsProvider) {
+    // Ensure contexts still get set at least once when provider is not ready
+    applyQuickActionContexts(model);
   }
 
-  const missing = Array.isArray(drift.missingKeys) ? drift.missingKeys.length : 0;
-  const unused = Array.isArray(drift.unusedKeys) ? drift.unusedKeys.length : 0;
-
-  if (missing === 0 && unused === 0) {
-    return null;
-  }
-
-  return { missing, unused };
+  return model;
 }
 
-function formatPreviewIntentDetail(intent: PreviewableCommand, originalCommand: string): string {
-  const lines: string[] = [];
-  if (intent.kind === 'sync') {
-    lines.push('Preview & apply locale fixes via VS Code sync flow.');
-    if (intent.targets?.length) {
-      lines.push(`Targets: ${intent.targets.join(', ')}`);
-    } else {
-      lines.push('Targets: Workspace');
-    }
-  } else if (intent.kind === 'transform') {
-    lines.push('Preview transform candidates with diff controls before applying changes.');
-    if (intent.targets?.length) {
-      lines.push(`Targets: ${intent.targets.join(', ')}`);
-    }
-  } else if (intent.kind === 'rename-key') {
-    lines.push(`Preview rename flow for ${intent.from} → ${intent.to}.`);
-  } else if (intent.kind === 'translate') {
-    lines.push('Preview translation estimates and apply via translate flow.');
-    if (intent.options.locales?.length) {
-      lines.push(`Locales: ${intent.options.locales.join(', ')}`);
-    }
-    if (intent.options.provider) {
-      lines.push(`Provider: ${intent.options.provider}`);
+function applyQuickActionContexts(model: QuickActionBuildOutput) {
+  const hasActions = model.sections.some((section) => section.actions.length > 0);
+  vscode.commands.executeCommand('setContext', 'i18nsmith.runtimeReady', model.metadata.runtimeReady);
+  vscode.commands.executeCommand('setContext', 'i18nsmith.quickActions.hasActions', hasActions);
+}
+
+function getQuickActionSelectionState(): boolean {
+  const editor = vscode.window.activeTextEditor;
+  return Boolean(editor && !editor.selection.isEmpty);
+}
+
+function buildQuickPickPlaceholder(metadata: QuickActionMetadata): string {
+  const parts: string[] = [];
+  if (metadata.issueCount) {
+    parts.push(`${metadata.issueCount} outstanding issue${metadata.issueCount === 1 ? '' : 's'}`);
+  }
+  if (metadata.driftStats) {
+    parts.push(`Drift: ${metadata.driftStats.missing} missing / ${metadata.driftStats.unused} unused`);
+  }
+  if (metadata.suggestionsCount) {
+    parts.push(`${metadata.suggestionsCount} suggestion${metadata.suggestionsCount === 1 ? '' : 's'}`);
+  }
+  if (!parts.length) {
+    parts.push('All clear – run health check to refresh diagnostics');
+  }
+  return `Select a quick action (${parts.join(' • ')})`;
+}
+
+function createQuickPickItem(action: QuickActionDefinition): QuickActionPick {
+  return {
+    label: `$(${action.iconId}) ${action.title}`,
+    description: action.description,
+    detail: action.detail,
+    action,
+  };
+}
+
+async function runQuickActionDefinition(action: QuickActionDefinition) {
+  if (action.confirmMessage) {
+    const confirm = await vscode.window.showWarningMessage(action.confirmMessage, { modal: true }, 'Run');
+    if (confirm !== 'Run') {
+      return;
     }
   }
 
-  lines.push(`Original CLI: ${originalCommand}`);
-  return lines.join('\n');
+  if (action.previewIntent) {
+    await executePreviewIntent(action.previewIntent);
+    return;
+  }
+
+  if (!action.command) {
+    vscode.window.showWarningMessage('This quick action is not yet wired to a command.');
+    return;
+  }
+
+  if (action.command.startsWith('i18nsmith.')) {
+    await vscode.commands.executeCommand(action.command);
+    return;
+  }
+
+  const handled = await tryHandlePreviewableCommand(action.command);
+  if (!handled) {
+    vscode.window.showWarningMessage(`Unsupported quick action command: ${action.command}`);
+  }
 }
 
 async function showQuickActions() {
   await ensureFreshDiagnosticsForQuickActions();
+  const model = refreshQuickActionsModel();
+  const metadata = model.metadata;
+  const driftStats = metadata.driftStats;
 
-  // Show drift statistics summary if available
-  const report = diagnosticsManager?.getReport?.();
-  const driftStats = getDriftStatistics(report);
-  const syncSection = report?.sync as { dynamicKeyWarnings?: unknown[]; suspiciousKeys?: unknown[] } | undefined;
-  const rawDynamicWarningCount = Array.isArray(syncSection?.dynamicKeyWarnings)
-    ? syncSection.dynamicKeyWarnings.length
-    : 0;
-  const dynamicWarningCount = rawDynamicWarningCount;
-  const suspiciousWarningCount = Array.isArray(syncSection?.suspiciousKeys)
-    ? syncSection.suspiciousKeys.length
-    : 0;
   if (driftStats) {
     const totalDrift = driftStats.missing + driftStats.unused;
-    logVerbose(`showQuickActions: Drift detected - ${driftStats.missing} missing, ${driftStats.unused} unused (total: ${totalDrift})`);
-    
-    // Show a toast notification for significant drift (>10 keys)
+    logVerbose(
+      `showQuickActions: Drift detected - ${driftStats.missing} missing, ${driftStats.unused} unused (total: ${totalDrift})`
+    );
     if (totalDrift > 10) {
       const parts: string[] = [];
       if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
@@ -491,207 +538,32 @@ async function showQuickActions() {
     }
   }
 
-  const editor = vscode.window.activeTextEditor;
-  const selection = editor?.selection;
-  const hasSelection = !!editor && !selection?.isEmpty;
-  const picks: QuickActionPick[] = [];
-
-  let hasApplySuggestion = false;
-  const suggestedCommands = Array.isArray(report?.suggestedCommands)
-    ? report.suggestedCommands
-    : [];
-
-  if (suggestedCommands.length) {
-    for (const sc of suggestedCommands) {
-      // Filter out "Create missing locale files" as it's often redundant with "Apply local fixes"
-      // and can be triggered falsely if the check-runner is aggressive.
-      if (sc.label === 'Create missing locale files') {
-        continue;
-      }
-
-      const interactive = isInteractiveCliCommand(sc.command);
-      const previewIntent = parsePreviewableCommand(sc.command) ?? undefined;
-      const detail = previewIntent
-        ? formatPreviewIntentDetail(previewIntent, sc.command)
-        : sc.command;
-      if (!hasApplySuggestion && /sync\b[\s\S]*--write/.test(sc.command)) {
-        hasApplySuggestion = true;
-      }
-      picks.push({
-        label: `$(rocket) ${sc.label}`,
-        description: sc.reason || '',
-        detail,
-        previewIntent,
-        command: previewIntent ? undefined : sc.command,
-        interactive: previewIntent ? false : interactive,
-      });
+  const quickPickItems: QuickActionPick[] = [];
+  for (const section of model.sections) {
+    if (!section.actions.length) {
+      continue;
     }
-    picks.push({ label: 'Default actions', kind: vscode.QuickPickItemKind.Separator });
+    quickPickItems.push({ label: section.title, kind: vscode.QuickPickItemKind.Separator });
+    quickPickItems.push(...section.actions.map((action) => createQuickPickItem(action)));
   }
 
-  if (hasSelection) {
-    picks.push({
-      label: '$(pencil) Extract selection as key',
-      description: 'Create a translation key from selection and replace',
-      builtin: 'extract-selection',
-    });
-  }
-
-
-
-  if (!hasApplySuggestion) {
-    // Build description with drift stats if available
-  let syncDescription = 'Review detected drift, then selectively apply locale fixes';
-    if (driftStats) {
-      const parts: string[] = [];
-      if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
-      if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
-      syncDescription = `${parts.join(', ')} — ${syncDescription}`;
-    }
-    
-    picks.push({
-      label: '$(tools) Apply local fixes',
-      description: syncDescription,
-      detail: 'i18nsmith: Sync workspace',
-      command: 'i18nsmith.sync',
-    });
-  }
-
-  if (dynamicWarningCount) {
-    picks.push({
-      label: '$(shield) Whitelist dynamic keys',
-      description: `${dynamicWarningCount} runtime expression${dynamicWarningCount === 1 ? '' : 's'} flagged`,
-      detail: 'Add assumptions to i18n.config.json to silence false unused warnings',
-      builtin: 'whitelist-dynamic',
-    });
-  }
-
-  if (suspiciousWarningCount) {
-    picks.push({
-      label: '$(sparkle) Rename suspicious keys',
-      description: `${suspiciousWarningCount} key${suspiciousWarningCount === 1 ? '' : 's'} flagged as raw text`,
-      detail: 'Generate normalized names and apply them via rename-keys in one flow',
-      builtin: 'rename-suspicious',
-    });
-  }
-
-  const missingCount = driftStats?.missing ?? 0;
-  if (missingCount > 0) {
-    picks.push({
-      label: '$(cloud-download) Export missing translations',
-      description: `${missingCount} missing key${missingCount === 1 ? '' : 's'} → CSV handoff`,
-      command: 'i18nsmith.exportMissingTranslations',
-    });
-  }
-
-  picks.push(
-    {
-      label: '$(file-submodule) Open Source Locale File',
-      description: 'Open the primary locale file for quick edits',
-      command: 'i18nsmith.openLocaleFile'
-    },
-    {
-      label: '$(file-symlink-directory) Sync current file only',
-      description: 'Analyze translation usage for the active editor',
-      command: 'i18nsmith.syncFile',
-    },
-    {
-      label: '$(wand) Transform current file to use i18nsmith',
-      description: 'Preview safe transforms (rerun after apply to continue)',
-      command: 'i18nsmith.transformFile',
-    },
-    {
-      label: '$(sync) Run Health Check',
-      description: 'Run i18nsmith check (background)',
-      builtin: 'run-check',
-    }
-  );
-
-  picks.push(
-    {
-      label: '$(refresh) Refresh Diagnostics',
-      description: 'Reload diagnostics from report',
-      builtin: 'refresh',
-    },
-    {
-      label: '$(output) Show Output',
-      description: 'Open i18nsmith output channel',
-      builtin: 'show-output',
-    }
-  );
-
-  // Build placeholder with drift stats if available
-  let placeholder = 'i18nsmith actions';
-  if (driftStats) {
-    const parts: string[] = [];
-    if (driftStats.missing > 0) {
-      parts.push(`${driftStats.missing} missing key${driftStats.missing === 1 ? '' : 's'}`);
-    }
-    if (driftStats.unused > 0) {
-      parts.push(`${driftStats.unused} unused key${driftStats.unused === 1 ? '' : 's'}`);
-    }
-    if (parts.length > 0) {
-      placeholder = `${parts.join(', ')} detected — Choose an action`;
-    }
-  }
-
-  const choice = (await vscode.window.showQuickPick(picks, { placeHolder: placeholder })) as QuickActionPick | undefined;
-  if (!choice || choice.kind === vscode.QuickPickItemKind.Separator) {
+  const hasActions = quickPickItems.some((item) => Boolean(item.action));
+  if (!hasActions) {
+    vscode.window.showInformationMessage(
+      'Nothing to fix right now. Run “i18nsmith: Run Health Check” to refresh diagnostics.'
+    );
     return;
   }
 
-  if (choice.previewIntent) {
-    await executePreviewIntent(choice.previewIntent);
+  const placeholder = buildQuickPickPlaceholder(metadata);
+  const choice = (await vscode.window.showQuickPick(quickPickItems, {
+    placeHolder: placeholder,
+  })) as QuickActionPick | undefined;
+  if (!choice || choice.kind === vscode.QuickPickItemKind.Separator || !choice.action) {
     return;
   }
 
-  if (choice.command) {
-    // Check if it's a VS Code command or a CLI command
-    if (choice.command.startsWith('i18nsmith.')) {
-      await vscode.commands.executeCommand(choice.command);
-    } else {
-      const handled = await tryHandlePreviewableCommand(choice.command);
-      if (!handled) {
-        await cliService.runCliCommand(choice.command, {
-          interactive: choice.interactive,
-          confirmMessage: choice.confirmMessage,
-        });
-      }
-    }
-    return;
-  }
-
-  switch (choice.builtin) {
-    case 'extract-selection': {
-      if (!editor) {
-        return;
-      }
-      const text = editor.document.getText(selection!);
-      await extractionController.extractKeyFromSelection(editor.document.uri, selection!, text);
-      break;
-    }
-    case 'run-check': {
-      await runHealthCheckWithSummary();
-      break;
-    }
-    case 'refresh': {
-      await refreshDiagnosticsWithMessage('quick-action');
-      break;
-    }
-    case 'show-output': {
-      smartScanner.showOutput();
-      break;
-    }
-    case 'whitelist-dynamic': {
-      await configController.whitelistDynamicKeys();
-      break;
-    }
-    case 'rename-suspicious': {
-      await syncController.renameAllSuspiciousKeys();
-      break;
-    }
-
-  }
+  await runQuickActionDefinition(choice.action);
 }
 
 async function ensureFreshDiagnosticsForQuickActions() {
@@ -719,10 +591,6 @@ async function ensureFreshDiagnosticsForQuickActions() {
     },
     runScan
   );
-}
-
-function isInteractiveCliCommand(command: string): boolean {
-  return /\b(scaffold-adapter|init)\b/.test(command);
 }
 
 async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean> {
@@ -755,6 +623,72 @@ async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
     // await runTranslateCommand(intent.options);
     vscode.window.showInformationMessage('Translate preview is currently disabled during refactoring.');
   }
+}
+
+
+async function openSourceLocaleFile() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showWarningMessage('Open a workspace to locate your locale files.');
+    return;
+  }
+
+  const workspaceRoot = workspaceFolder.uri.fsPath;
+  const snapshot = getWorkspaceConfigSnapshot(workspaceRoot);
+  const localesDir = snapshot?.localesDir ?? 'locales';
+  const sourceLanguage = snapshot?.sourceLanguage ?? 'en';
+  const candidatePaths = buildLocaleCandidatePaths(workspaceRoot, localesDir, sourceLanguage);
+  const targetPath = candidatePaths.find((candidate) => {
+    try {
+      return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  });
+
+  if (!targetPath) {
+    vscode.window.showWarningMessage(
+      `Could not find a ${sourceLanguage} locale file inside ${localesDir}. Update i18n.config.json or create the file first.`
+    );
+    return;
+  }
+
+  const document = await vscode.workspace.openTextDocument(targetPath);
+  await vscode.window.showTextDocument(document, { preview: false });
+}
+
+function buildLocaleCandidatePaths(workspaceRoot: string, localesDir: string, sourceLanguage: string): string[] {
+  const localeRoot = path.isAbsolute(localesDir)
+    ? path.normalize(localesDir)
+    : path.join(workspaceRoot, localesDir);
+  const normalizedRoot = path.normalize(localeRoot);
+  const extensions = ['.json', '.jsonc', '.yaml', '.yml', '.ts', '.js'];
+  const baseNames = Array.from(new Set([sourceLanguage, sourceLanguage.toLowerCase()]));
+  const candidates: string[] = [];
+
+  for (const base of baseNames) {
+    for (const ext of extensions) {
+      candidates.push(path.join(normalizedRoot, `${base}${ext}`));
+    }
+  }
+
+  for (const base of baseNames) {
+    const nestedDir = path.join(normalizedRoot, base);
+    try {
+      if (fs.existsSync(nestedDir) && fs.statSync(nestedDir).isDirectory()) {
+        const entries = fs.readdirSync(nestedDir);
+        for (const entry of entries) {
+          if (/\.(jsonc?|ya?ml|tsx?|jsx?)$/i.test(entry)) {
+            candidates.push(path.join(nestedDir, entry));
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 

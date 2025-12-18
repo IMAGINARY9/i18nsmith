@@ -69,6 +69,10 @@
         "title": "i18nsmith: Quick Actions"
       },
       {
+        "command": "i18nsmith.quickActions.executeDefinition",
+        "title": "i18nsmith: Run Quick Action"
+      },
+      {
         "command": "i18nsmith.extractSelection",
         "title": "Extract as Translation Key"
       },
@@ -111,6 +115,37 @@
       {
         "command": "i18nsmith.applyPreviewPlan",
         "title": "i18nsmith: Apply Preview Plan"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "i18nsmith",
+          "title": "i18nsmith",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "i18nsmith": [
+        {
+          "id": "i18nsmith.quickActionsView",
+          "name": "Quick Actions",
+          "contextualTitle": "Quick Actions",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "i18nsmith.quickActionsView",
+        "contents": "Run the health check to populate quick actions.\\n[Run Health Check](command:i18nsmith.check)",
+        "when": "i18nsmith.runtimeReady && !i18nsmith.quickActions.hasActions"
+      },
+      {
+        "view": "i18nsmith.quickActionsView",
+        "contents": "Initialize the i18n runtime to unlock quick actions.\\n[Open Quick Actions](command:i18nsmith.actions)",
+        "when": "!i18nsmith.runtimeReady"
       }
     ],
     "menus": {
