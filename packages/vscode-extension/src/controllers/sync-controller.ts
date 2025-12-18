@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ServiceContainer } from '../services/container';
 import { ConfigurationController } from './configuration-controller';
-import { executePreviewPlan, type PlannedChange } from '../preview-flow';
+import { type PlannedChange } from '../preview-flow';
 import { SyncSummary, SuspiciousKeyWarning, LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
 import { PreviewPayload } from '../preview-manager';
 import { quoteCliArg } from '../command-helpers';
@@ -181,7 +181,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       },
     });
 
-    await executePreviewPlan({
+  await this.services.previewPlanService.executePlan({
       title: 'Sync Locales',
       detail: detailLines.join('\n'),
       changes,

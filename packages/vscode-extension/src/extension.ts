@@ -21,7 +21,6 @@ import { SyncController } from "./controllers/sync-controller";
 import { TransformController } from "./controllers/transform-controller";
 import { ExtractionController } from "./controllers/extraction-controller";
 import { CliService } from "./services/cli-service";
-import { applyPreviewPlan } from "./preview-flow";
 import { SuspiciousKeyWarning } from "@i18nsmith/core";
 import {
   buildQuickActionModel,
@@ -355,7 +354,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     ),
     vscode.commands.registerCommand("i18nsmith.applyPreviewPlan", async () => {
-      await applyPreviewPlan();
+      await services.previewPlanService.applyActivePlan();
     }),
     vscode.commands.registerCommand(
       "i18nsmith.renameSuspiciousKey",
