@@ -109,14 +109,17 @@ export class TransformController implements vscode.Disposable {
   private async applyTransform(baseArgs: string[], label: string, count: number, previewPath: string) {
     this.services.logVerbose(`runTransform: Applying ${count} transformations via CLI`);
 
-    const writeCommand = this.buildTransformWriteCommand(baseArgs);
+    // Use apply-preview instead of reconstructing the command
+    // This ensures we apply exactly what was previewed
+    const writeCommand = `i18nsmith transform --apply-preview ${quoteCliArg(previewPath)}`;
+    
     const writeResult = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `i18nsmith: Applying transforms (${label})…`,
         cancellable: false,
       },
-      (progress) => this.runCliCommand(writeCommand, { progress })
+      (progress) => this.runCliCommand(writeCommand, { progress, showOutput: false })
     );
 
     if (writeResult?.success) {
@@ -271,6 +274,7 @@ export class TransformController implements vscode.Disposable {
       interactive?: boolean;
       confirmMessage?: string;
       progress?: vscode.Progress<{ message?: string; increment?: number }>;
+      showOutput?: boolean;
     } = {}
   ): Promise<{ success: boolean; stdout: string; stderr: string; warnings: string[] } | undefined> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -291,7 +295,9 @@ export class TransformController implements vscode.Disposable {
     // I'll use runResolvedCliCommand directly
 
     const out = this.services.cliOutputChannel;
-    out.show();
+    if (options.showOutput !== false) {
+      out.show();
+    }
     out.appendLine(`$ ${resolved.display}`);
 
     const progressTracker = this.createCliProgressTracker(options.progress);

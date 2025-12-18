@@ -41,6 +41,7 @@ export class CliService {
       interactive?: boolean;
       confirmMessage?: string;
       progress?: vscode.Progress<{ message?: string; increment?: number }>;
+      showOutput?: boolean;
     } = {}
   ): Promise<CliRunResult | undefined> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -88,7 +89,9 @@ export class CliService {
     }
 
     const out = vscode.window.createOutputChannel('i18nsmith');
-    out.show();
+    if (options.showOutput !== false) {
+      out.show();
+    }
     out.appendLine(`$ ${resolved.display}`);
 
     const progressTracker = createCliProgressTracker(options.progress);

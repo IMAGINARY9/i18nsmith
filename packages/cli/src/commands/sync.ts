@@ -107,6 +107,15 @@ export function registerSync(program: Command) {
         if (options.prune) {
           extraArgs.push('--prune');
         }
+        if (options.yes) {
+          extraArgs.push('--yes');
+        }
+        if (options.seedTargetLocales) {
+          extraArgs.push('--seed-target-locales');
+        }
+        if (options.seedValue) {
+          extraArgs.push('--seed-value', options.seedValue);
+        }
         await applyPreviewFile('sync', options.applyPreview, extraArgs);
         return;
       }

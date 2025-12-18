@@ -67,9 +67,9 @@ const ICONS = {
   warning: { id: 'warning', label: 'Warning' },
   diff: { id: 'diff', label: 'Diff preview' },
   sync: { id: 'sync', label: 'Locale sync' },
-  renameAll: { id: 'symbol-rename', label: 'Rename Suspicious Keys' },
+  renameAll: { id: 'edit', label: 'Rename Suspicious Keys' },
   dynamic: { id: 'shield', label: 'Dynamic keys' },
-  magic: { id: 'beaker', label: 'Magic transform' },
+  transform: { id: 'beaker', label: 'File transform' },
   analyze: { id: 'search', label: 'Analyze usage' },
   refreshFile: { id: 'repo-pull', label: 'Refresh diagnostics' },
   extractSelection: { id: 'pencil', label: 'Extract selection' },
@@ -134,8 +134,6 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
         }),
       ].filter(Boolean) as QuickActionDefinition[],
     });
-
-    return { sections, metadata };
   }
 
   const suggestionBuckets = groupSuggestionsByCategory(suggestions);
@@ -252,8 +250,8 @@ function createActiveEditorSection(request: QuickActionBuildRequest): QuickActio
   actions.push(
     createQuickAction({
       id: 'transform-file',
-      icon: ICONS.magic,
-      title: 'Magic Transform File',
+      icon: ICONS.transform,
+      title: 'Transform File',
       description: 'Auto-extract strings and wrap providers in the active editor.',
       command: 'i18nsmith.transformFile',
       postRunBehavior: 'offer-output',

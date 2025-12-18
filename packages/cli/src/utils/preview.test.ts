@@ -91,4 +91,47 @@ describe('applyPreviewFile', () => {
     const [, ...forwardedArgs] = spawnedArgs as string[];
     expect(forwardedArgs).toEqual(['sync', '--write', '--json']);
   });
+
+  it('handles previews recorded without the command token', async () => {
+    const previewPath = await writePreviewFixture(['--target', 'src/pages/**']);
+    const { applyPreviewFile } = await import('./preview.js');
+
+    await applyPreviewFile('sync', previewPath);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [, spawnedArgs] = mockSpawn.mock.calls[0];
+    const [, ...forwardedArgs] = spawnedArgs as string[];
+    expect(forwardedArgs).toEqual(['sync', '--target', 'src/pages/**', '--write']);
+  });
+
+  it('strips inline --preview-output and dedupes subcommand', async () => {
+    const previewPath = await writePreviewFixture([
+      'sync',
+      '--preview-output=tmp.json',
+      '--diff',
+    ]);
+    const { applyPreviewFile } = await import('./preview.js');
+
+    await applyPreviewFile('sync', previewPath, ['--prune']);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [, spawnedArgs] = mockSpawn.mock.calls[0];
+    const [, ...forwardedArgs] = spawnedArgs as string[];
+    expect(forwardedArgs).toEqual(['sync', '--diff', '--write', '--prune']);
+  });
+
+  it('merges extra args without duplicating write or prune', async () => {
+    const previewPath = await writePreviewFixture([
+      '--target', 'apps/web/**',
+      '--prune',
+    ]);
+    const { applyPreviewFile } = await import('./preview.js');
+
+    await applyPreviewFile('sync', previewPath, ['--prune', '--write']);
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [, spawnedArgs] = mockSpawn.mock.calls[0];
+    const [, ...forwardedArgs] = spawnedArgs as string[];
+    expect(forwardedArgs).toEqual(['sync', '--target', 'apps/web/**', '--prune', '--write']);
+  });
 });

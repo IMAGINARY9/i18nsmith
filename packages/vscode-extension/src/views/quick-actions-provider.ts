@@ -23,6 +23,10 @@ export class QuickActionsProvider
   update(model: QuickActionBuildOutput) {
     this.sections = model.sections;
     this.metadata = model.metadata;
+    // Log for dev host troubleshooting so we can confirm model updates are received
+    // This appears in the Extension Host log during development (helps verify reloads)
+    // eslint-disable-next-line no-console
+    console.log(`[i18nsmith] QuickActionsProvider.update: sections=${model.sections.length} suspicious=${model.metadata.suspiciousWarnings.length}`);
     vscode.commands.executeCommand('setContext', 'i18nsmith.runtimeReady', model.metadata.runtimeReady);
     vscode.commands.executeCommand(
       'setContext',

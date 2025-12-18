@@ -10,13 +10,15 @@ export interface TranslateRunOptions {
 export type PreviewableCommand =
   | { kind: 'sync' | 'transform'; targets?: string[] }
   | { kind: 'rename-key'; from: string; to: string }
-  | { kind: 'translate'; options: TranslateRunOptions };
+  | { kind: 'translate'; options: TranslateRunOptions }
+  | { kind: 'scaffold-adapter'; args: string[] };
 
 const SUPPORTED_SUBCOMMANDS = new Set<PreviewableCommand['kind']>([
   'sync',
   'transform',
   'rename-key',
   'translate',
+  'scaffold-adapter',
 ]);
 
 type SubcommandInvocation = {
@@ -56,6 +58,10 @@ export function parsePreviewableCommand(rawCommand: string): PreviewableCommand 
       return null;
     }
     return { kind: 'translate', options: translateOptions };
+  }
+
+  if (kind === 'scaffold-adapter') {
+    return { kind: 'scaffold-adapter', args };
   }
 
   return null;

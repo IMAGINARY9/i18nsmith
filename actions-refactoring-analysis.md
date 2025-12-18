@@ -70,7 +70,7 @@ Here is a redesign proposal that focuses on **Action-Oriented Grouping** and **P
 
 ####Section 2: ✨ Current Editor*Actions specific to the file you are looking at right now.*
 
-> **$(beaker) Magic Transform File**
+> **$(beaker) Transform File**
 > *Auto-extract strings and wrap components in ` <I18nProvider>`.*
 > **$(search) Analyze Usage**
 > *Scan current file for translation coverage.*
