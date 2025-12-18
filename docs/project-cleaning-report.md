@@ -350,6 +350,8 @@ export function withErrorHandling(action: (...args: any[]) => Promise<void>) {
 }
 ```
 
+**Status (Dec 2025):** ⚙️ In progress. `CliError` plus `withErrorHandling` now live under `packages/cli/src/utils/errors.ts`, and the `check`, `sync`, and legacy `audit` commands all flow through the shared wrapper. Remaining commands still rely on bespoke try/catch logic and should be migrated next.
+
 ---
 
 ### 5.3 Test Coverage Gaps

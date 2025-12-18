@@ -5,6 +5,7 @@ import type { Command } from 'commander';
 import { loadConfig, diagnoseWorkspace } from '@i18nsmith/core';
 import type { DiagnosisReport } from '@i18nsmith/core';
 import { getDiagnosisExitSignal } from '../utils/diagnostics-exit.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface DiagnoseCommandOptions {
   config?: string;
@@ -103,34 +104,36 @@ export function registerDiagnose(program: Command) {
     .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
     .option('--json', 'Print raw JSON results', false)
     .option('--report <path>', 'Write JSON report to a file (for CI or editors)')
-    .action(async (options: DiagnoseCommandOptions) => {
-      console.log(chalk.blue('Running repository diagnostics...'));
-      try {
-        const config = await loadConfig(options.config);
-        const report = await diagnoseWorkspace(config);
+    .action(
+      withErrorHandling(async (options: DiagnoseCommandOptions) => {
+        console.log(chalk.blue('Running repository diagnostics...'));
+        try {
+          const config = await loadConfig(options.config);
+          const report = await diagnoseWorkspace(config);
 
-        if (options.report) {
-          const outputPath = path.resolve(process.cwd(), options.report);
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, JSON.stringify(report, null, 2));
-          console.log(chalk.green(`Diagnosis report written to ${outputPath}`));
-        }
+          if (options.report) {
+            const outputPath = path.resolve(process.cwd(), options.report);
+            await fs.mkdir(path.dirname(outputPath), { recursive: true });
+            await fs.writeFile(outputPath, JSON.stringify(report, null, 2));
+            console.log(chalk.green(`Diagnosis report written to ${outputPath}`));
+          }
 
-        if (options.json) {
-          console.log(JSON.stringify(report, null, 2));
-        } else {
-          printDiagnosisReport(report);
-        }
+          if (options.json) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            printDiagnosisReport(report);
+          }
 
-        const exitSignal = getDiagnosisExitSignal(report);
-        if (exitSignal) {
-          console.error(chalk.red(`\nBlocking conflicts detected (${report.conflicts.length}).`));
-          console.error(chalk.red(`Exit code ${exitSignal.code}: ${exitSignal.reason}`));
-          process.exitCode = exitSignal.code;
+          const exitSignal = getDiagnosisExitSignal(report);
+          if (exitSignal) {
+            console.error(chalk.red(`\nBlocking conflicts detected (${report.conflicts.length}).`));
+            console.error(chalk.red(`Exit code ${exitSignal.code}: ${exitSignal.reason}`));
+            process.exitCode = exitSignal.code;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Diagnose failed: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Diagnose failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }
