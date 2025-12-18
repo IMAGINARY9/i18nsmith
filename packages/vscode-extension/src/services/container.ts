@@ -37,19 +37,20 @@ export class ServiceContainer implements vscode.Disposable {
     this.reportWatcher = new ReportWatcher(this.diagnosticsManager);
     context.subscriptions.push(this.reportWatcher);
 
-    this.hoverProvider = new I18nHoverProvider();
-    // Hover provider registration happens in extension.ts for now
+  this.hoverProvider = new I18nHoverProvider();
+  // Hover provider registration happens in extension.ts for now
 
-    this.smartScanner = new SmartScanner();
-    context.subscriptions.push(this.smartScanner);
+  this.cliService = new CliService(this.verboseOutputChannel, this.cliOutputChannel, this.reportWatcher);
 
-    this.statusBarManager = new StatusBarManager(this.smartScanner);
-    context.subscriptions.push(this.statusBarManager);
+  this.smartScanner = new SmartScanner(this.cliService);
+  context.subscriptions.push(this.smartScanner);
 
-    this.checkIntegration = new CheckIntegration();
-    this.diffPeekProvider = new DiffPeekProvider();
-    this.previewManager = new PreviewManager(this.cliOutputChannel);
-    this.cliService = new CliService(this.verboseOutputChannel, this.smartScanner, this.reportWatcher);
+  this.statusBarManager = new StatusBarManager(this.smartScanner);
+  context.subscriptions.push(this.statusBarManager);
+
+  this.checkIntegration = new CheckIntegration();
+  this.diffPeekProvider = new DiffPeekProvider();
+  this.previewManager = new PreviewManager(this.cliService, this.cliOutputChannel);
     this.diffPreviewService = new DiffPreviewService(this.diffPeekProvider);
   }
 

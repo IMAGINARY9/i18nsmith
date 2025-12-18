@@ -3,7 +3,6 @@ import { resolveCliCommand } from '../cli-utils';
 import { runResolvedCliCommand } from '../cli-runner';
 import type { TransformProgress } from '@i18nsmith/transformer';
 import { ensureGitignore } from '@i18nsmith/core';
-import { SmartScanner } from '../scanner';
 import { ReportWatcher } from '../watcher';
 
 export interface CliRunResult {
@@ -11,21 +10,39 @@ export interface CliRunResult {
   stdout: string;
   stderr: string;
   warnings: string[];
+  exitCode?: number | null;
+  error?: Error;
+}
+
+export interface CliRunOptions {
+  interactive?: boolean;
+  confirmMessage?: string;
+  progress?: vscode.Progress<{ message?: string; increment?: number }>;
+  showOutput?: boolean;
+  workspaceFolder?: vscode.WorkspaceFolder;
+  cwd?: string;
+  preferredCliPath?: string;
+  label?: string;
+  timeoutMs?: number;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  suppressNotifications?: boolean;
+  skipReportRefresh?: boolean;
 }
 
 export class CliService {
   private interactiveTerminal: vscode.Terminal | undefined;
-  private verboseOutputChannel: vscode.OutputChannel;
-  private smartScanner: SmartScanner;
-  private reportWatcher: ReportWatcher;
+  private readonly verboseOutputChannel: vscode.OutputChannel;
+  private readonly cliOutputChannel: vscode.OutputChannel;
+  private readonly reportWatcher: ReportWatcher;
 
   constructor(
     verboseOutputChannel: vscode.OutputChannel,
-    smartScanner: SmartScanner,
+    cliOutputChannel: vscode.OutputChannel,
     reportWatcher: ReportWatcher
   ) {
     this.verboseOutputChannel = verboseOutputChannel;
-    this.smartScanner = smartScanner;
+    this.cliOutputChannel = cliOutputChannel;
     this.reportWatcher = reportWatcher;
 
     vscode.window.onDidCloseTerminal((terminal) => {
@@ -37,20 +54,18 @@ export class CliService {
 
   public async runCliCommand(
     rawCommand: string,
-    options: {
-      interactive?: boolean;
-      confirmMessage?: string;
-      progress?: vscode.Progress<{ message?: string; increment?: number }>;
-      showOutput?: boolean;
-    } = {}
+    options: CliRunOptions = {}
   ): Promise<CliRunResult | undefined> {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
+    const workspaceFolder = options.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+    const cwd = options.cwd ?? workspaceFolder?.uri.fsPath;
+    if (!cwd) {
       vscode.window.showErrorMessage('No workspace folder found');
       return;
     }
 
-    const resolved = resolveCliCommand(rawCommand);
+    const resolved = resolveCliCommand(rawCommand, {
+      preferredCliPath: options.preferredCliPath,
+    });
     if (!resolved.command) {
       vscode.window.showErrorMessage('Unable to determine CLI command to run.');
       return;
@@ -79,7 +94,7 @@ export class CliService {
     }
 
     if (options.interactive) {
-      const terminal = this.ensureInteractiveTerminal(workspaceFolder.uri.fsPath);
+      const terminal = this.ensureInteractiveTerminal(cwd);
       terminal.show();
       terminal.sendText(resolved.display, true);
       vscode.window.showInformationMessage(
@@ -88,9 +103,12 @@ export class CliService {
       return undefined;
     }
 
-    const out = vscode.window.createOutputChannel('i18nsmith');
+    const out = this.cliOutputChannel;
     if (options.showOutput !== false) {
       out.show();
+    }
+    if (options.label) {
+      out.appendLine(`\n[${options.label}]`);
     }
     out.appendLine(`$ ${resolved.display}`);
 
@@ -120,17 +138,20 @@ export class CliService {
     };
 
     const result = await runResolvedCliCommand(resolved, {
-      cwd: workspaceFolder.uri.fsPath,
+      cwd,
+      timeoutMs: options.timeoutMs,
       onStdout: (text, child) => {
         stdoutChunks.push(text);
         out.append(text);
         progressTracker?.handleChunk(text);
         handleAutoConfirm(text, child);
+        options.onStdout?.(text);
       },
       onStderr: (text, child) => {
         stderrChunks.push(text);
         out.append(text);
         handleAutoConfirm(text, child);
+        options.onStderr?.(text);
       },
     });
 
@@ -143,18 +164,21 @@ export class CliService {
     if (result.code !== 0 || result.error) {
       const message = result.error?.message || `Command exited with code ${result.code}`;
       out.appendLine(`[error] ${message}`);
-      vscode.window.showErrorMessage(`Command failed: ${message}`);
-      return { success: false, stdout, stderr, warnings };
+      if (!options.suppressNotifications) {
+        vscode.window.showErrorMessage(`Command failed: ${message}`);
+      }
+      return { success: false, stdout, stderr, warnings, exitCode: result.code, error: result.error };
     }
 
-    vscode.window.showInformationMessage('Command completed');
+    if (!options.suppressNotifications) {
+      vscode.window.showInformationMessage('Command completed');
+    }
 
     progressTracker?.complete();
-    await this.reportWatcher.refresh();
-    if (this.smartScanner) {
-      await this.smartScanner.scan('suggested-command');
+    if (!options.skipReportRefresh) {
+      await this.reportWatcher.refresh();
     }
-    return { success: true, stdout, stderr, warnings };
+    return { success: true, stdout, stderr, warnings, exitCode: result.code };
   }
 
   private ensureInteractiveTerminal(cwd: string): vscode.Terminal {

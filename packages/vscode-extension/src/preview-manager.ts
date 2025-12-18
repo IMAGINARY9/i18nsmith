@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { promises as fs } from 'fs';
-import { resolveCliCommand } from './cli-utils';
 import { quoteCliArg } from './command-helpers';
-import { runResolvedCliCommand } from './cli-runner';
+import { CliService } from './services/cli-service';
 
 export interface PreviewPayload<TSummary> {
   type: string;
@@ -30,7 +29,10 @@ export interface PreviewRunResult<TSummary> {
 }
 
 export class PreviewManager {
-  constructor(private readonly output: vscode.OutputChannel) {}
+  constructor(
+    private readonly cliService: CliService,
+    private readonly output: vscode.OutputChannel
+  ) {}
 
   async run<TSummary>(options: PreviewRunOptions): Promise<PreviewRunResult<TSummary>> {
     const { kind, args = [], workspaceRoot, label } = options;
@@ -40,8 +42,6 @@ export class PreviewManager {
     const previewPath = path.join(previewDir, `${kind}-preview-${Date.now()}.json`);
     const commandParts = ['i18nsmith', kind, ...args, '--preview-output', quoteCliArg(previewPath)].filter(Boolean);
     const humanReadable = commandParts.join(' ').trim();
-    const resolvedCommand = resolveCliCommand(humanReadable);
-
     if (label) {
       this.output.appendLine(`\n[${label}]`);
     }
@@ -50,8 +50,10 @@ export class PreviewManager {
     try {
       const stdoutChunks: string[] = [];
       const stderrChunks: string[] = [];
-      const result = await runResolvedCliCommand(resolvedCommand, {
+      const result = await this.cliService.runCliCommand(humanReadable, {
         cwd: workspaceRoot,
+        showOutput: false,
+        label,
         onStdout: (text) => {
           stdoutChunks.push(text);
           if (text.trim()) {
@@ -64,10 +66,12 @@ export class PreviewManager {
             this.output.appendLine(`[stderr] ${text.trim()}`);
           }
         },
+        suppressNotifications: true,
+        skipReportRefresh: true,
       });
 
-      if (result.code !== 0 || result.error) {
-        const message = result.error?.message || `Command exited with code ${result.code}`;
+      if (!result?.success) {
+        const message = result?.stderr || 'Preview command failed';
         this.output.appendLine(`[error] ${message}`);
         throw new Error(message);
       }
@@ -80,7 +84,7 @@ export class PreviewManager {
         previewPath,
         stdout: stdoutChunks.join(''),
         stderr: stderrChunks.join(''),
-        command: resolvedCommand.display,
+        command: humanReadable,
       };
     } catch (error) {
       if (error && typeof error === 'object') {
