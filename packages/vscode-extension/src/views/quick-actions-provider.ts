@@ -4,11 +4,13 @@ import type {
   QuickActionDefinition,
   QuickActionMetadata,
   QuickActionSection,
+  QuickActionChildDefinition,
 } from '../quick-actions-data';
 
 export type QuickActionTreeNode =
   | { kind: 'section'; section: QuickActionSection }
-  | { kind: 'action'; action: QuickActionDefinition };
+  | { kind: 'action'; action: QuickActionDefinition }
+  | { kind: 'child'; parent: QuickActionDefinition; child: QuickActionChildDefinition };
 
 export class QuickActionsProvider
   implements vscode.TreeDataProvider<QuickActionTreeNode>, vscode.Disposable
@@ -41,19 +43,41 @@ export class QuickActionsProvider
       return item;
     }
 
-    const action = element.action;
-    const label = action.title;
-    const treeItem = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    treeItem.description = action.description;
-    treeItem.tooltip = [action.description, action.detail].filter(Boolean).join('\n\n');
-    treeItem.iconPath = new vscode.ThemeIcon(action.iconId);
-    treeItem.command = {
-      command: 'i18nsmith.quickActions.executeDefinition',
-      title: 'Run Quick Action',
-      arguments: [action],
-    };
-    treeItem.contextValue = 'i18nsmith.quickActions.action';
-    return treeItem;
+    if (element.kind === 'action') {
+      const action = element.action;
+      const collapsibleState = action.children?.length
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None;
+      const treeItem = new vscode.TreeItem(action.title, collapsibleState);
+      treeItem.description = action.description;
+      treeItem.tooltip = [action.description, action.detail].filter(Boolean).join('\n\n');
+      treeItem.iconPath = new vscode.ThemeIcon(action.iconId);
+      treeItem.command = action.children?.length
+        ? undefined
+        : {
+            command: 'i18nsmith.quickActions.executeDefinition',
+            title: 'Run Quick Action',
+            arguments: [action],
+          };
+      treeItem.contextValue = action.children?.length
+        ? 'i18nsmith.quickActions.actionWithChildren'
+        : 'i18nsmith.quickActions.action';
+      return treeItem;
+    }
+
+    const child = element.child;
+    const childItem = new vscode.TreeItem(child.label, vscode.TreeItemCollapsibleState.None);
+    childItem.description = child.description;
+    childItem.tooltip = [child.description, child.detail].filter(Boolean).join('\n');
+    if (child.iconId) {
+      childItem.iconPath = new vscode.ThemeIcon(child.iconId);
+    }
+    const command = buildChildCommand(child);
+    if (command) {
+      childItem.command = command;
+    }
+    childItem.contextValue = 'i18nsmith.quickActions.child';
+    return childItem;
   }
 
   getChildren(element?: QuickActionTreeNode): QuickActionTreeNode[] {
@@ -65,10 +89,28 @@ export class QuickActionsProvider
       return element.section.actions.map((action) => ({ kind: 'action', action }));
     }
 
+    if (element.kind === 'action') {
+      if (!element.action.children?.length) {
+        return [];
+      }
+      return element.action.children.map((child) => ({ kind: 'child', parent: element.action, child }));
+    }
+
     return [];
   }
 
   dispose() {
     this.changeEmitter.dispose();
   }
+}
+
+function buildChildCommand(child: QuickActionChildDefinition): vscode.Command | undefined {
+  if (!child.command) {
+    return undefined;
+  }
+  return {
+    command: child.command,
+    title: 'Run Quick Action Item',
+    arguments: child.commandArgs ?? [],
+  };
 }

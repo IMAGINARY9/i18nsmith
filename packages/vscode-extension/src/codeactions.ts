@@ -9,9 +9,10 @@ import { buildSuspiciousKeySuggestion } from './suspicious-key-helpers';
 export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   public static readonly providedCodeActionKinds = [
     vscode.CodeActionKind.QuickFix,
+    vscode.CodeActionKind.RefactorRewrite,
   ];
 
-  private static readonly MAX_SUSPICIOUS_KEY_ACTIONS = 3;
+  private static readonly MAX_SUSPICIOUS_KEY_ACTIONS = 10;
 
   constructor(private diagnosticsManager: DiagnosticsManager) {}
 
@@ -111,10 +112,11 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
 
     const action = new vscode.CodeAction(
       `Refactor suspicious key to "${suggestedKey}"`,
-      vscode.CodeActionKind.QuickFix
+      vscode.CodeActionKind.RefactorRewrite
     );
 
     action.diagnostics = [diagnostic];
+    action.isPreferred = true;
     action.command = {
       command: 'i18nsmith.renameSuspiciousKey',
       title: 'Rename suspicious key',
@@ -147,7 +149,7 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
   ): vscode.CodeAction | null {
     const action = new vscode.CodeAction(
       `Rename ${totalCount} suspicious key${totalCount === 1 ? '' : 's'} in this file`,
-      vscode.CodeActionKind.QuickFix
+      vscode.CodeActionKind.RefactorRewrite
     );
     action.command = {
       command: 'i18nsmith.renameSuspiciousKeysInFile',
