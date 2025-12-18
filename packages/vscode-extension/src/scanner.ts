@@ -58,7 +58,6 @@ export class SmartScanner implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private debounceTimer: NodeJS.Timeout | undefined;
   private currentScan: Promise<ScanResult> | null = null;
-  private outputChannel: vscode.OutputChannel;
   
   private _state: ScanState = 'idle';
   private _lastResult: ScanResult | null = null;
@@ -75,8 +74,10 @@ export class SmartScanner implements vscode.Disposable {
   private scanOnSave = true;
   private scanOnActivation = true;
 
-  constructor(private readonly cliService: CliService) {
-    this.outputChannel = vscode.window.createOutputChannel('i18nsmith');
+  constructor(
+    private readonly cliService: CliService,
+    private readonly outputChannel: vscode.OutputChannel
+  ) {
     this.loadConfig();
     this.setupWatchers();
   }
@@ -86,7 +87,6 @@ export class SmartScanner implements vscode.Disposable {
     this.disposables.forEach(d => d.dispose());
     this.stateChangeEmitter.dispose();
     this.scanCompleteEmitter.dispose();
-    this.outputChannel.dispose();
   }
 
   get state(): ScanState {

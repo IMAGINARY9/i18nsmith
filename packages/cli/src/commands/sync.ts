@@ -66,6 +66,27 @@ function collectTargetPatterns(value: string, previous: string[] = []) {
   return previous.concat(value);
 }
 
+const SYNC_HELP_SECTIONS = `
+Examples:
+  $ i18nsmith sync                       # analyze without writing changes
+  $ i18nsmith sync --write --prune --yes # prune unused keys non-interactively
+  $ i18nsmith sync --preview-output sync-preview.json
+
+Option groups:
+  General workflow:
+    --write, --prune, --no-backup, --yes, --selection-file
+  Safety & CI:
+    --strict, --validate-interpolations, --no-empty-values, --check, --interactive
+  Targeting & detection scope:
+    --target, --include, --exclude, --assume, --assume-globs, --invalidate-cache
+  Output, previews & diffs:
+    --json, --report, --diff, --patch-dir, --preview-output, --apply-preview
+  Automation & renaming:
+    --auto-rename-suspicious, --rename-map-file, --naming-convention
+  Locale shaping & seeding:
+    --rewrite-shape, --shape-delimiter, --seed-target-locales, --seed-value
+`;
+
 export function registerSync(program: Command) {
   program
     .command("sync")
@@ -206,6 +227,7 @@ export function registerSync(program: Command) {
       "--apply-preview <path>",
       "Apply a previously saved sync preview JSON file safely"
     )
+    .addHelpText("after", SYNC_HELP_SECTIONS)
     .action(
       withErrorHandling(async (options: SyncCommandOptions) => {
       if (options.check) {

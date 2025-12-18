@@ -161,6 +161,8 @@ The `SmartScanner` already partially does this but it's tightly coupled to scann
 
 **Recommendation:** 🟢 LOW PRIORITY — Document all options clearly. Consider adding option groups in help text.
 
+**Status (Dec 2025):** ✅ Completed. `sync` now appends grouped help text (examples plus option clusters for workflow, safety, targeting, output, automation, and seeding flags) so operators can scan the CLI usage more easily.
+
 ---
 
 ### 2.3 Core Exports Analysis
@@ -274,6 +276,8 @@ controllers/
 2. Share command building, output parsing, diff display
 3. Controllers focus on their specific UI/UX
 
+**Status (Dec 2025):** ✅ Completed. A new `PreviewApplyController` now wraps preview execution and apply flows, and both `sync-controller.ts` and `transform-controller.ts` extend it so they share progress notifications, CLI invocation, diff preview wiring, and post-apply refresh logic.
+
 ---
 
 ### 4.2 Preview/Apply Flow Standardization
@@ -300,6 +304,8 @@ controllers/
 - Controllers create their own channels
 
 **Recommendation:** 🟢 LOW PRIORITY — Centralize output channel creation in a single service.
+
+**Status (Dec 2025):** ✅ Completed. The VS Code extension now registers a dedicated `OutputChannelService` inside `service-container.ts`, wiring controllers, the CLI integration, and `SmartScanner` to the same primary/CLI/verbose channels so no component creates channels ad hoc.
 
 ---
 

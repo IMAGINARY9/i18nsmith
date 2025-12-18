@@ -10,10 +10,13 @@ import { PreviewManager } from "../preview-manager";
 import { CliService } from "./cli-service";
 import { DiffPreviewService } from "./diff-preview";
 import { ConfigurationService } from "./configuration-service";
+import { OutputChannelService } from "./output-channel-service";
 
 export class ServiceContainer implements vscode.Disposable {
+  public readonly outputChannelService: OutputChannelService;
   public readonly verboseOutputChannel: vscode.OutputChannel;
   public readonly cliOutputChannel: vscode.OutputChannel;
+  public readonly primaryOutputChannel: vscode.OutputChannel;
   public readonly diagnosticsManager: DiagnosticsManager;
   public readonly reportWatcher: ReportWatcher;
   public readonly hoverProvider: I18nHoverProvider;
@@ -27,13 +30,12 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly configurationService: ConfigurationService;
 
   constructor(context: vscode.ExtensionContext) {
-    this.verboseOutputChannel = vscode.window.createOutputChannel(
-      "i18nsmith (Verbose)"
-    );
-    context.subscriptions.push(this.verboseOutputChannel);
+    this.outputChannelService = new OutputChannelService(context);
+    context.subscriptions.push(this.outputChannelService);
 
-    this.cliOutputChannel = vscode.window.createOutputChannel("i18nsmith CLI");
-    context.subscriptions.push(this.cliOutputChannel);
+    this.verboseOutputChannel = this.outputChannelService.verbose;
+    this.cliOutputChannel = this.outputChannelService.cli;
+    this.primaryOutputChannel = this.outputChannelService.main;
 
     this.diagnosticsManager = new DiagnosticsManager();
     context.subscriptions.push(this.diagnosticsManager);
@@ -53,7 +55,10 @@ export class ServiceContainer implements vscode.Disposable {
       this.reportWatcher
     );
 
-    this.smartScanner = new SmartScanner(this.cliService);
+    this.smartScanner = new SmartScanner(
+      this.cliService,
+      this.primaryOutputChannel
+    );
     context.subscriptions.push(this.smartScanner);
 
     this.statusBarManager = new StatusBarManager(this.smartScanner);
