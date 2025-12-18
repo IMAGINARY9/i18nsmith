@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { Command } from 'commander';
 import { detectPackageManager } from '../utils/package-manager.js';
+import { withErrorHandling } from '../utils/errors.js';
 
 interface InstallHooksOptions {
   yes?: boolean;
@@ -42,25 +43,27 @@ export function registerInstallHooks(program: Command) {
     .option('-y, --yes', 'Skip confirmations')
     .option('--force', 'Force re-install husky even if present')
     .option('--skip', 'Skip husky installation (just create hooks)')
-    .action(async (opts: InstallHooksOptions) => {
-      const cwd = opts.cwd ?? process.cwd();
-  const pm = await detectPackageManager();
-      const hasHusky = await huskyInstalled(cwd);
+    .action(
+      withErrorHandling(async (opts: InstallHooksOptions) => {
+        const cwd = opts.cwd ?? process.cwd();
+        const pm = await detectPackageManager();
+        const hasHusky = await huskyInstalled(cwd);
 
-      if (!hasHusky && !opts.skip) {
-        await ensureHusky(cwd, pm, !!opts.force);
-        console.log('Add "prepare": "husky install" to package.json scripts if missing.');
-      }
+        if (!hasHusky && !opts.skip) {
+          await ensureHusky(cwd, pm, !!opts.force);
+          console.log('Add "prepare": "husky install" to package.json scripts if missing.');
+        }
 
-      const preCommitContent = `#!/bin/sh\n. \"$(dirname "$0")/_/husky.sh\"\n[ -n \"$I18NSMITH_SKIP_HOOKS\" ] && exit 0\nNOCOLOR=1 npx i18nsmith check --fail-on conflicts || exit 1\n`;
-      const prePushContent = `#!/bin/sh\n. \"$(dirname "$0")/_/husky.sh\"\n[ -n \"$I18NSMITH_SKIP_HOOKS\" ] && exit 0\nNOCOLOR=1 npx i18nsmith sync --dry-run --check || exit 1\n`;
+  const preCommitContent = `#!/bin/sh\n. "$(dirname "$0")/_/husky.sh"\n[ -n "$I18NSMITH_SKIP_HOOKS" ] && exit 0\nNOCOLOR=1 npx i18nsmith check --fail-on conflicts || exit 1\n`;
+  const prePushContent = `#!/bin/sh\n. "$(dirname "$0")/_/husky.sh"\n[ -n "$I18NSMITH_SKIP_HOOKS" ] && exit 0\nNOCOLOR=1 npx i18nsmith sync --dry-run --check || exit 1\n`;
 
-      await writeHook(cwd, 'pre-commit', preCommitContent);
-      await writeHook(cwd, 'pre-push', prePushContent);
+        await writeHook(cwd, 'pre-commit', preCommitContent);
+        await writeHook(cwd, 'pre-push', prePushContent);
 
-      console.log('\nHooks added. Set I18NSMITH_SKIP_HOOKS=1 to bypass.');
-      console.log('Prototype complete – future versions will offer interactive selection & monorepo scoping.');
-    });
+        console.log('\nHooks added. Set I18NSMITH_SKIP_HOOKS=1 to bypass.');
+        console.log('Prototype complete – future versions will offer interactive selection & monorepo scoping.');
+      })
+    );
 
   program.addCommand(cmd);
 }

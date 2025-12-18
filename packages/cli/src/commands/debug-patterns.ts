@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import fg from 'fast-glob';
 import { loadConfigWithMeta } from '@i18nsmith/core';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface DebugPatternsOptions {
   config?: string;
@@ -34,37 +35,39 @@ export function registerDebugPatterns(program: Command) {
     .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
     .option('--json', 'Print raw JSON results', false)
     .option('--verbose', 'Show all matched files for each pattern', false)
-    .action(async (options: DebugPatternsOptions) => {
-      try {
-        const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
-        
-        console.log(chalk.blue('Debugging glob patterns...'));
-        console.log(chalk.gray(`Config: ${path.relative(process.cwd(), configPath)}`));
-        console.log(chalk.gray(`Project root: ${projectRoot}\n`));
+    .action(
+      withErrorHandling(async (options: DebugPatternsOptions) => {
+        try {
+          const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+          
+          console.log(chalk.blue('Debugging glob patterns...'));
+          console.log(chalk.gray(`Config: ${path.relative(process.cwd(), configPath)}`));
+          console.log(chalk.gray(`Project root: ${projectRoot}\n`));
 
-        const includePatterns = config.include ?? ['**/*.tsx', '**/*.ts', '**/*.jsx', '**/*.js'];
-        const excludePatterns = config.exclude ?? ['**/node_modules/**', '**/dist/**', '**/*.test.*', '**/*.spec.*'];
+          const includePatterns = config.include ?? ['**/*.tsx', '**/*.ts', '**/*.jsx', '**/*.js'];
+          const excludePatterns = config.exclude ?? ['**/node_modules/**', '**/dist/**', '**/*.test.*', '**/*.spec.*'];
 
-        const summary = await analyzePatterns(projectRoot, includePatterns, excludePatterns, options.verbose);
+          const summary = await analyzePatterns(projectRoot, includePatterns, excludePatterns, options.verbose);
 
-        if (options.json) {
-          console.log(JSON.stringify(summary, null, 2));
-          return;
+          if (options.json) {
+            console.log(JSON.stringify(summary, null, 2));
+            return;
+          }
+
+          printPatternAnalysis(summary, options.verbose);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Pattern debug failed: ${message}`);
         }
-
-        printPatternAnalysis(summary, options.verbose);
-      } catch (error) {
-        console.error(chalk.red('Pattern debug failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }
 
 async function analyzePatterns(
   projectRoot: string,
   includePatterns: string[],
   excludePatterns: string[],
-  verbose?: boolean
+  _verbose?: boolean
 ): Promise<DebugPatternsSummary> {
   const includeMatches: PatternMatch[] = [];
   const excludeMatches: PatternMatch[] = [];
@@ -173,7 +176,7 @@ function generateSuggestions(
   return suggestions;
 }
 
-function suggestPatternFix(pattern: string, projectRoot: string): string | null {
+function suggestPatternFix(pattern: string, _projectRoot: string): string | null {
   // Common fixes for patterns that don't match
   
   // If pattern is like "src/**/*.tsx" but files are in "app/**/*.tsx"

@@ -21,6 +21,7 @@ import { emitTranslateOutput, maybePrintEstimate } from './reporter.js';
 import { handleCsvExport, handleCsvImport } from './csv-handler.js';
 import { executeTranslations } from './executor.js';
 import { applyPreviewFile, writePreviewFile } from '../../utils/preview.js';
+import { CliError, withErrorHandling } from '../../utils/errors.js';
 
 // Re-export types for external use
 export * from './types.js';
@@ -102,7 +103,8 @@ export function registerTranslate(program: Command): void {
     .option('--import <path>', 'Import translations from a CSV file and merge into locale files')
     .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
     .option('--apply-preview <path>', 'Apply a previously saved translate preview JSON file safely')
-    .action(async (options: TranslateCommandOptions) => {
+    .action(
+      withErrorHandling(async (options: TranslateCommandOptions) => {
       if (options.applyPreview) {
         await applyPreviewFile('translate', options.applyPreview, ['--yes']);
         return;
@@ -233,8 +235,9 @@ export function registerTranslate(program: Command): void {
             ? error
             : new Error(typeof error === 'string' ? error : JSON.stringify(error));
 
-        console.error(chalk.red('Translate failed:'), translatorError?.message ?? normalizedError.message);
-        process.exitCode = 1;
+        const message = translatorError?.message ?? normalizedError.message;
+        throw new CliError(`Translate failed: ${message}`);
       }
-    });
+    })
+    );
 }

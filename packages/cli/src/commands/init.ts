@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 /**
  * Parse a comma-separated list of glob patterns, respecting brace expansions.
@@ -184,7 +185,8 @@ async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promis
 
     console.log(chalk.blue('\nRun "i18nsmith check" to verify your setup.'));
   } catch (error) {
-    console.error(chalk.red('Failed to write configuration file:'), error);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(`Failed to write configuration file: ${message}`);
   }
 }
 
@@ -194,14 +196,15 @@ export function registerInit(program: Command) {
     .description('Initialize i18nsmith configuration')
     .option('--merge', 'Merge with existing locales/runtimes when detected', false)
     .option('-y, --yes', 'Skip prompts and use defaults (non-interactive mode)', false)
-    .action(async (commandOptions: InitCommandOptions) => {
-      console.log(chalk.blue('Initializing i18nsmith configuration...'));
+    .action(
+      withErrorHandling(async (commandOptions: InitCommandOptions) => {
+        console.log(chalk.blue('Initializing i18nsmith configuration...'));
 
-      // Non-interactive mode with sensible defaults
-      if (commandOptions.yes) {
-        await runNonInteractiveInit(commandOptions);
-        return;
-      }
+        // Non-interactive mode with sensible defaults
+        if (commandOptions.yes) {
+          await runNonInteractiveInit(commandOptions);
+          return;
+        }
 
       const answers = await inquirer.prompt<InitAnswers>([
         {
@@ -380,85 +383,87 @@ export function registerInit(program: Command) {
         seedTargetLocales: answers.seedTargetLocales,
       };
 
-      const workspaceRoot = process.cwd();
-      const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
-      if (mergeDecision?.aborted) {
-        console.log(chalk.yellow('Aborting init to avoid overwriting existing i18n assets. Re-run with --merge to bypass.'));
-        return;
-      }
-
-  const configPath = path.join(workspaceRoot, 'i18n.config.json');
-      
-      try {
-        await fs.writeFile(configPath, JSON.stringify(config, null, 2));
-        console.log(chalk.green(`\nConfiguration created at ${configPath}`));
-
-        // Ensure .gitignore has i18nsmith artifacts
-        const gitignoreResult = await ensureGitignore(workspaceRoot);
-        if (gitignoreResult.updated) {
-          console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
+        const workspaceRoot = process.cwd();
+        const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
+        if (mergeDecision?.aborted) {
+          console.log(chalk.yellow('Aborting init to avoid overwriting existing i18n assets. Re-run with --merge to bypass.'));
+          return;
         }
 
-        if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
-          try {
-            await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
-              localesDir: answers.localesDir,
-            });
-            console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
-          } catch (error) {
-            console.warn(chalk.yellow(`Skipping adapter scaffold: ${(error as Error).message}`));
+        const configPath = path.join(workspaceRoot, 'i18n.config.json');
+
+        try {
+          await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+          console.log(chalk.green(`\nConfiguration created at ${configPath}`));
+
+          // Ensure .gitignore has i18nsmith artifacts
+          const gitignoreResult = await ensureGitignore(workspaceRoot);
+          if (gitignoreResult.updated) {
+            console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
           }
-        }
 
-        if (
-          answers.adapterPreset === 'react-i18next' &&
-          answers.scaffoldReactRuntime &&
-          answers.reactI18nPath &&
-          answers.reactProviderPath
-        ) {
-          try {
-            await scaffoldI18next(
-              answers.reactI18nPath,
-              answers.reactProviderPath,
-              answers.sourceLanguage,
-              answers.localesDir
-            );
-            console.log(chalk.green('react-i18next runtime scaffolded:'));
-            console.log(chalk.green(`  • ${answers.reactI18nPath}`));
-            console.log(chalk.green(`  • ${answers.reactProviderPath}`));
-            console.log(chalk.blue('\nWrap your app with the provider (e.g. Next.js providers.tsx):'));
+          if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
+            try {
+              await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
+                localesDir: answers.localesDir,
+              });
+              console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
+            } catch (error) {
+              console.warn(chalk.yellow(`Skipping adapter scaffold: ${(error as Error).message}`));
+            }
+          }
+
+          if (
+            answers.adapterPreset === 'react-i18next' &&
+            answers.scaffoldReactRuntime &&
+            answers.reactI18nPath &&
+            answers.reactProviderPath
+          ) {
+            try {
+              await scaffoldI18next(
+                answers.reactI18nPath,
+                answers.reactProviderPath,
+                answers.sourceLanguage,
+                answers.localesDir
+              );
+              console.log(chalk.green('react-i18next runtime scaffolded:'));
+              console.log(chalk.green(`  • ${answers.reactI18nPath}`));
+              console.log(chalk.green(`  • ${answers.reactProviderPath}`));
+              console.log(chalk.blue('\nWrap your app with the provider (e.g. Next.js providers.tsx):'));
+              console.log(
+                chalk.cyan(
+                  `import { I18nProvider } from '${answers.reactProviderPath.replace(/\\/g, '/').replace(/\.tsx?$/, '')}';\n<I18nProvider>{children}</I18nProvider>`
+                )
+              );
+            } catch (error) {
+              console.warn(chalk.yellow(`Skipping i18next scaffold: ${(error as Error).message}`));
+            }
+          }
+
+          if (answers.adapterPreset === 'react-i18next') {
+            const pkg = await readPackageJson();
+            const missingDeps = ['react-i18next', 'i18next'].filter((dep) => !hasDependency(pkg, dep));
+            if (missingDeps.length) {
+              console.log(chalk.yellow('\nDependencies missing for react-i18next adapter:'));
+              missingDeps.forEach((dep) => console.log(chalk.yellow(`  • ${dep}`)));
+              console.log(chalk.blue('Install them with:'));
+              console.log(chalk.cyan('  pnpm add react-i18next i18next'));
+            }
+          }
+
+          if (mergeDecision?.strategy) {
             console.log(
-              chalk.cyan(
-                `import { I18nProvider } from '${answers.reactProviderPath.replace(/\\/g, '/').replace(/\.tsx?$/, '')}';\n<I18nProvider>{children}</I18nProvider>`
+              chalk.blue(
+                `Merge strategy selected: ${mergeDecision.strategy}. Use this when running i18nsmith sync or diagnose to reconcile locales.`
               )
             );
-          } catch (error) {
-            console.warn(chalk.yellow(`Skipping i18next scaffold: ${(error as Error).message}`));
           }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to write configuration file: ${message}`);
         }
-
-        if (answers.adapterPreset === 'react-i18next') {
-          const pkg = await readPackageJson();
-          const missingDeps = ['react-i18next', 'i18next'].filter((dep) => !hasDependency(pkg, dep));
-          if (missingDeps.length) {
-            console.log(chalk.yellow('\nDependencies missing for react-i18next adapter:'));
-            missingDeps.forEach((dep) => console.log(chalk.yellow(`  • ${dep}`)));
-            console.log(chalk.blue('Install them with:'));
-            console.log(chalk.cyan('  pnpm add react-i18next i18next'));
-          }
-        }
-
-        if (mergeDecision?.strategy) {
-          console.log(
-            chalk.blue(
-              `Merge strategy selected: ${mergeDecision.strategy}. Use this when running i18nsmith sync or diagnose to reconcile locales.`
-            )
-          );
-        }
-      } catch (error) {
-        console.error(chalk.red('Failed to write configuration file:'), error);
-      }
-    });
+      })
+    );
 }
 
 type MergeStrategy = 'keep-source' | 'overwrite' | 'interactive';

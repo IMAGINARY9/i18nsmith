@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta, Scanner } from '@i18nsmith/core';
 import type { ScanCandidate } from '@i18nsmith/core';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ScanOptions {
   config?: string;
@@ -54,72 +55,74 @@ export function registerScan(program: Command) {
     .option('--list-files', 'List the files that were scanned', false)
     .option('--include <patterns...>', 'Override include globs from config (comma or space separated)', collectTargetPatterns, [])
     .option('--exclude <patterns...>', 'Override exclude globs from config (comma or space separated)', collectTargetPatterns, [])
-    .action(async (options: ScanOptions) => {
-      console.log(chalk.blue('Starting scan...'));
+    .action(
+      withErrorHandling(async (options: ScanOptions) => {
+        console.log(chalk.blue('Starting scan...'));
 
-      try {
-        const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
-        
-        // Inform user if config was found in a parent directory
-        const cwd = process.cwd();
-        if (projectRoot !== cwd) {
-          console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
-          console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
-        }
-        
-        if (options.include?.length) {
-          config.include = options.include;
-        }
-        if (options.exclude?.length) {
-          config.exclude = options.exclude;
-        }
-        const scanner = new Scanner(config, { workspaceRoot: projectRoot });
-        const summary = scanner.scan();
+        try {
+          const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
 
-        if (options.report) {
-          const outputPath = path.resolve(process.cwd(), options.report);
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
-          console.log(chalk.green(`Scan report written to ${outputPath}`));
-        }
+          // Inform user if config was found in a parent directory
+          const cwd = process.cwd();
+          if (projectRoot !== cwd) {
+            console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
+            console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+          }
 
-        if (options.json) {
-          console.log(JSON.stringify(summary, null, 2));
-          return;
-        }
+          if (options.include?.length) {
+            config.include = options.include;
+          }
+          if (options.exclude?.length) {
+            config.exclude = options.exclude;
+          }
+          const scanner = new Scanner(config, { workspaceRoot: projectRoot });
+          const summary = scanner.scan();
 
-        console.log(
-          chalk.green(
-            `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'} and found ${summary.candidates.length} candidate${summary.candidates.length === 1 ? '' : 's'}.`
-          )
-        );
+          if (options.report) {
+            const outputPath = path.resolve(process.cwd(), options.report);
+            await fs.mkdir(path.dirname(outputPath), { recursive: true });
+            await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+            console.log(chalk.green(`Scan report written to ${outputPath}`));
+          }
 
-        if (summary.candidates.length === 0) {
-          console.log(chalk.yellow('No translatable strings found.'));
-          return;
-        }
+          if (options.json) {
+            console.log(JSON.stringify(summary, null, 2));
+            return;
+          }
 
-        printCandidateTable(summary.candidates);
+          console.log(
+            chalk.green(
+              `Scanned ${summary.filesScanned} file${summary.filesScanned === 1 ? '' : 's'} and found ${summary.candidates.length} candidate${summary.candidates.length === 1 ? '' : 's'}.`
+            )
+          );
 
-        if (options.listFiles) {
-          if (summary.filesExamined.length === 0) {
-            console.log(chalk.yellow('No files matched the configured include/exclude patterns.'));
-          } else {
-            console.log(chalk.blue(`Files scanned (${summary.filesExamined.length}):`));
-            const preview = summary.filesExamined.slice(0, 200);
-            preview.forEach((file) => console.log(`  • ${file}`));
-            if (summary.filesExamined.length > preview.length) {
-              console.log(
-                chalk.gray(
-                  `  ...and ${summary.filesExamined.length - preview.length} more. Use --target to narrow the list.`
-                )
-              );
+          if (summary.candidates.length === 0) {
+            console.log(chalk.yellow('No translatable strings found.'));
+            return;
+          }
+
+          printCandidateTable(summary.candidates);
+
+          if (options.listFiles) {
+            if (summary.filesExamined.length === 0) {
+              console.log(chalk.yellow('No files matched the configured include/exclude patterns.'));
+            } else {
+              console.log(chalk.blue(`Files scanned (${summary.filesExamined.length}):`));
+              const preview = summary.filesExamined.slice(0, 200);
+              preview.forEach((file) => console.log(`  • ${file}`));
+              if (summary.filesExamined.length > preview.length) {
+                console.log(
+                  chalk.gray(
+                    `  ...and ${summary.filesExamined.length - preview.length} more. Use --target to narrow the list.`
+                  )
+                );
+              }
             }
           }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Scan failed: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Scan failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }
