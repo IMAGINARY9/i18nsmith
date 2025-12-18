@@ -57,7 +57,7 @@ vi.mock('vscode', () => {
     },
     CodeLens: class {},
     CodeAction: class {},
-    CodeActionKind: { QuickFix: 'quickfix' },
+  CodeActionKind: { QuickFix: 'quickfix', RefactorRewrite: 'refactor.rewrite' },
     StatusBarAlignment: { Right: 1 },
   };
 });

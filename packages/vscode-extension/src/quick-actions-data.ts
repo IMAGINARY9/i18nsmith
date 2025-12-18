@@ -1,3 +1,5 @@
+import * as path from 'path';
+import type { SuspiciousKeyWarning } from '@i18nsmith/core';
 import type { CheckReport } from './diagnostics';
 import { summarizeReportIssues } from './report-utils';
 import { parsePreviewableCommand, type PreviewableCommand } from './preview-intents';
@@ -5,6 +7,7 @@ import { parsePreviewableCommand, type PreviewableCommand } from './preview-inte
 export interface QuickActionDefinition {
   id: string;
   iconId: string;
+  iconLabel?: string;
   title: string;
   description: string;
   detail?: string;
@@ -12,6 +15,9 @@ export interface QuickActionDefinition {
   previewIntent?: PreviewableCommand;
   interactive?: boolean;
   confirmMessage?: string;
+  longRunning?: boolean;
+  postRunBehavior?: 'offer-output';
+  children?: QuickActionChildDefinition[];
 }
 
 export interface QuickActionSection {
@@ -29,11 +35,22 @@ export interface QuickActionMetadata {
   suggestionsCount: number;
   driftStats: { missing: number; unused: number } | null;
   runtimeReady: boolean;
+  suspiciousWarnings: SuspiciousKeyWarning[];
 }
 
 export interface QuickActionBuildOutput {
   sections: QuickActionSection[];
   metadata: QuickActionMetadata;
+}
+
+export interface QuickActionChildDefinition {
+  id: string;
+  label: string;
+  description?: string;
+  detail?: string;
+  iconId?: string;
+  command?: string;
+  commandArgs?: unknown[];
 }
 
 type SuggestionCategory =
@@ -46,6 +63,27 @@ type SuggestionCategory =
 
 type SuggestedCommandEntry = NonNullable<CheckReport['suggestedCommands']>[number];
 
+const ICONS = {
+  warning: { id: 'warning', label: 'Warning' },
+  diff: { id: 'diff', label: 'Diff preview' },
+  sync: { id: 'sync', label: 'Locale sync' },
+  renameAll: { id: 'symbol-rename', label: 'Rename Suspicious Keys' },
+  dynamic: { id: 'shield', label: 'Dynamic keys' },
+  magic: { id: 'beaker', label: 'Magic transform' },
+  analyze: { id: 'search', label: 'Analyze usage' },
+  refreshFile: { id: 'repo-pull', label: 'Refresh diagnostics' },
+  extractSelection: { id: 'pencil', label: 'Extract selection' },
+  workspaceSync: { id: 'repo-sync', label: 'Workspace sync' },
+  export: { id: 'cloud-upload', label: 'Export translations' },
+  openLocale: { id: 'book', label: 'Open locale' },
+  scaffold: { id: 'tools', label: 'Setup' },
+  health: { id: 'pulse', label: 'Health check' },
+  terminal: { id: 'terminal', label: 'Output channel' },
+  suspiciousChild: { id: 'symbol-key', label: 'Suspicious key' },
+};
+
+const MAX_SUSPICIOUS_CHILDREN = 25;
+
 export function buildQuickActionModel(request: QuickActionBuildRequest): QuickActionBuildOutput {
   const report = request.report;
   const summary = summarizeReportIssues(report);
@@ -56,9 +94,10 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const dynamicWarningCount = Array.isArray(report?.sync?.dynamicKeyWarnings)
     ? report!.sync!.dynamicKeyWarnings.length
     : 0;
-  const suspiciousWarningCount = Array.isArray(report?.sync?.suspiciousKeys)
-    ? report!.sync!.suspiciousKeys.length
-    : 0;
+  const suspiciousWarnings = Array.isArray(report?.sync?.suspiciousKeys)
+    ? (report!.sync!.suspiciousKeys as SuspiciousKeyWarning[])
+    : [];
+  const suspiciousWarningCount = suspiciousWarnings.length;
   const hardcodedCount = actionableItems.filter((item) => item.kind === 'hardcoded-text').length;
   const runtimeMissing = actionableItems.some((item) => item.kind === 'diagnostics-runtime-missing');
   const runtimeReady = !runtimeMissing;
@@ -68,6 +107,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     suggestionsCount: suggestions.length,
     driftStats,
     runtimeReady,
+    suspiciousWarnings,
   };
 
   const sections: QuickActionSection[] = [];
@@ -78,7 +118,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
       actions: [
         createQuickAction({
           id: 'initialize-runtime',
-          iconId: 'tools',
+          icon: ICONS.scaffold,
           title: 'Initialize i18n Project',
           description: 'Install runtime packages and scaffold the provider shell.',
           detail: 'Runs the scaffold adapter command with recommended defaults.',
@@ -86,10 +126,11 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
         }),
         createQuickAction({
           id: 'open-output-channel',
-          iconId: 'terminal',
+          icon: ICONS.terminal,
           title: 'Show i18nsmith Output Channel',
           description: 'Review CLI output and diagnostics.',
           command: 'i18nsmith.showOutput',
+          longRunning: false,
         }),
       ].filter(Boolean) as QuickActionDefinition[],
     });
@@ -106,7 +147,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     const extractionSuggestion = suggestionBuckets.get('extraction')?.[0];
     const extraction = createQuickAction({
       id: 'batch-extract',
-      iconId: 'diff',
+      icon: ICONS.diff,
       title:
         hardcodedCount > 0 ? `Batch Extract Hardcoded Strings (${hardcodedCount})` : 'Batch Extract Hardcoded Strings',
       description:
@@ -127,13 +168,14 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
       const syncSuggestion = suggestionBuckets.get('sync')?.[0];
       const driftAction = createQuickAction({
         id: 'fix-locale-drift',
-        iconId: 'sync',
+        icon: ICONS.sync,
         title: `Fix Locale Drift (${driftTotal})`,
         description: driftParts.length
           ? `${driftParts.join(', ')} — preview adds/removals before applying.`
           : 'Review detected drift, then selectively add or prune keys.',
         detail: syncSuggestion?.reason,
         command: syncSuggestion?.command ?? 'i18nsmith.sync',
+        postRunBehavior: 'offer-output',
       });
       if (driftAction) {
         problems.push(driftAction);
@@ -144,7 +186,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     if (validationSuggestion) {
       const validationAction = createQuickAction({
         id: 'resolve-placeholders',
-        iconId: 'check',
+        icon: ICONS.warning,
         title: 'Resolve Placeholder Issues',
         description: 'Fix interpolation mismatches before they break translations.',
         detail: validationSuggestion.reason,
@@ -159,10 +201,12 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
       problems.push(
         createQuickAction({
           id: 'rename-suspicious',
-          iconId: 'list-flat',
+          icon: ICONS.renameAll,
           title: `Rename All Suspicious Keys (${suspiciousWarningCount})`,
           description: 'Normalize flagged keys and update code references with preview.',
           command: 'i18nsmith.renameAllSuspiciousKeys',
+          postRunBehavior: 'offer-output',
+          children: buildSuspiciousKeyChildren(suspiciousWarnings),
         })!
       );
     }
@@ -171,7 +215,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
       problems.push(
         createQuickAction({
           id: 'whitelist-dynamic',
-          iconId: 'shield',
+          icon: ICONS.dynamic,
           title: `Resolve Dynamic Keys (${dynamicWarningCount})`,
           description: 'Whitelist runtime expressions to silence false unused warnings.',
           command: 'i18nsmith.whitelistDynamicKeys',
@@ -208,30 +252,33 @@ function createActiveEditorSection(request: QuickActionBuildRequest): QuickActio
   actions.push(
     createQuickAction({
       id: 'transform-file',
-      iconId: 'beaker',
+      icon: ICONS.magic,
       title: 'Magic Transform File',
       description: 'Auto-extract strings and wrap providers in the active editor.',
       command: 'i18nsmith.transformFile',
+      postRunBehavior: 'offer-output',
     })!
   );
 
   actions.push(
     createQuickAction({
       id: 'analyze-file',
-      iconId: 'search',
+      icon: ICONS.analyze,
       title: 'Analyze Usage in Current File',
       description: 'Scan the active file for translation coverage and drift.',
       command: 'i18nsmith.syncFile',
+      postRunBehavior: 'offer-output',
     })!
   );
 
   actions.push(
     createQuickAction({
       id: 'refresh-diagnostics',
-      iconId: 'repo-pull',
+      icon: ICONS.refreshFile,
       title: 'Refresh File Diagnostics',
       description: 'Reload diagnostics from the latest health report.',
       command: 'i18nsmith.refreshDiagnostics',
+      longRunning: false,
     })!
   );
 
@@ -239,10 +286,11 @@ function createActiveEditorSection(request: QuickActionBuildRequest): QuickActio
     actions.push(
       createQuickAction({
         id: 'extract-selection',
-        iconId: 'pencil',
+          icon: ICONS.extractSelection,
         title: 'Extract Selection to Key',
         description: 'Turn highlighted text into a reusable translation key.',
         command: 'i18nsmith.extractSelection',
+          longRunning: false,
       })!
     );
   }
@@ -262,11 +310,12 @@ function createProjectHealthSection(
   actions.push(
     createQuickAction({
       id: 'workspace-sync',
-      iconId: 'repo-sync',
+      icon: ICONS.workspaceSync,
       title: 'Full Workspace Sync',
       description: 'Run a comprehensive sync across the repository.',
       detail: 'Preview adds/removals and confirm before writing.',
       command: 'i18nsmith.sync',
+      postRunBehavior: 'offer-output',
     })!
   );
 
@@ -274,7 +323,7 @@ function createProjectHealthSection(
     actions.push(
       createQuickAction({
         id: 'handoff-translators',
-        iconId: 'cloud-upload',
+          icon: ICONS.export,
         title: missingCount > 0 ? `Handoff to Translators (${missingCount})` : 'Handoff to Translators',
         description:
           missingCount > 0
@@ -282,6 +331,7 @@ function createProjectHealthSection(
             : 'Export missing translations for localization teams.',
         detail: translationSuggestion?.reason,
         command: 'i18nsmith.exportMissingTranslations',
+          postRunBehavior: 'offer-output',
       })!
     );
   }
@@ -289,10 +339,11 @@ function createProjectHealthSection(
   actions.push(
     createQuickAction({
       id: 'open-locale',
-      iconId: 'book',
+      icon: ICONS.openLocale,
       title: 'Open Primary Locale',
       description: 'Jump to the configured source locale file.',
       command: 'i18nsmith.openLocaleFile',
+      longRunning: false,
     })!
   );
 
@@ -309,7 +360,7 @@ function createSetupSection(
     actions.push(
       createQuickAction({
         id: 'scaffold-runtime',
-        iconId: 'tools',
+        icon: ICONS.scaffold,
         title: 'Scaffold Runtime & Provider',
         description: 'Install runtime packages and generate the provider shell.',
         detail: setupSuggestion.reason,
@@ -321,35 +372,42 @@ function createSetupSection(
   actions.push(
     createQuickAction({
       id: 'run-health-check',
-      iconId: 'pulse',
+      icon: ICONS.health,
       title: 'Run Full Health Check',
       description: 'Trigger a comprehensive scan and refresh diagnostics.',
       command: 'i18nsmith.check',
+      postRunBehavior: 'offer-output',
     })!
   );
 
   actions.push(
     createQuickAction({
       id: 'show-output',
-      iconId: 'terminal',
+      icon: ICONS.terminal,
       title: 'Show i18nsmith Output Channel',
       description: 'Open the dedicated output pane for detailed logs.',
       command: 'i18nsmith.showOutput',
+      longRunning: false,
     })!
   );
 
   return actions.length ? { title: '⚙️ Setup & Diagnostics', actions } : null;
 }
 
-function createQuickAction(config: {
+interface CommandActionConfig {
   id: string;
-  iconId: string;
+  icon: { id: string; label: string };
   title: string;
   description: string;
   detail?: string;
   command?: string;
   confirmMessage?: string;
-}): QuickActionDefinition | null {
+  longRunning?: boolean;
+  postRunBehavior?: 'offer-output';
+  children?: QuickActionChildDefinition[];
+}
+
+function createQuickAction(config: CommandActionConfig): QuickActionDefinition | null {
   if (!config.command) {
     return null;
   }
@@ -359,7 +417,8 @@ function createQuickAction(config: {
 
   return {
     id: config.id,
-    iconId: config.iconId,
+    iconId: config.icon.id,
+    iconLabel: config.icon.label,
     title: config.title,
     description: config.description,
     detail: config.detail ?? (previewIntent ? formatPreviewIntentDetail(previewIntent, config.command) : undefined),
@@ -367,6 +426,9 @@ function createQuickAction(config: {
     previewIntent: previewIntent ?? undefined,
     interactive: !isVsCodeCommand && isInteractiveCliCommand(config.command),
     confirmMessage: config.confirmMessage,
+    longRunning: config.longRunning !== false,
+    postRunBehavior: config.postRunBehavior,
+    children: config.children,
   };
 }
 
@@ -437,4 +499,26 @@ function formatPreviewIntentDetail(intent: PreviewableCommand, _originalCommand:
 
 function isInteractiveCliCommand(command: string): boolean {
   return /\b(scaffold-adapter|init)\b/.test(command);
+}
+
+function buildSuspiciousKeyChildren(warnings: SuspiciousKeyWarning[]): QuickActionChildDefinition[] {
+  if (!warnings.length) {
+    return [];
+  }
+
+  return warnings.slice(0, MAX_SUSPICIOUS_CHILDREN).map((warning, index) => ({
+    id: `suspicious-${index}-${warning.key}`,
+    label: warning.key,
+    description: warning.reason ? formatSuspiciousReason(warning.reason) : undefined,
+    detail: warning.filePath ? path.basename(warning.filePath) : undefined,
+    iconId: ICONS.suspiciousChild.id,
+    command: 'i18nsmith.renameSuspiciousKey',
+    commandArgs: [warning],
+  }));
+}
+
+function formatSuspiciousReason(reason: string): string {
+  return reason
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }

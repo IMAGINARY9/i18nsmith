@@ -37,6 +37,20 @@ interface QuickActionPick extends vscode.QuickPickItem {
 }
 
 const QUICK_ACTION_SCAN_STALE_MS = 4000;
+const QUICK_ACTION_INSTANT_COMMANDS = new Set([
+  'i18nsmith.openLocaleFile',
+  'i18nsmith.showOutput',
+  'i18nsmith.refreshDiagnostics',
+  'i18nsmith.extractSelection',
+]);
+const QUICK_ACTION_OUTPUT_COMMANDS = new Set([
+  'i18nsmith.check',
+  'i18nsmith.sync',
+  'i18nsmith.syncFile',
+  'i18nsmith.transformFile',
+  'i18nsmith.exportMissingTranslations',
+  'i18nsmith.renameAllSuspiciousKeys',
+]);
 
 let diagnosticsManager: DiagnosticsManager;
 let reportWatcher: ReportWatcher;
@@ -480,10 +494,18 @@ function buildQuickPickPlaceholder(metadata: QuickActionMetadata): string {
 }
 
 function createQuickPickItem(action: QuickActionDefinition): QuickActionPick {
+  const label = action.iconId ? `$(${action.iconId}) ${action.title}` : action.title;
+  const detailParts: string[] = [];
+  if (action.iconLabel) {
+    detailParts.push(action.iconLabel);
+  }
+  if (action.detail) {
+    detailParts.push(action.detail);
+  }
   return {
-    label: `$(${action.iconId}) ${action.title}`,
+    label,
     description: action.description,
-    detail: action.detail,
+    detail: detailParts.length ? detailParts.join(' • ') : undefined,
     action,
   };
 }
@@ -496,25 +518,41 @@ async function runQuickActionDefinition(action: QuickActionDefinition) {
     }
   }
 
-  if (action.previewIntent) {
-    await executePreviewIntent(action.previewIntent);
-    return;
+  const runner = async () => {
+    if (action.previewIntent) {
+      await executePreviewIntent(action.previewIntent);
+      return;
+    }
+
+    if (!action.command) {
+      vscode.window.showWarningMessage('This quick action is not yet wired to a command.');
+      return;
+    }
+
+    if (action.command.startsWith('i18nsmith.')) {
+      await vscode.commands.executeCommand(action.command);
+      return;
+    }
+
+    const handled = await tryHandlePreviewableCommand(action.command);
+    if (!handled) {
+      vscode.window.showWarningMessage(`Unsupported quick action command: ${action.command}`);
+    }
+  };
+
+  if (shouldShowQuickActionProgress(action)) {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `i18nsmith: ${action.title}`,
+      },
+      runner
+    );
+  } else {
+    await runner();
   }
 
-  if (!action.command) {
-    vscode.window.showWarningMessage('This quick action is not yet wired to a command.');
-    return;
-  }
-
-  if (action.command.startsWith('i18nsmith.')) {
-    await vscode.commands.executeCommand(action.command);
-    return;
-  }
-
-  const handled = await tryHandlePreviewableCommand(action.command);
-  if (!handled) {
-    vscode.window.showWarningMessage(`Unsupported quick action command: ${action.command}`);
-  }
+  await offerQuickActionOutputLink(action);
 }
 
 async function showQuickActions() {
@@ -601,6 +639,41 @@ async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean>
 
   await executePreviewIntent(parsed);
   return true;
+}
+
+function shouldShowQuickActionProgress(action: QuickActionDefinition): boolean {
+  if (action.previewIntent) {
+    return true;
+  }
+  if (!action.command) {
+    return false;
+  }
+  if (action.longRunning === false) {
+    return false;
+  }
+  if (QUICK_ACTION_INSTANT_COMMANDS.has(action.command)) {
+    return false;
+  }
+  return true;
+}
+
+async function offerQuickActionOutputLink(action: QuickActionDefinition) {
+  const shouldOffer =
+    action.postRunBehavior === 'offer-output' ||
+    (action.command && QUICK_ACTION_OUTPUT_COMMANDS.has(action.command));
+
+  if (shouldOffer) {
+    const choice = await vscode.window.showInformationMessage(
+      `i18nsmith: ${action.title} finished.`,
+      'Show Output'
+    );
+    if (choice === 'Show Output') {
+      smartScanner?.showOutput?.();
+    }
+    return;
+  }
+
+  vscode.window.setStatusBarMessage(`i18nsmith: ${action.title} completed.`, 3000);
 }
 
 async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
