@@ -7,6 +7,7 @@ import { Transformer } from '@i18nsmith/transformer';
 import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer';
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface TransformOptions {
   config?: string;
@@ -191,7 +192,8 @@ export function registerTransform(program: Command) {
     .option('--migrate-text-keys', 'Migrate existing t("Text") calls to structured keys')
     .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
     .option('--apply-preview <path>', 'Apply a previously saved transform preview JSON file safely')
-    .action(async (options: TransformOptions) => {
+    .action(
+      withErrorHandling(async (options: TransformOptions) => {
       if (options.applyPreview) {
         await applyPreviewFile('transform', options.applyPreview);
         return;
@@ -272,13 +274,14 @@ export function registerTransform(program: Command) {
           console.log(chalk.yellow('Run again with --write to apply these changes.'));
         }
       } catch (error) {
-        const errorMessage = (error as Error).message;
+        const errorMessage = error instanceof Error ? error.message : String(error);
         if (options.json) {
           console.log(JSON.stringify({ ok: false, error: { message: errorMessage } }, null, 2));
-        } else {
-          console.error(chalk.red('Transform failed:'), errorMessage);
+          process.exitCode = 1;
+          return;
         }
-        process.exitCode = 1;
+        throw new CliError(`Transform failed: ${errorMessage}`);
       }
-    });
+    })
+    );
 }

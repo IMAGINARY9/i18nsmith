@@ -8,8 +8,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import fg from 'fast-glob';
-import { loadConfigWithMeta, diagnoseWorkspace, I18nConfig } from '@i18nsmith/core';
+import { loadConfigWithMeta, I18nConfig } from '@i18nsmith/core';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface PreflightResult {
   passed: boolean;
@@ -36,18 +37,25 @@ export function registerPreflight(program: Command) {
     .option('-c, --config <path>', 'Path to i18nsmith config file', 'i18n.config.json')
     .option('--fix', 'Attempt to fix issues automatically', false)
     .option('--json', 'Output results as JSON', false)
-    .action(async (options: PreflightOptions) => {
-      const result = await runPreflightChecks(options);
+    .action(
+      withErrorHandling(async (options: PreflightOptions) => {
+        try {
+          const result = await runPreflightChecks(options);
 
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
-        process.exitCode = result.passed ? 0 : 1;
-        return;
-      }
+          if (options.json) {
+            console.log(JSON.stringify(result, null, 2));
+            process.exitCode = result.passed ? 0 : 1;
+            return;
+          }
 
-      printPreflightResults(result);
-      process.exitCode = result.passed ? 0 : 1;
-    });
+          printPreflightResults(result);
+          process.exitCode = result.passed ? 0 : 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Preflight failed: ${message}`);
+        }
+      })
+    );
 }
 
 async function runPreflightChecks(options: PreflightOptions): Promise<PreflightResult> {

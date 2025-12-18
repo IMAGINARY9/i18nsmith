@@ -350,7 +350,7 @@ export function withErrorHandling(action: (...args: any[]) => Promise<void>) {
 }
 ```
 
-**Status (Dec 2025):** ⚙️ In progress. `CliError` plus `withErrorHandling` now live under `packages/cli/src/utils/errors.ts`, and the `check`, `sync`, and legacy `audit` commands all flow through the shared wrapper. Remaining commands still rely on bespoke try/catch logic and should be migrated next.
+**Status (Dec 2025):** ✅ Completed. `CliError` plus `withErrorHandling` now live under `packages/cli/src/utils/errors.ts`, and every CLI command (check, sync, audit, backup, diagnose, config, debug-patterns, install-hooks, preflight, rename, review, scaffold-adapter, scan, transform, translate, init, etc.) registers via the shared wrapper for consistent logging and exit codes.
 
 ---
 

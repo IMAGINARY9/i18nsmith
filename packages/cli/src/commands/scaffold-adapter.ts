@@ -2,10 +2,11 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { diagnoseWorkspace, loadConfig } from '@i18nsmith/core';
-import { scaffoldTranslationContext, scaffoldI18next, ScaffoldResult } from '../utils/scaffold.js';
+import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { readPackageJson, hasDependency } from '../utils/pkg.js';
 import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
 import { maybeInjectProvider } from '../utils/provider-injector.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ScaffoldCommandOptions {
   type?: 'custom' | 'react-i18next';
@@ -44,7 +45,8 @@ export function registerScaffoldAdapter(program: Command) {
     .option('--install-deps', 'Automatically install adapter dependencies when missing', false)
     .option('--dry-run', 'Preview provider injection changes without modifying files', false)
     .option('--no-skip-if-detected', 'Force scaffolding even if existing adapters/providers are detected')
-    .action(async (options: ScaffoldCommandOptions) => {
+    .action(
+      withErrorHandling(async (options: ScaffoldCommandOptions) => {
       console.log(chalk.blue('Scaffolding translation resources...'));
 
       const answers = await inquirer.prompt<ScaffoldAnswers>([
@@ -221,9 +223,11 @@ export function registerScaffoldAdapter(program: Command) {
           }
         }
       } catch (error) {
-        console.error(chalk.red('Failed to scaffold adapter:'), (error as Error).message);
+        const message = error instanceof Error ? error.message : String(error);
+        throw new CliError(`Failed to scaffold adapter: ${message}`);
       }
-    });
+    })
+    );
 }
 
 async function detectExistingRuntime(): Promise<string | null> {

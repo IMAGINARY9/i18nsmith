@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import type { Command } from 'commander';
 import { loadConfigWithMeta, Scanner, type ScanCandidate, type ScanSummary } from '@i18nsmith/core';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ReviewCommandOptions {
   config?: string;
@@ -133,94 +134,96 @@ export function registerReview(program: Command) {
     .option('--json', 'Print raw bucket data as JSON', false)
     .option('--limit <n>', 'Limit the number of items per session (default: 20)', (value) => parseInt(value, 10))
     .option('--scan-calls', 'Include translation call arguments', false)
-    .action(async (options: ReviewCommandOptions) => {
-      try {
-        const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
-        const scanner = new Scanner(config, { workspaceRoot: projectRoot });
-  const summary = scanner.scan({ scanCalls: options.scanCalls }) as BucketedScanSummary;
-  const buckets = summary.buckets ?? {};
-  const needsReview = buckets.needsReview ?? [];
-  const skipped = buckets.skipped ?? [];
+    .action(
+      withErrorHandling(async (options: ReviewCommandOptions) => {
+        try {
+          const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
+          const scanner = new Scanner(config, { workspaceRoot: projectRoot });
+          const summary = scanner.scan({ scanCalls: options.scanCalls }) as BucketedScanSummary;
+          const buckets = summary.buckets ?? {};
+          const needsReview = buckets.needsReview ?? [];
+          const skipped = buckets.skipped ?? [];
 
-        if (options.json) {
-          console.log(JSON.stringify({ needsReview, skipped }, null, 2));
-          return;
-        }
-
-        if (!needsReview.length) {
-          console.log(chalk.green('No borderline candidates detected.'));
-          const reasons = summarizeSkipReasons(skipped);
-          if (reasons.length) {
-            console.log(chalk.gray('Most common skip reasons:'));
-            reasons.forEach((line) => console.log(chalk.gray(`  • ${line}`)));
+          if (options.json) {
+            console.log(JSON.stringify({ needsReview, skipped }, null, 2));
+            return;
           }
-          return;
-        }
 
-        if (!process.stdout.isTTY || process.env.CI === 'true') {
-          console.log(chalk.red('Interactive review requires a TTY. Use --json for non-interactive output.'));
-          process.exitCode = 1;
-          return;
-        }
-
-        const limit = normalizeLimit(options.limit);
-        const queue = needsReview.slice(0, limit);
-        console.log(
-          chalk.blue(
-            `Reviewing ${queue.length} of ${needsReview.length} candidate${needsReview.length === 1 ? '' : 's'} (limit=${limit}).`
-          )
-        );
-
-        const allowPatterns: string[] = [];
-        const denyPatterns: string[] = [];
-
-        for (const candidate of queue) {
-          printCandidate(candidate);
-          const action = await promptAction();
-          if (action === 'stop') {
-            break;
+          if (!needsReview.length) {
+            console.log(chalk.green('No borderline candidates detected.'));
+            const reasons = summarizeSkipReasons(skipped);
+            if (reasons.length) {
+              console.log(chalk.gray('Most common skip reasons:'));
+              reasons.forEach((line) => console.log(chalk.gray(`  • ${line}`)));
+            }
+            return;
           }
-          if (action === 'skip') {
-            continue;
+
+          if (!process.stdout.isTTY || process.env.CI === 'true') {
+            console.log(chalk.red('Interactive review requires a TTY. Use --json for non-interactive output.'));
+            process.exitCode = 1;
+            return;
           }
-          const pattern = literalToRegexPattern(candidate.text);
-          if (action === 'allow') {
-            allowPatterns.push(pattern);
-            console.log(chalk.green(`  → Queued ${pattern} for allowPatterns`));
-          } else if (action === 'deny') {
-            denyPatterns.push(pattern);
-            console.log(chalk.yellow(`  → Queued ${pattern} for denyPatterns`));
+
+          const limit = normalizeLimit(options.limit);
+          const queue = needsReview.slice(0, limit);
+          console.log(
+            chalk.blue(
+              `Reviewing ${queue.length} of ${needsReview.length} candidate${needsReview.length === 1 ? '' : 's'} (limit=${limit}).`
+            )
+          );
+
+          const allowPatterns: string[] = [];
+          const denyPatterns: string[] = [];
+
+          for (const candidate of queue) {
+            printCandidate(candidate);
+            const action = await promptAction();
+            if (action === 'stop') {
+              break;
+            }
+            if (action === 'skip') {
+              continue;
+            }
+            const pattern = literalToRegexPattern(candidate.text);
+            if (action === 'allow') {
+              allowPatterns.push(pattern);
+              console.log(chalk.green(`  → Queued ${pattern} for allowPatterns`));
+            } else if (action === 'deny') {
+              denyPatterns.push(pattern);
+              console.log(chalk.yellow(`  → Queued ${pattern} for denyPatterns`));
+            }
           }
+
+          if (!allowPatterns.length && !denyPatterns.length) {
+            console.log(chalk.gray('No config changes requested.'));
+            return;
+          }
+
+          const { allowAdded, denyAdded, wrote } = await writeExtractionOverrides(
+            configPath,
+            allowPatterns,
+            denyPatterns
+          );
+
+          if (!wrote) {
+            console.log(chalk.gray('Patterns already existed; config unchanged.'));
+            return;
+          }
+
+          console.log(
+            chalk.green(
+              `Updated ${relativize(configPath)} (${allowAdded} allow, ${denyAdded} deny pattern${
+                allowAdded + denyAdded === 1 ? '' : 's'
+              } added).`
+            )
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Review failed: ${message}`);
         }
-
-        if (!allowPatterns.length && !denyPatterns.length) {
-          console.log(chalk.gray('No config changes requested.'));
-          return;
-        }
-
-        const { allowAdded, denyAdded, wrote } = await writeExtractionOverrides(
-          configPath,
-          allowPatterns,
-          denyPatterns
-        );
-
-        if (!wrote) {
-          console.log(chalk.gray('Patterns already existed; config unchanged.'));
-          return;
-        }
-
-        console.log(
-          chalk.green(
-            `Updated ${relativize(configPath)} (${allowAdded} allow, ${denyAdded} deny pattern${
-              allowAdded + denyAdded === 1 ? '' : 's'
-            } added).`
-          )
-        );
-      } catch (error) {
-        console.error(chalk.red('Review failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }
 
 function relativize(filePath: string): string {

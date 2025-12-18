@@ -4,6 +4,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { loadConfig, KeyRenamer, type KeyRenameSummary, type KeyRenameBatchSummary, type KeyRenameMapping } from '@i18nsmith/core';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
+import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ScanOptions {
   config: string;
@@ -40,58 +41,60 @@ export function registerRename(program: Command): void {
     .option('--diff', 'Display unified diffs for files that would change', false)
     .option('--preview-output <path>', 'Write preview summary (JSON) to a file (implies dry-run)')
     .option('--apply-preview <path>', 'Apply a previously saved rename preview JSON file safely')
-    .action(async (oldKey: string, newKey: string, options: RenameKeyOptions) => {
-      if (options.applyPreview) {
-        await applyPreviewFile('rename-key', options.applyPreview);
-        return;
-      }
-
-      const previewMode = Boolean(options.previewOutput);
-      const writeEnabled = Boolean(options.write) && !previewMode;
-      if (previewMode && options.write) {
-        console.log(chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.'));
-      }
-      options.write = writeEnabled;
-
-      console.log(chalk.blue(writeEnabled ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
-
-      try {
-        const config = await loadConfig(options.config);
-        const renamer = new KeyRenamer(config);
-        const summary = await renamer.rename(oldKey, newKey, {
-          write: options.write,
-          diff: options.diff || previewMode,
-        });
-
-        if (previewMode && options.previewOutput) {
-          const savedPath = await writePreviewFile('rename-key', summary, options.previewOutput);
-          console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+    .action(
+      withErrorHandling(async (oldKey: string, newKey: string, options: RenameKeyOptions) => {
+        if (options.applyPreview) {
+          await applyPreviewFile('rename-key', options.applyPreview);
           return;
         }
 
-        if (options.report) {
-          const outputPath = path.resolve(process.cwd(), options.report);
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
-          console.log(chalk.green(`Rename report written to ${outputPath}`));
+        const previewMode = Boolean(options.previewOutput);
+        const writeEnabled = Boolean(options.write) && !previewMode;
+        if (previewMode && options.write) {
+          console.log(chalk.yellow('Preview requested; ignoring --write and running in dry-run mode.'));
         }
+        options.write = writeEnabled;
 
-        if (options.json) {
-          console.log(JSON.stringify(summary, null, 2));
-          return;
+        console.log(chalk.blue(writeEnabled ? 'Renaming translation key...' : 'Planning key rename (dry-run)...'));
+
+        try {
+          const config = await loadConfig(options.config);
+          const renamer = new KeyRenamer(config);
+          const summary = await renamer.rename(oldKey, newKey, {
+            write: options.write,
+            diff: options.diff || previewMode,
+          });
+
+          if (previewMode && options.previewOutput) {
+            const savedPath = await writePreviewFile('rename-key', summary, options.previewOutput);
+            console.log(chalk.green(`Preview written to ${path.relative(process.cwd(), savedPath)}`));
+            return;
+          }
+
+          if (options.report) {
+            const outputPath = path.resolve(process.cwd(), options.report);
+            await fs.mkdir(path.dirname(outputPath), { recursive: true });
+            await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+            console.log(chalk.green(`Rename report written to ${outputPath}`));
+          }
+
+          if (options.json) {
+            console.log(JSON.stringify(summary, null, 2));
+            return;
+          }
+
+          printRenameSummary(summary);
+
+          if (!options.write) {
+            console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
+            console.log(chalk.yellow('Run again with --write to apply changes.'));
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Rename failed: ${message}`);
         }
-
-        printRenameSummary(summary);
-
-        if (!options.write) {
-          console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
-          console.log(chalk.yellow('Run again with --write to apply changes.'));
-        }
-      } catch (error) {
-        console.error(chalk.red('Rename failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 
   program
     .command('rename-keys')
@@ -102,49 +105,51 @@ export function registerRename(program: Command): void {
     .option('--report <path>', 'Write JSON summary to a file (for CI or editors)')
     .option('--write', 'Write changes to disk (defaults to dry-run)', false)
     .option('--diff', 'Display unified diffs for files that would change', false)
-    .action(async (options: RenameMapOptions) => {
-      console.log(
-        chalk.blue(options.write ? 'Renaming translation keys from map...' : 'Planning batch rename (dry-run)...')
-      );
+    .action(
+      withErrorHandling(async (options: RenameMapOptions) => {
+        console.log(
+          chalk.blue(options.write ? 'Renaming translation keys from map...' : 'Planning batch rename (dry-run)...')
+        );
 
-      try {
-        const config = await loadConfig(options.config);
-        const mappings = await loadRenameMappings(options.map);
-        const renamer = new KeyRenamer(config);
-        const summary = await renamer.renameBatch(mappings, { write: options.write, diff: options.diff });
+        try {
+          const config = await loadConfig(options.config);
+          const mappings = await loadRenameMappings(options.map);
+          const renamer = new KeyRenamer(config);
+          const summary = await renamer.renameBatch(mappings, { write: options.write, diff: options.diff });
 
-        if (options.report) {
-          const outputPath = path.resolve(process.cwd(), options.report);
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
-          console.log(chalk.green(`Batch rename report written to ${outputPath}`));
-        }
-
-        if (options.json) {
-          console.log(JSON.stringify(summary, null, 2));
-          return;
-        }
-
-        printRenameBatchSummary(summary);
-
-        // Print source file diffs if requested
-        if (options.diff && summary.diffs.length > 0) {
-          console.log(chalk.blue('\nSource file changes:'));
-          for (const diff of summary.diffs) {
-            console.log(chalk.cyan(`\n--- ${diff.relativePath} (${diff.changes} change${diff.changes === 1 ? '' : 's'}) ---`));
-            console.log(diff.diff);
+          if (options.report) {
+            const outputPath = path.resolve(process.cwd(), options.report);
+            await fs.mkdir(path.dirname(outputPath), { recursive: true });
+            await fs.writeFile(outputPath, JSON.stringify(summary, null, 2));
+            console.log(chalk.green(`Batch rename report written to ${outputPath}`));
           }
-        }
 
-        if (!options.write) {
-          console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
-          console.log(chalk.yellow('Run again with --write to apply changes.'));
+          if (options.json) {
+            console.log(JSON.stringify(summary, null, 2));
+            return;
+          }
+
+          printRenameBatchSummary(summary);
+
+          // Print source file diffs if requested
+          if (options.diff && summary.diffs.length > 0) {
+            console.log(chalk.blue('\nSource file changes:'));
+            for (const diff of summary.diffs) {
+              console.log(chalk.cyan(`\n--- ${diff.relativePath} (${diff.changes} change${diff.changes === 1 ? '' : 's'}) ---`));
+              console.log(diff.diff);
+            }
+          }
+
+          if (!options.write) {
+            console.log(chalk.cyan('\n📋 DRY RUN - No files were modified'));
+            console.log(chalk.yellow('Run again with --write to apply changes.'));
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Batch rename failed: ${message}`);
         }
-      } catch (error) {
-        console.error(chalk.red('Batch rename failed:'), (error as Error).message);
-        process.exitCode = 1;
-      }
-    });
+      })
+    );
 }
 
 function printRenameSummary(summary: KeyRenameSummary) {
