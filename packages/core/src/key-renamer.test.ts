@@ -184,4 +184,63 @@ export function Profile() {
     expect(frDiff?.diff).toContain('old.key');
     expect(frDiff?.diff).toContain('new.key');
   });
+
+  it('renames occurrences with property access (e.g., i18n.t)', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'I18nTest.tsx'),
+      `import i18n from './i18n';
+export function I18nTest() {
+  return <div>{i18n.t('old.key')}</div>;
+}
+`
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key', { write: true });
+
+    expect(summary.occurrences).toBe(2); // One in App.tsx, one in I18nTest.tsx
+    expect(summary.filesUpdated).toContain('src/I18nTest.tsx');
+    expect(summary.filesUpdated).toContain('src/App.tsx');
+
+    const content = await fs.readFile(path.join(tempDir, 'src', 'I18nTest.tsx'), 'utf8');
+    expect(content).toContain("i18n.t('new.key')");
+  });
+
+  it('finds files in default include directories (e.g., pages/)', async () => {
+    await fs.mkdir(path.join(tempDir, 'pages'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempDir, 'pages', 'index.tsx'),
+      `export default function Home() {
+  return <div>{t('old.key')}</div>;
+}
+`
+    );
+
+    // Use a config with empty include to test defaults
+    const configWithoutInclude = { ...baseConfig, include: [] };
+    const renamer = new KeyRenamer(configWithoutInclude, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key');
+
+    expect(summary.occurrences).toBe(2); // One in App.tsx (src/), one in index.tsx (pages/)
+  });
+
+  it('renames keys with extra whitespace in source (normalization)', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Whitespace.tsx'),
+      `export function Whitespace() {
+  return <div>{t('  suspicious   key   with   spaces  ')}</div>;
+}
+`
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    // The mapping uses the normalized key as "from"
+    const summary = await renamer.rename('suspicious key with spaces', 'normalized-key', { write: true });
+
+    expect(summary.occurrences).toBe(1);
+    expect(summary.filesUpdated).toContain('src/Whitespace.tsx');
+
+    const content = await fs.readFile(path.join(tempDir, 'src', 'Whitespace.tsx'), 'utf8');
+    expect(content).toContain("t('normalized-key')");
+  });
 });

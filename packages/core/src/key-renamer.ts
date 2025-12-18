@@ -1,6 +1,6 @@
 import path from 'path';
 import { Node, Project, SourceFile } from 'ts-morph';
-import { I18nConfig } from './config.js';
+import { I18nConfig, DEFAULT_INCLUDE } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
 import { createUnifiedDiff, SourceFileDiffEntry, LocaleDiffEntry, buildLocaleDiffs } from './diff-utils.js';
@@ -185,7 +185,7 @@ export class KeyRenamer {
           return;
         }
         const callee = node.getExpression();
-        if (!Node.isIdentifier(callee) || callee.getText() !== this.translationIdentifier) {
+        if (!this.isTranslationCall(callee)) {
           return;
         }
         const [arg] = node.getArguments();
@@ -193,12 +193,18 @@ export class KeyRenamer {
           return;
         }
         const literal = arg.getLiteralText();
-        const mapping = mappingBySource.get(literal);
+        // Try exact match first, then normalized match
+        let mapping = mappingBySource.get(literal);
+        if (!mapping) {
+          const normalized = literal.replace(/\s+/g, ' ').trim();
+          mapping = mappingBySource.get(normalized);
+        }
+        
         if (!mapping) {
           return;
         }
 
-        occurrencesByKey.set(literal, (occurrencesByKey.get(literal) ?? 0) + 1);
+        occurrencesByKey.set(mapping.from, (occurrencesByKey.get(mapping.from) ?? 0) + 1);
         hasMatch = true;
       });
 
@@ -219,7 +225,7 @@ export class KeyRenamer {
             return;
           }
           const callee = node.getExpression();
-          if (!Node.isIdentifier(callee) || callee.getText() !== this.translationIdentifier) {
+          if (!this.isTranslationCall(callee)) {
             return;
           }
           const [arg] = node.getArguments();
@@ -227,7 +233,12 @@ export class KeyRenamer {
             return;
           }
           const literal = arg.getLiteralText();
-          const mapping = mappingBySource.get(literal);
+          let mapping = mappingBySource.get(literal);
+          if (!mapping) {
+            const normalized = literal.replace(/\s+/g, ' ').trim();
+            mapping = mappingBySource.get(normalized);
+          }
+
           if (mapping) {
             arg.setLiteralValue(mapping.to);
           }
@@ -281,10 +292,14 @@ export class KeyRenamer {
           } else {
             const result = await this.localeStore.renameKey(preview.locale, mapping.from, mapping.to);
             if (result === 'duplicate') {
-              // This shouldn't happen given the check above, but safety first
-              throw new Error(
-                `Target key "${mapping.to}" already exists in locale ${preview.locale}. Rename aborted to prevent data loss.`
-              );
+              if (allowConflicts) {
+                // If conflicts are allowed, just remove the old key (merge)
+                await this.localeStore.remove(preview.locale, mapping.from);
+              } else {
+                throw new Error(
+                  `Target key "${mapping.to}" already exists in locale ${preview.locale}. Rename aborted to prevent data loss.`
+                );
+              }
             }
           }
         }
@@ -316,7 +331,7 @@ export class KeyRenamer {
       : [];
 
     const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
-    const actionableItems = this.buildActionableItems(mappingSummaries);
+    const actionableItems = this.buildActionableItems(mappingSummaries, allowConflicts);
 
     return {
       filesScanned: files.length,
@@ -331,7 +346,10 @@ export class KeyRenamer {
     };
   }
 
-  private buildActionableItems(mappingSummaries: KeyRenameMappingSummary[]): ActionableItem[] {
+  private buildActionableItems(
+    mappingSummaries: KeyRenameMappingSummary[],
+    allowConflicts: boolean = false
+  ): ActionableItem[] {
     const items: ActionableItem[] = [];
     mappingSummaries.forEach((mapping) => {
       if (mapping.occurrences === 0) {
@@ -357,7 +375,7 @@ export class KeyRenamer {
         if (preview.duplicate) {
           items.push({
             kind: 'rename-duplicate-target',
-            severity: 'error',
+            severity: allowConflicts ? 'warn' : 'error',
             key: mapping.to,
             locale: preview.locale,
             message: `Locale ${preview.locale} already has key "${mapping.to}".`,
@@ -436,9 +454,28 @@ export class KeyRenamer {
   private getGlobPatterns(): string[] {
     const includes = Array.isArray(this.config.include) && this.config.include.length
       ? this.config.include
-      : ['src/**/*.{ts,tsx,js,jsx}'];
+      : DEFAULT_INCLUDE;
     const excludes = this.config.exclude?.map((pattern) => `!${pattern}`) ?? [];
     return [...includes, ...excludes];
+  }
+
+  private isTranslationCall(node: Node): boolean {
+    // Simple identifier: t('key')
+    if (Node.isIdentifier(node) && node.getText() === this.translationIdentifier) {
+      return true;
+    }
+
+    // Property access: i18n.t('key')
+    if (Node.isPropertyAccessExpression(node)) {
+      const name = node.getName();
+      if (name === this.translationIdentifier) {
+        return true;
+      }
+      // Recursive check for nested property access like i18n.methods.t
+      return this.isTranslationCall(node.getExpression());
+    }
+
+    return false;
   }
 
   private getRelativePath(filePath: string): string {

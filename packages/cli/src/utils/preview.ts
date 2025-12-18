@@ -56,15 +56,9 @@ export async function applyPreviewFile(
 ): Promise<void> {
   const payload = await readPreviewFile(expectedKind, previewPath);
   const sanitizedArgs = sanitizePreviewArgs(payload.args);
-  const [command, ...rest] = sanitizedArgs;
-  if (!command) {
-    throw new Error('Preview file does not include the original command.');
-  }
-  if (command !== expectedKind) {
-    throw new Error(`Preview command mismatch. Expected ${expectedKind}, got ${command}.`);
-  }
+  const rest = sanitizedArgs[0] === expectedKind ? sanitizedArgs.slice(1) : sanitizedArgs;
 
-  const replayArgs = [command, ...rest];
+  const replayArgs = [expectedKind, ...rest];
   if (!replayArgs.some((arg) => arg === '--write' || arg.startsWith('--write='))) {
     replayArgs.push('--write');
   }

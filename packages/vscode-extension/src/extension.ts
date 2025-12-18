@@ -42,6 +42,12 @@ const QUICK_ACTION_INSTANT_COMMANDS = new Set([
   'i18nsmith.showOutput',
   'i18nsmith.refreshDiagnostics',
   'i18nsmith.extractSelection',
+  'i18nsmith.check',
+  'i18nsmith.sync',
+  'i18nsmith.syncFile',
+  'i18nsmith.transformFile',
+  'i18nsmith.exportMissingTranslations',
+  'i18nsmith.renameAllSuspiciousKeys',
 ]);
 const QUICK_ACTION_OUTPUT_COMMANDS = new Set([
   'i18nsmith.check',
@@ -642,8 +648,12 @@ async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean>
 }
 
 function shouldShowQuickActionProgress(action: QuickActionDefinition): boolean {
+  if (action.interactive) {
+    return false;
+  }
   if (action.previewIntent) {
-    return true;
+    // Preview intents handle their own progress (analysis phase)
+    return false;
   }
   if (!action.command) {
     return false;
@@ -658,6 +668,11 @@ function shouldShowQuickActionProgress(action: QuickActionDefinition): boolean {
 }
 
 async function offerQuickActionOutputLink(action: QuickActionDefinition) {
+  if (action.previewIntent) {
+    // Preview intents handle their own completion UX
+    return;
+  }
+
   const shouldOffer =
     action.postRunBehavior === 'offer-output' ||
     (action.command && QUICK_ACTION_OUTPUT_COMMANDS.has(action.command));
@@ -695,6 +710,13 @@ async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
   if (intent.kind === 'translate') {
     // await runTranslateCommand(intent.options);
     vscode.window.showInformationMessage('Translate preview is currently disabled during refactoring.');
+    return;
+  }
+
+  if (intent.kind === 'scaffold-adapter') {
+    const rawCommand = `i18nsmith scaffold-adapter ${intent.args.join(' ')}`;
+    await cliService.runCliCommand(rawCommand, { interactive: true });
+    return;
   }
 }
 

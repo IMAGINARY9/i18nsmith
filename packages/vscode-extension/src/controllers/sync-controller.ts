@@ -4,8 +4,6 @@ import { ConfigurationController } from './configuration-controller';
 import { executePreviewPlan, type PlannedChange } from '../preview-flow';
 import { SyncSummary, SuspiciousKeyWarning, LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
 import { PreviewPayload } from '../preview-manager';
-import { resolveCliCommand } from '../cli-utils';
-import { runResolvedCliCommand } from '../cli-runner';
 import { quoteCliArg } from '../command-helpers';
 import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
 
@@ -81,23 +79,36 @@ export class SyncController implements vscode.Disposable {
     // If no changes needed
     if (
       (!summary.missingKeys || summary.missingKeys.length === 0) &&
-      (!summary.unusedKeys || summary.unusedKeys.length === 0)
+      (!summary.unusedKeys || summary.unusedKeys.length === 0) &&
+      (!summary.renameDiffs || summary.renameDiffs.length === 0)
     ) {
       vscode.window.showInformationMessage('Locales are in sync. No changes needed.');
       return;
     }
 
     // Show diff preview if available
-    if (summary.diffs && summary.diffs.length > 0) {
+    const allDiffs = [
+      ...(summary.diffs || []),
+      ...(summary.renameDiffs || [])
+    ];
+
+    if (allDiffs.length > 0) {
       const missingCount = summary.missingKeys?.length ?? 0;
       const unusedCount = summary.unusedKeys?.length ?? 0;
-      const label = `${missingCount} missing, ${unusedCount} unused`;
+      const renameCount = summary.renameDiffs?.length ?? 0;
+      
+      const parts = [];
+      if (missingCount) parts.push(`${missingCount} missing`);
+      if (unusedCount) parts.push(`${unusedCount} unused`);
+      if (renameCount) parts.push(`${renameCount} renames`);
+      
+      const label = parts.join(', ');
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await this.services.diffPreviewService.showPreview(
-        summary.diffs,
+        allDiffs,
         async () => {
-          await this.applySync(previewResult.previewPath, workspaceFolder.uri.fsPath);
+          await this.applySync(previewResult.previewPath, { prune: unusedCount > 0 });
         },
         {
           title: 'Sync Preview',
@@ -106,7 +117,7 @@ export class SyncController implements vscode.Disposable {
       );
     } else {
       // Fallback to markdown preview if no diffs (shouldn't happen with --diff)
-      await this.showSyncPreview(previewResult.payload, previewResult.previewPath, workspaceFolder.uri.fsPath);
+  await this.showSyncPreview(previewResult.payload, previewResult.previewPath);
     }
   }
 
@@ -121,11 +132,7 @@ export class SyncController implements vscode.Disposable {
     await this.runSync({ targets: [editor.document.uri.fsPath] });
   }
 
-  private async showSyncPreview(
-    payload: PreviewPayload<SyncSummary>,
-    previewPath: string,
-    workspaceRoot: string
-  ) {
+  private async showSyncPreview(payload: PreviewPayload<SyncSummary>, previewPath: string) {
     const summary = payload.summary;
     const missingCount = summary.missingKeys?.length ?? 0;
     const unusedCount = summary.unusedKeys?.length ?? 0;
@@ -174,7 +181,7 @@ export class SyncController implements vscode.Disposable {
       apply: async () => {
         // Close the preview editor first to avoid confusion
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-        await this.applySync(previewPath, workspaceRoot);
+        await this.applySync(previewPath, { prune: unusedCount > 0 });
       },
     });
 
@@ -199,13 +206,16 @@ export class SyncController implements vscode.Disposable {
     if (choice === applyLabel) {
       // Close the preview editor first to avoid confusion
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-      await this.applySync(previewPath, workspaceRoot);
+      await this.applySync(previewPath, { prune: unusedCount > 0 });
     }
   }
 
-  private async applySync(previewPath: string, workspaceRoot: string) {
-    const command = `i18nsmith sync --apply-preview ${quoteCliArg(previewPath)}`;
-    
+  private async applySync(previewPath: string, options: { prune?: boolean } = {}) {
+    let command = `i18nsmith sync --apply-preview ${quoteCliArg(previewPath)} --yes`;
+    if (options.prune) {
+      command += ' --prune';
+    }
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -213,18 +223,17 @@ export class SyncController implements vscode.Disposable {
         cancellable: false,
       },
       async () => {
-        const resolved = resolveCliCommand(command);
-        const result = await runResolvedCliCommand(resolved, { cwd: workspaceRoot });
-        
-        if (result.code !== 0) {
-          vscode.window.showErrorMessage(`Sync failed: ${result.stderr || result.stdout}`);
+        const result = await this.services.cliService.runCliCommand(command, { showOutput: false });
+
+        if (!result?.success) {
+          vscode.window.showErrorMessage(result?.stderr?.trim() || 'Sync failed. Check the i18nsmith output channel.');
           return;
         }
 
         this.services.hoverProvider.clearCache();
         this.services.reportWatcher.refresh();
         this.services.smartScanner.scan('sync');
-        
+
         vscode.window.showInformationMessage('Sync applied successfully.');
       }
     );
@@ -437,7 +446,7 @@ export class SyncController implements vscode.Disposable {
       await this.services.diffPreviewService.showPreview(
         allDiffs,
         async () => {
-           await this.applySync(previewResult.previewPath, workspaceFolder.uri.fsPath);
+           await this.applySync(previewResult.previewPath, { prune: false });
         },
         {
           title: 'Bulk Rename Preview',
@@ -445,7 +454,18 @@ export class SyncController implements vscode.Disposable {
         }
       );
     } else {
-      vscode.window.showInformationMessage('No changes detected for bulk rename.');
+      const blockingMessage = extractBlockingIssueMessage(previewResult.stderr || previewResult.stdout);
+      if (blockingMessage) {
+        const choice = await vscode.window.showWarningMessage(
+          `Bulk rename blocked: ${blockingMessage}`,
+          'Show CLI Output'
+        );
+        if (choice === 'Show CLI Output') {
+          this.services.cliOutputChannel.show(true);
+        }
+      } else {
+        vscode.window.showInformationMessage('No changes detected for bulk rename.');
+      }
     }
   }
 
@@ -467,4 +487,22 @@ export class SyncController implements vscode.Disposable {
       }
     );
   }
+}
+
+function extractBlockingIssueMessage(output?: string): string | null {
+  if (!output) {
+    return null;
+  }
+
+  const blockingMatch = output.match(/Blocking issues detected[^\n]*/i);
+  if (blockingMatch) {
+    return blockingMatch[0].trim();
+  }
+
+  const actionableMatch = output.match(/Resolve the actionable errors above[^\n]*/i);
+  if (actionableMatch) {
+    return actionableMatch[0].trim();
+  }
+
+  return null;
 }
