@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
 import {
-  getWorkspaceConfigSnapshot,
   loadDynamicWhitelistSnapshot,
   persistDynamicKeyAssumptions,
   invalidateWorkspaceConfigCache,
-  type DynamicWhitelistSnapshot,
 } from '../workspace-config';
 import {
   deriveWhitelistSuggestions,

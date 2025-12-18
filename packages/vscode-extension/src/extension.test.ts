@@ -16,14 +16,19 @@ vi.mock('vscode', () => {
       onDidCloseTerminal: vi.fn(),
       setStatusBarMessage: vi.fn(),
       createStatusBarItem: vi.fn().mockReturnValue({ show: vi.fn(), hide: vi.fn(), dispose: vi.fn() }),
+      createTreeView: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+      onDidChangeTextEditorSelection: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+      activeTextEditor: null,
     },
     workspace: {
       getConfiguration: vi.fn().mockReturnValue({ get: vi.fn() }),
       workspaceFolders: [{ uri: { fsPath: '/mock/workspace' } }],
       createFileSystemWatcher: vi.fn().mockReturnValue({ onDidChange: vi.fn(), onDidCreate: vi.fn(), onDidDelete: vi.fn(), dispose: vi.fn() }),
+      onDidChangeConfiguration: vi.fn().mockReturnValue({ dispose: vi.fn() }),
     },
     commands: {
       registerCommand: vi.fn(),
+      executeCommand: vi.fn(),
     },
     languages: {
       registerCodeLensProvider: vi.fn(),
@@ -31,6 +36,11 @@ vi.mock('vscode', () => {
       registerDefinitionProvider: vi.fn(),
       registerCodeActionsProvider: vi.fn(),
       createDiagnosticCollection: vi.fn().mockReturnValue({ clear: vi.fn(), set: vi.fn(), delete: vi.fn(), dispose: vi.fn() }),
+    },
+    ThemeIcon: class {
+      constructor(public id: string) {
+        this.id = id;
+      }
     },
     Uri: {
       parse: vi.fn(),
@@ -57,8 +67,11 @@ vi.mock('./services/container', () => ({
   ServiceContainer: vi.fn().mockImplementation(() => ({
     verboseOutputChannel: {},
     cliOutputChannel: {},
-    diagnosticsManager: {},
-    reportWatcher: { refresh: vi.fn() },
+    diagnosticsManager: { getReport: vi.fn().mockReturnValue(null) },
+    reportWatcher: {
+      refresh: vi.fn(),
+      onDidRefresh: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
+    },
     hoverProvider: { clearCache: vi.fn() },
     smartScanner: { onScanComplete: vi.fn(), runActivationScan: vi.fn() },
     statusBarManager: { refresh: vi.fn() },
