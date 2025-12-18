@@ -8,9 +8,8 @@ import {
   type IssueSeverityLevel,
   type SeverityCounts,
 } from './report-utils';
-import { resolveCliCommand } from './cli-utils';
-import { runResolvedCliCommand } from './cli-runner';
 import { quoteCliArg } from './command-helpers';
+import { CliService } from './services/cli-service';
 
 export type ScanState = 'idle' | 'scanning' | 'success' | 'error';
 
@@ -76,7 +75,7 @@ export class SmartScanner implements vscode.Disposable {
   private scanOnSave = true;
   private scanOnActivation = true;
 
-  constructor() {
+  constructor(private readonly cliService: CliService) {
     this.outputChannel = vscode.window.createOutputChannel('i18nsmith');
     this.loadConfig();
     this.setupWatchers();
@@ -301,19 +300,21 @@ export class SmartScanner implements vscode.Disposable {
     const reportPath = config.get<string>('reportPath', '.i18nsmith/check-report.json');
     const commandParts = ['i18nsmith', 'check', '--json', '--report', quoteCliArg(reportPath)];
     const humanReadable = commandParts.join(' ').trim();
-    const resolvedCommand = resolveCliCommand(humanReadable, { preferredCliPath });
 
-    this.log(`[Scanner] Running: ${resolvedCommand.display}`);
+    this.log(`[Scanner] Running: ${humanReadable}`);
     this.log(`[Scanner] CWD: ${workspaceFolder.uri.fsPath}`);
 
-    const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
 
-    const result = await runResolvedCliCommand(resolvedCommand, {
+    const result = await this.cliService.runCliCommand(humanReadable, {
       cwd: workspaceFolder.uri.fsPath,
+      preferredCliPath,
       timeoutMs: 60000,
+      showOutput: false,
+      suppressNotifications: true,
+      skipReportRefresh: true,
+      label: 'Scanner',
       onStdout: (text) => {
-        stdoutChunks.push(text);
         this.log(text);
       },
       onStderr: (text) => {
@@ -374,8 +375,9 @@ export class SmartScanner implements vscode.Disposable {
       };
     }
 
-    if (result.code !== 0 || result.error) {
-      const errorMsg = result.error?.message || aggregatedStderr || `Command exited with code ${result.code}`;
+    if (!result?.success) {
+      const errorMsg =
+        result?.error?.message || aggregatedStderr || `Command exited with code ${result?.exitCode ?? 'unknown'}`;
       const stderrText = aggregatedStderr;
       const isNotFound =
         errorMsg.includes('E404') ||

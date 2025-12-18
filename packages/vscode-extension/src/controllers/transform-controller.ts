@@ -3,8 +3,6 @@ import * as fs from 'fs';
 import { ServiceContainer } from '../services/container';
 import { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { quoteCliArg } from '../command-helpers';
-import { resolveCliCommand } from '../cli-utils';
-import { runResolvedCliCommand } from '../cli-runner';
 
 const fsp = fs.promises;
 
@@ -119,7 +117,13 @@ export class TransformController implements vscode.Disposable {
         title: `i18nsmith: Applying transforms (${label})…`,
         cancellable: false,
       },
-      (progress) => this.runCliCommand(writeCommand, { progress, showOutput: false })
+      (progress) =>
+        this.services.cliService.runCliCommand(writeCommand, {
+          progress,
+          showOutput: false,
+          suppressNotifications: true,
+          skipReportRefresh: true,
+        })
     );
 
     if (writeResult?.success) {
@@ -268,96 +272,5 @@ export class TransformController implements vscode.Disposable {
     }
   }
 
-  private async runCliCommand(
-    rawCommand: string,
-    options: {
-      interactive?: boolean;
-      confirmMessage?: string;
-      progress?: vscode.Progress<{ message?: string; increment?: number }>;
-      showOutput?: boolean;
-    } = {}
-  ): Promise<{ success: boolean; stdout: string; stderr: string; warnings: string[] } | undefined> {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      vscode.window.showErrorMessage('No workspace folder found');
-      return;
-    }
-
-    const resolved = resolveCliCommand(rawCommand);
-    if (!resolved.command) {
-      vscode.window.showErrorMessage('Unable to determine CLI command to run.');
-      return;
-    }
-
-    this.services.logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${resolved.display}'`);
-
-    // ... (Simplified version of runCliCommand from extension.ts)
-    // I'll use runResolvedCliCommand directly
-
-    const out = this.services.cliOutputChannel;
-    if (options.showOutput !== false) {
-      out.show();
-    }
-    out.appendLine(`$ ${resolved.display}`);
-
-    const progressTracker = this.createCliProgressTracker(options.progress);
-
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
-
-    const result = await runResolvedCliCommand(resolved, {
-      cwd: workspaceFolder.uri.fsPath,
-      onStdout: (text) => {
-        stdoutChunks.push(text);
-        out.append(text);
-        progressTracker?.handleChunk(text);
-      },
-      onStderr: (text) => {
-        stderrChunks.push(text);
-        out.append(text);
-      },
-    });
-
-    progressTracker?.flush();
-    progressTracker?.complete();
-
-    const stdout = stdoutChunks.join('');
-    const stderr = stderrChunks.join('');
-    
-    // Basic warning extraction (simplified)
-    const warnings: string[] = [];
-
-    if (result.code !== 0 || result.error) {
-      const message = result.error?.message || `Command exited with code ${result.code}`;
-      out.appendLine(`[error] ${message}`);
-      vscode.window.showErrorMessage(`Command failed: ${message}`);
-      return { success: false, stdout, stderr, warnings };
-    }
-
-    return { success: true, stdout, stderr, warnings };
-  }
-
-  private createCliProgressTracker(
-    progress?: vscode.Progress<{ message?: string; increment?: number }>
-  ): null | {
-    handleChunk: (text: string) => void;
-    flush: () => void;
-    complete: () => void;
-  } {
-    if (!progress) {
-      return null;
-    }
-    // Simplified tracker
-    return {
-      handleChunk: (text: string) => {
-        // Try to parse progress
-        const match = text.match(/Applying transforms .*\((\d+)%\)/i);
-        if (match) {
-          progress.report({ message: `Applying... ${match[1]}%` });
-        }
-      },
-      flush: () => {},
-      complete: () => progress.report({ message: 'Completed.' }),
-    };
-  }
+  
 }
