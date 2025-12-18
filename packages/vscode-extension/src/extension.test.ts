@@ -73,9 +73,13 @@ vi.mock('./services/container', () => ({
       onDidRefresh: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
     },
     hoverProvider: { clearCache: vi.fn() },
-    smartScanner: { onScanComplete: vi.fn(), runActivationScan: vi.fn() },
+    smartScanner: { onScanComplete: vi.fn(), runActivationScan: vi.fn(), scan: vi.fn() },
     statusBarManager: { refresh: vi.fn() },
     cliService: { ensureGitignoreEntries: vi.fn() },
+    configurationService: {
+      onDidChange: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+      getSnapshot: vi.fn().mockReturnValue(null),
+    },
   })),
 }));
 vi.mock('./controllers/configuration-controller');

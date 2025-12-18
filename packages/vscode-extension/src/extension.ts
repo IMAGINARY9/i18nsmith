@@ -1,36 +1,36 @@
-import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { DiagnosticsManager } from './diagnostics';
-import { I18nCodeLensProvider } from './codelens';
-import { ReportWatcher } from './watcher';
-import { I18nHoverProvider } from './hover';
-import { I18nCodeActionProvider } from './codeactions';
-import { SmartScanner, type ScanResult } from './scanner';
-import { StatusBarManager } from './statusbar';
-import { I18nDefinitionProvider } from './definition';
+import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import { DiagnosticsManager } from "./diagnostics";
+import { I18nCodeLensProvider } from "./codelens";
+import { ReportWatcher } from "./watcher";
+import { I18nHoverProvider } from "./hover";
+import { I18nCodeActionProvider } from "./codeactions";
+import { SmartScanner, type ScanResult } from "./scanner";
+import { StatusBarManager } from "./statusbar";
+import { I18nDefinitionProvider } from "./definition";
 import {
   parsePreviewableCommand,
   type PreviewableCommand,
-} from './preview-intents';
-import { summarizeReportIssues } from './report-utils';
-import { registerMarkdownPreviewProvider } from './markdown-preview';
-import { ServiceContainer } from './services/container';
-import { ConfigurationController } from './controllers/configuration-controller';
-import { SyncController } from './controllers/sync-controller';
-import { TransformController } from './controllers/transform-controller';
-import { ExtractionController } from './controllers/extraction-controller';
-import { CliService } from './services/cli-service';
-import { applyPreviewPlan } from './preview-flow';
-import { SuspiciousKeyWarning } from '@i18nsmith/core';
-import { getWorkspaceConfigSnapshot } from './workspace-config';
+} from "./preview-intents";
+import { summarizeReportIssues } from "./report-utils";
+import { registerMarkdownPreviewProvider } from "./markdown-preview";
+import { ServiceContainer } from "./services/container";
+import { ConfigurationController } from "./controllers/configuration-controller";
+import { SyncController } from "./controllers/sync-controller";
+import { TransformController } from "./controllers/transform-controller";
+import { ExtractionController } from "./controllers/extraction-controller";
+import { CliService } from "./services/cli-service";
+import { applyPreviewPlan } from "./preview-flow";
+import { SuspiciousKeyWarning } from "@i18nsmith/core";
 import {
   buildQuickActionModel,
   type QuickActionBuildOutput,
   type QuickActionDefinition,
   type QuickActionMetadata,
-} from './quick-actions-data';
-import { QuickActionsProvider } from './views/quick-actions-provider';
+} from "./quick-actions-data";
+import { QuickActionsProvider } from "./views/quick-actions-provider";
+import type { ConfigurationService } from "./services/configuration-service";
 
 interface QuickActionPick extends vscode.QuickPickItem {
   action?: QuickActionDefinition;
@@ -38,24 +38,24 @@ interface QuickActionPick extends vscode.QuickPickItem {
 
 const QUICK_ACTION_SCAN_STALE_MS = 4000;
 const QUICK_ACTION_INSTANT_COMMANDS = new Set([
-  'i18nsmith.openLocaleFile',
-  'i18nsmith.showOutput',
-  'i18nsmith.refreshDiagnostics',
-  'i18nsmith.extractSelection',
-  'i18nsmith.check',
-  'i18nsmith.sync',
-  'i18nsmith.syncFile',
-  'i18nsmith.transformFile',
-  'i18nsmith.exportMissingTranslations',
-  'i18nsmith.renameAllSuspiciousKeys',
+  "i18nsmith.openLocaleFile",
+  "i18nsmith.showOutput",
+  "i18nsmith.refreshDiagnostics",
+  "i18nsmith.extractSelection",
+  "i18nsmith.check",
+  "i18nsmith.sync",
+  "i18nsmith.syncFile",
+  "i18nsmith.transformFile",
+  "i18nsmith.exportMissingTranslations",
+  "i18nsmith.renameAllSuspiciousKeys",
 ]);
 const QUICK_ACTION_OUTPUT_COMMANDS = new Set([
-  'i18nsmith.check',
-  'i18nsmith.sync',
-  'i18nsmith.syncFile',
-  'i18nsmith.transformFile',
-  'i18nsmith.exportMissingTranslations',
-  'i18nsmith.renameAllSuspiciousKeys',
+  "i18nsmith.check",
+  "i18nsmith.sync",
+  "i18nsmith.syncFile",
+  "i18nsmith.transformFile",
+  "i18nsmith.exportMissingTranslations",
+  "i18nsmith.renameAllSuspiciousKeys",
 ]);
 
 let diagnosticsManager: DiagnosticsManager;
@@ -73,31 +73,35 @@ let extractionController: ExtractionController;
 let cliService: CliService;
 let quickActionsProvider: QuickActionsProvider | null = null;
 let quickActionSelectionState = false;
-
-
+let configurationService: ConfigurationService | null = null;
 
 function logVerbose(message: string) {
-  const config = vscode.workspace.getConfiguration('i18nsmith');
-  if (config.get<boolean>('enableVerboseLogging', false)) {
+  const config = vscode.workspace.getConfiguration("i18nsmith");
+  if (config.get<boolean>("enableVerboseLogging", false)) {
     verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
   }
 }
 
-async function refreshDiagnosticsWithMessage(source: 'command' | 'quick-action' = 'command') {
+async function refreshDiagnosticsWithMessage(
+  source: "command" | "quick-action" = "command"
+) {
   hoverProvider.clearCache();
   await reportWatcher.refresh();
   statusBarManager.refresh();
 
   const message = buildDiagnosticsRefreshMessage();
   if (message) {
-    vscode.window.setStatusBarMessage(message, source === 'command' ? 5000 : 3500);
+    vscode.window.setStatusBarMessage(
+      message,
+      source === "command" ? 5000 : 3500
+    );
   }
 }
 
 function buildDiagnosticsRefreshMessage(): string | null {
   const report = diagnosticsManager?.getReport?.();
   if (!report) {
-    return '$(symbol-event) i18nsmith: Diagnostics refreshed.';
+    return "$(symbol-event) i18nsmith: Diagnostics refreshed.";
   }
 
   const summary = summarizeReportIssues(report);
@@ -106,18 +110,20 @@ function buildDiagnosticsRefreshMessage(): string | null {
   const missing = report.sync?.missingKeys?.length ?? 0;
   const unused = report.sync?.unusedKeys?.length ?? 0;
 
-  const parts: string[] = ['$(symbol-event) i18nsmith: Diagnostics refreshed'];
-  parts.push(`• ${actionableItems} issue${actionableItems === 1 ? '' : 's'}`);
+  const parts: string[] = ["$(symbol-event) i18nsmith: Diagnostics refreshed"];
+  parts.push(`• ${actionableItems} issue${actionableItems === 1 ? "" : "s"}`);
   if (suggestions) {
-    parts.push(`• ${suggestions} suggestion${suggestions === 1 ? '' : 's'}`);
+    parts.push(`• ${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
   }
   if (missing || unused) {
     parts.push(`• Drift: ${missing} missing / ${unused} unused`);
   }
-  return parts.join('  ');
+  return parts.join("  ");
 }
 
-async function runHealthCheckWithSummary(options: { revealOutput?: boolean } = {}) {
+async function runHealthCheckWithSummary(
+  options: { revealOutput?: boolean } = {}
+) {
   if (!smartScanner) {
     return;
   }
@@ -126,7 +132,7 @@ async function runHealthCheckWithSummary(options: { revealOutput?: boolean } = {
     smartScanner.showOutput();
   }
 
-  const result = await smartScanner.scan('manual');
+  const result = await smartScanner.scan("manual");
   await reportWatcher?.refresh();
   await showHealthCheckSummary(result);
 }
@@ -144,21 +150,23 @@ async function showHealthCheckSummary(result: ScanResult | null) {
   const choice = await vscode.window.showInformationMessage(
     summary.title,
     { detail: summary.detail },
-    'View Quick Actions',
-    'Show Output'
+    "View Quick Actions",
+    "Show Output"
   );
 
-  if (choice === 'View Quick Actions') {
-    await vscode.commands.executeCommand('i18nsmith.actions');
+  if (choice === "View Quick Actions") {
+    await vscode.commands.executeCommand("i18nsmith.actions");
     return;
   }
 
-  if (choice === 'Show Output') {
+  if (choice === "Show Output") {
     smartScanner.showOutput();
   }
 }
 
-function buildHealthCheckSummary(result: ScanResult | null): { title: string; detail: string } | null {
+function buildHealthCheckSummary(
+  result: ScanResult | null
+): { title: string; detail: string } | null {
   const report = diagnosticsManager?.getReport?.();
   const summary = summarizeReportIssues(report);
   const actionableItems = summary.items;
@@ -173,31 +181,37 @@ function buildHealthCheckSummary(result: ScanResult | null): { title: string; de
   const issueCount = summary.issueCount || result?.issueCount || 0;
 
   const title = issueCount
-    ? `i18nsmith health check: ${issueCount} issue${issueCount === 1 ? '' : 's'} detected`
-    : 'i18nsmith health check: No issues detected';
+    ? `i18nsmith health check: ${issueCount} issue${issueCount === 1 ? "" : "s"} detected`
+    : "i18nsmith health check: No issues detected";
 
   const details: string[] = [];
-  details.push(`• ${issueCount} actionable item${issueCount === 1 ? '' : 's'}`);
+  details.push(`• ${issueCount} actionable item${issueCount === 1 ? "" : "s"}`);
   if (filesWithIssues.size) {
-    details.push(`• ${filesWithIssues.size} file${filesWithIssues.size === 1 ? '' : 's'} with diagnostics`);
+    details.push(
+      `• ${filesWithIssues.size} file${filesWithIssues.size === 1 ? "" : "s"} with diagnostics`
+    );
   }
   if (suggestionCount) {
-    details.push(`• ${suggestionCount} recommended action${suggestionCount === 1 ? '' : 's'} ready in Quick Actions`);
+    details.push(
+      `• ${suggestionCount} recommended action${suggestionCount === 1 ? "" : "s"} ready in Quick Actions`
+    );
   }
   if (result?.timestamp) {
     details.push(`• Completed at ${result.timestamp.toLocaleTimeString()}`);
   }
-  details.push('Select “View Quick Actions” to start fixing the highest-priority issues.');
+  details.push(
+    "Select “View Quick Actions” to start fixing the highest-priority issues."
+  );
 
-  return { title, detail: details.join('\n') };
+  return { title, detail: details.join("\n") };
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('i18nsmith extension activated');
+  console.log("i18nsmith extension activated");
 
   // Initialize Service Container
   const services = new ServiceContainer(context);
-  
+
   // Assign globals for backward compatibility
   verboseOutputChannel = services.verboseOutputChannel;
   smartScanner = services.smartScanner;
@@ -209,17 +223,26 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize Controllers
   configController = new ConfigurationController(services);
   context.subscriptions.push(configController);
-  
+
   syncController = new SyncController(services, configController);
   context.subscriptions.push(syncController);
-  
+
   transformController = new TransformController(services);
   context.subscriptions.push(transformController);
-  
+
   extractionController = new ExtractionController(services);
   context.subscriptions.push(extractionController);
 
   cliService = services.cliService;
+  configurationService = services.configurationService;
+
+  context.subscriptions.push(
+    services.configurationService.onDidChange(async () => {
+      services.hoverProvider.clearCache();
+      await services.reportWatcher.refresh();
+      await services.smartScanner.scan("config-change");
+    })
+  );
 
   registerMarkdownPreviewProvider(context);
 
@@ -227,44 +250,66 @@ export function activate(context: vscode.ExtensionContext) {
   cliService.ensureGitignoreEntries();
 
   quickActionsProvider = new QuickActionsProvider();
-  const quickActionsView = vscode.window.createTreeView('i18nsmith.quickActionsView', {
-    treeDataProvider: quickActionsProvider,
-    showCollapseAll: false,
-  });
+  const quickActionsView = vscode.window.createTreeView(
+    "i18nsmith.quickActionsView",
+    {
+      treeDataProvider: quickActionsProvider,
+      showCollapseAll: false,
+    }
+  );
   context.subscriptions.push(quickActionsProvider, quickActionsView);
 
   const supportedLanguages = [
-    { scheme: 'file', language: 'typescript' },
-    { scheme: 'file', language: 'typescriptreact' },
-    { scheme: 'file', language: 'javascript' },
-    { scheme: 'file', language: 'javascriptreact' },
-    { scheme: 'file', language: 'vue' },
-    { scheme: 'file', language: 'svelte' },
+    { scheme: "file", language: "typescript" },
+    { scheme: "file", language: "typescriptreact" },
+    { scheme: "file", language: "javascript" },
+    { scheme: "file", language: "javascriptreact" },
+    { scheme: "file", language: "vue" },
+    { scheme: "file", language: "svelte" },
   ];
 
   // Initialize CodeLens provider
-  const codeLensProvider = new I18nCodeLensProvider(services.diagnosticsManager);
+  const codeLensProvider = new I18nCodeLensProvider(
+    services.diagnosticsManager
+  );
   context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider(supportedLanguages, codeLensProvider)
+    vscode.languages.registerCodeLensProvider(
+      supportedLanguages,
+      codeLensProvider
+    )
   );
 
   // Initialize Hover provider
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider(supportedLanguages, services.hoverProvider)
+    vscode.languages.registerHoverProvider(
+      supportedLanguages,
+      services.hoverProvider
+    )
   );
 
   // Initialize Definition provider (Go to Definition on translation keys)
+  const definitionProvider = new I18nDefinitionProvider(
+    services.configurationService
+  );
   context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(supportedLanguages, new I18nDefinitionProvider())
+    vscode.languages.registerDefinitionProvider(
+      supportedLanguages,
+      definitionProvider
+    )
   );
 
   // Initialize CodeAction provider
-  const codeActionProvider = new I18nCodeActionProvider(services.diagnosticsManager);
+  const codeActionProvider = new I18nCodeActionProvider(
+    services.diagnosticsManager,
+    services.configurationService
+  );
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider(
       supportedLanguages,
       codeActionProvider,
-      { providedCodeActionKinds: I18nCodeActionProvider.providedCodeActionKinds }
+      {
+        providedCodeActionKinds: I18nCodeActionProvider.providedCodeActionKinds,
+      }
     )
   );
 
@@ -276,87 +321,118 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('i18nsmith.check', async () => {
+    vscode.commands.registerCommand("i18nsmith.check", async () => {
       await runHealthCheckWithSummary({ revealOutput: true });
     }),
-    vscode.commands.registerCommand('i18nsmith.sync', async () => {
+    vscode.commands.registerCommand("i18nsmith.sync", async () => {
       await syncController.runSync({ dryRunOnly: false });
     }),
-    vscode.commands.registerCommand('i18nsmith.syncFile', async () => {
+    vscode.commands.registerCommand("i18nsmith.syncFile", async () => {
       await syncController.syncCurrentFile();
     }),
-    vscode.commands.registerCommand('i18nsmith.refreshDiagnostics', async () => {
-      await refreshDiagnosticsWithMessage('command');
-    }),
+    vscode.commands.registerCommand(
+      "i18nsmith.refreshDiagnostics",
+      async () => {
+        await refreshDiagnosticsWithMessage("command");
+      }
+    ),
     // vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
     //   await addPlaceholderWithPreview(key, workspaceRoot);
     // }),
-    vscode.commands.registerCommand('i18nsmith.extractKey', async (uri: vscode.Uri, range: vscode.Range, text: string) => {
-      await extractionController.extractKeyFromSelection(uri, range, text);
-    }),
-    vscode.commands.registerCommand('i18nsmith.actions', async () => {
+    vscode.commands.registerCommand(
+      "i18nsmith.extractKey",
+      async (uri: vscode.Uri, range: vscode.Range, text: string) => {
+        await extractionController.extractKeyFromSelection(uri, range, text);
+      }
+    ),
+    vscode.commands.registerCommand("i18nsmith.actions", async () => {
       await showQuickActions();
     }),
-    vscode.commands.registerCommand('i18nsmith.quickActions.executeDefinition', async (action: QuickActionDefinition) => {
-      await runQuickActionDefinition(action);
-    }),
-    vscode.commands.registerCommand('i18nsmith.applyPreviewPlan', async () => {
+    vscode.commands.registerCommand(
+      "i18nsmith.quickActions.executeDefinition",
+      async (action: QuickActionDefinition) => {
+        await runQuickActionDefinition(action);
+      }
+    ),
+    vscode.commands.registerCommand("i18nsmith.applyPreviewPlan", async () => {
       await applyPreviewPlan();
     }),
-    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKey', async (warning: SuspiciousKeyWarning) => {
-      await syncController.renameSuspiciousKey(warning);
-    }),
-    vscode.commands.registerCommand('i18nsmith.renameAllSuspiciousKeys', async () => {
-      await syncController.renameAllSuspiciousKeys();
-    }),
+    vscode.commands.registerCommand(
+      "i18nsmith.renameSuspiciousKey",
+      async (warning: SuspiciousKeyWarning) => {
+        await syncController.renameSuspiciousKey(warning);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "i18nsmith.renameAllSuspiciousKeys",
+      async () => {
+        await syncController.renameAllSuspiciousKeys();
+      }
+    ),
     // vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
     //   await insertIgnoreComment(uri, line, 'suspicious-key');
     // }),
-    vscode.commands.registerCommand('i18nsmith.openLocaleFile', async () => {
+    vscode.commands.registerCommand("i18nsmith.openLocaleFile", async () => {
       await openSourceLocaleFile();
     }),
     // vscode.commands.registerCommand('i18nsmith.checkFile', async () => {
     //   await checkCurrentFile();
     // }),
-    vscode.commands.registerCommand('i18nsmith.extractSelection', async () => {
+    vscode.commands.registerCommand("i18nsmith.extractSelection", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.selection.isEmpty) {
-        vscode.window.showWarningMessage('Select some text first to extract as a translation key');
+        vscode.window.showWarningMessage(
+          "Select some text first to extract as a translation key"
+        );
         return;
       }
       const text = editor.document.getText(editor.selection);
-      await extractionController.extractKeyFromSelection(editor.document.uri, editor.selection, text);
+      await extractionController.extractKeyFromSelection(
+        editor.document.uri,
+        editor.selection,
+        text
+      );
     }),
-    vscode.commands.registerCommand('i18nsmith.showOutput', () => {
+    vscode.commands.registerCommand("i18nsmith.showOutput", () => {
       services.smartScanner.showOutput();
     }),
-    vscode.commands.registerCommand('i18nsmith.transformFile', async () => {
+    vscode.commands.registerCommand("i18nsmith.transformFile", async () => {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
-        await transformController.runTransform({ targets: [editor.document.uri.fsPath] });
+        await transformController.runTransform({
+          targets: [editor.document.uri.fsPath],
+        });
       } else {
-        vscode.window.showWarningMessage('Open a file to transform.');
+        vscode.window.showWarningMessage("Open a file to transform.");
       }
     }),
-    vscode.commands.registerCommand('i18nsmith.exportMissingTranslations', async () => {
-      await syncController.exportMissingTranslations();
-    }),
-    vscode.commands.registerCommand('i18nsmith.whitelistDynamicKeys', async () => {
-      await configController.whitelistDynamicKeys();
-    }),
-    vscode.commands.registerCommand('i18nsmith.renameSuspiciousKeysInFile', async (target?: vscode.Uri) => {
-      await syncController.renameSuspiciousKeysInFile(target);
-    }),
+    vscode.commands.registerCommand(
+      "i18nsmith.exportMissingTranslations",
+      async () => {
+        await syncController.exportMissingTranslations();
+      }
+    ),
+    vscode.commands.registerCommand(
+      "i18nsmith.whitelistDynamicKeys",
+      async () => {
+        await configController.whitelistDynamicKeys();
+      }
+    ),
+    vscode.commands.registerCommand(
+      "i18nsmith.renameSuspiciousKeysInFile",
+      async (target?: vscode.Uri) => {
+        await syncController.renameSuspiciousKeysInFile(target);
+      }
+    )
     // vscode.commands.registerCommand('i18nsmith.applySuspiciousRenamePlan', async () => {
     //   await applyStoredSuspiciousRenamePlan();
     // }),
     // vscode.commands.registerCommand('i18nsmith.showSuspiciousRenamePreview', async () => {
     //   await revealSuspiciousRenamePreview();
     // }),
-
   );
 
-  console.log('[i18nsmith] Commands registered successfully');
+  console.log("[i18nsmith] Commands registered successfully");
 
   quickActionSelectionState = getQuickActionSelectionState();
   context.subscriptions.push(
@@ -380,23 +456,9 @@ export function activate(context: vscode.ExtensionContext) {
   smartScanner.runActivationScan();
 }
 
-
-
-
-
 export function deactivate() {
-  console.log('i18nsmith extension deactivated');
+  console.log("i18nsmith extension deactivated");
 }
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Preview UX helpers: every action should present the same sequence
@@ -405,52 +467,12 @@ export function deactivate() {
  * 3. Applying runs via CLI progress, cancelling leaves preview artifacts untouched
  */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Removed local definitions of persistDynamicKeyAssumptions, loadDynamicWhitelistSnapshot, DynamicWhitelistSnapshot
 // as they are now imported from workspace-config.ts
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function refreshQuickActionsModel(options: { silent?: boolean } = {}): QuickActionBuildOutput {
+function refreshQuickActionsModel(
+  options: { silent?: boolean } = {}
+): QuickActionBuildOutput {
   const report = diagnosticsManager?.getReport?.() ?? null;
   const model = buildQuickActionModel({
     report,
@@ -472,9 +494,19 @@ function refreshQuickActionsModel(options: { silent?: boolean } = {}): QuickActi
 }
 
 function applyQuickActionContexts(model: QuickActionBuildOutput) {
-  const hasActions = model.sections.some((section) => section.actions.length > 0);
-  vscode.commands.executeCommand('setContext', 'i18nsmith.runtimeReady', model.metadata.runtimeReady);
-  vscode.commands.executeCommand('setContext', 'i18nsmith.quickActions.hasActions', hasActions);
+  const hasActions = model.sections.some(
+    (section) => section.actions.length > 0
+  );
+  vscode.commands.executeCommand(
+    "setContext",
+    "i18nsmith.runtimeReady",
+    model.metadata.runtimeReady
+  );
+  vscode.commands.executeCommand(
+    "setContext",
+    "i18nsmith.quickActions.hasActions",
+    hasActions
+  );
 }
 
 function getQuickActionSelectionState(): boolean {
@@ -485,22 +517,30 @@ function getQuickActionSelectionState(): boolean {
 function buildQuickPickPlaceholder(metadata: QuickActionMetadata): string {
   const parts: string[] = [];
   if (metadata.issueCount) {
-    parts.push(`${metadata.issueCount} outstanding issue${metadata.issueCount === 1 ? '' : 's'}`);
+    parts.push(
+      `${metadata.issueCount} outstanding issue${metadata.issueCount === 1 ? "" : "s"}`
+    );
   }
   if (metadata.driftStats) {
-    parts.push(`Drift: ${metadata.driftStats.missing} missing / ${metadata.driftStats.unused} unused`);
+    parts.push(
+      `Drift: ${metadata.driftStats.missing} missing / ${metadata.driftStats.unused} unused`
+    );
   }
   if (metadata.suggestionsCount) {
-    parts.push(`${metadata.suggestionsCount} suggestion${metadata.suggestionsCount === 1 ? '' : 's'}`);
+    parts.push(
+      `${metadata.suggestionsCount} suggestion${metadata.suggestionsCount === 1 ? "" : "s"}`
+    );
   }
   if (!parts.length) {
-    parts.push('All clear – run health check to refresh diagnostics');
+    parts.push("All clear – run health check to refresh diagnostics");
   }
-  return `Select a quick action (${parts.join(' • ')})`;
+  return `Select a quick action (${parts.join(" • ")})`;
 }
 
 function createQuickPickItem(action: QuickActionDefinition): QuickActionPick {
-  const label = action.iconId ? `$(${action.iconId}) ${action.title}` : action.title;
+  const label = action.iconId
+    ? `$(${action.iconId}) ${action.title}`
+    : action.title;
   const detailParts: string[] = [];
   if (action.iconLabel) {
     detailParts.push(action.iconLabel);
@@ -511,15 +551,19 @@ function createQuickPickItem(action: QuickActionDefinition): QuickActionPick {
   return {
     label,
     description: action.description,
-    detail: detailParts.length ? detailParts.join(' • ') : undefined,
+    detail: detailParts.length ? detailParts.join(" • ") : undefined,
     action,
   };
 }
 
 async function runQuickActionDefinition(action: QuickActionDefinition) {
   if (action.confirmMessage) {
-    const confirm = await vscode.window.showWarningMessage(action.confirmMessage, { modal: true }, 'Run');
-    if (confirm !== 'Run') {
+    const confirm = await vscode.window.showWarningMessage(
+      action.confirmMessage,
+      { modal: true },
+      "Run"
+    );
+    if (confirm !== "Run") {
       return;
     }
   }
@@ -531,18 +575,22 @@ async function runQuickActionDefinition(action: QuickActionDefinition) {
     }
 
     if (!action.command) {
-      vscode.window.showWarningMessage('This quick action is not yet wired to a command.');
+      vscode.window.showWarningMessage(
+        "This quick action is not yet wired to a command."
+      );
       return;
     }
 
-    if (action.command.startsWith('i18nsmith.')) {
+    if (action.command.startsWith("i18nsmith.")) {
       await vscode.commands.executeCommand(action.command);
       return;
     }
 
     const handled = await tryHandlePreviewableCommand(action.command);
     if (!handled) {
-      vscode.window.showWarningMessage(`Unsupported quick action command: ${action.command}`);
+      vscode.window.showWarningMessage(
+        `Unsupported quick action command: ${action.command}`
+      );
     }
   };
 
@@ -577,7 +625,7 @@ async function showQuickActions() {
       if (driftStats.missing > 0) parts.push(`${driftStats.missing} missing`);
       if (driftStats.unused > 0) parts.push(`${driftStats.unused} unused`);
       vscode.window.showInformationMessage(
-        `i18nsmith detected ${totalDrift} locale drift issues: ${parts.join(', ')}`
+        `i18nsmith detected ${totalDrift} locale drift issues: ${parts.join(", ")}`
       );
     }
   }
@@ -587,14 +635,19 @@ async function showQuickActions() {
     if (!section.actions.length) {
       continue;
     }
-    quickPickItems.push({ label: section.title, kind: vscode.QuickPickItemKind.Separator });
-    quickPickItems.push(...section.actions.map((action) => createQuickPickItem(action)));
+    quickPickItems.push({
+      label: section.title,
+      kind: vscode.QuickPickItemKind.Separator,
+    });
+    quickPickItems.push(
+      ...section.actions.map((action) => createQuickPickItem(action))
+    );
   }
 
   const hasActions = quickPickItems.some((item) => Boolean(item.action));
   if (!hasActions) {
     vscode.window.showInformationMessage(
-      'Nothing to fix right now. Run “i18nsmith: Run Health Check” to refresh diagnostics.'
+      "Nothing to fix right now. Run “i18nsmith: Run Health Check” to refresh diagnostics."
     );
     return;
   }
@@ -603,7 +656,11 @@ async function showQuickActions() {
   const choice = (await vscode.window.showQuickPick(quickPickItems, {
     placeHolder: placeholder,
   })) as QuickActionPick | undefined;
-  if (!choice || choice.kind === vscode.QuickPickItemKind.Separator || !choice.action) {
+  if (
+    !choice ||
+    choice.kind === vscode.QuickPickItemKind.Separator ||
+    !choice.action
+  ) {
     return;
   }
 
@@ -616,10 +673,12 @@ async function ensureFreshDiagnosticsForQuickActions() {
   }
 
   const lastTimestamp = smartScanner.lastResult?.timestamp?.getTime?.() ?? 0;
-  const isFresh = smartScanner.lastResult && Date.now() - lastTimestamp <= QUICK_ACTION_SCAN_STALE_MS;
+  const isFresh =
+    smartScanner.lastResult &&
+    Date.now() - lastTimestamp <= QUICK_ACTION_SCAN_STALE_MS;
 
   const runScan = async () => {
-    await smartScanner.scan('quick-actions');
+    await smartScanner.scan("quick-actions");
     await reportWatcher?.refresh();
   };
 
@@ -631,13 +690,15 @@ async function ensureFreshDiagnosticsForQuickActions() {
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Window,
-      title: 'i18nsmith: Refreshing health report…',
+      title: "i18nsmith: Refreshing health report…",
     },
     runScan
   );
 }
 
-async function tryHandlePreviewableCommand(rawCommand: string): Promise<boolean> {
+async function tryHandlePreviewableCommand(
+  rawCommand: string
+): Promise<boolean> {
   const parsed = parsePreviewableCommand(rawCommand);
   if (!parsed) {
     return false;
@@ -674,65 +735,75 @@ async function offerQuickActionOutputLink(action: QuickActionDefinition) {
   }
 
   const shouldOffer =
-    action.postRunBehavior === 'offer-output' ||
+    action.postRunBehavior === "offer-output" ||
     (action.command && QUICK_ACTION_OUTPUT_COMMANDS.has(action.command));
 
   if (shouldOffer) {
     const choice = await vscode.window.showInformationMessage(
       `i18nsmith: ${action.title} finished.`,
-      'Show Output'
+      "Show Output"
     );
-    if (choice === 'Show Output') {
+    if (choice === "Show Output") {
       smartScanner?.showOutput?.();
     }
     return;
   }
 
-  vscode.window.setStatusBarMessage(`i18nsmith: ${action.title} completed.`, 3000);
+  vscode.window.setStatusBarMessage(
+    `i18nsmith: ${action.title} completed.`,
+    3000
+  );
 }
 
 async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
-  if (intent.kind === 'sync') {
+  if (intent.kind === "sync") {
     await syncController.runSync({ targets: intent.targets });
     return;
   }
 
-  if (intent.kind === 'transform') {
+  if (intent.kind === "transform") {
     await transformController.runTransform({ targets: intent.targets });
     return;
   }
 
-  if (intent.kind === 'rename-key') {
+  if (intent.kind === "rename-key") {
     await syncController.renameKey(intent.from, intent.to);
     return;
   }
 
-  if (intent.kind === 'translate') {
+  if (intent.kind === "translate") {
     // await runTranslateCommand(intent.options);
-    vscode.window.showInformationMessage('Translate preview is currently disabled during refactoring.');
+    vscode.window.showInformationMessage(
+      "Translate preview is currently disabled during refactoring."
+    );
     return;
   }
 
-  if (intent.kind === 'scaffold-adapter') {
-    const rawCommand = `i18nsmith scaffold-adapter ${intent.args.join(' ')}`;
+  if (intent.kind === "scaffold-adapter") {
+    const rawCommand = `i18nsmith scaffold-adapter ${intent.args.join(" ")}`;
     await cliService.runCliCommand(rawCommand, { interactive: true });
     return;
   }
 }
 
-
 async function openSourceLocaleFile() {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
-    vscode.window.showWarningMessage('Open a workspace to locate your locale files.');
+    vscode.window.showWarningMessage(
+      "Open a workspace to locate your locale files."
+    );
     return;
   }
 
   const workspaceRoot = workspaceFolder.uri.fsPath;
-  const snapshot = getWorkspaceConfigSnapshot(workspaceRoot);
-  const localesDir = snapshot?.localesDir ?? 'locales';
-  const sourceLanguage = snapshot?.sourceLanguage ?? 'en';
-  const candidatePaths = buildLocaleCandidatePaths(workspaceRoot, localesDir, sourceLanguage);
+  const snapshot = configurationService?.getSnapshot(workspaceRoot);
+  const localesDir = snapshot?.localesDir ?? "locales";
+  const sourceLanguage = snapshot?.sourceLanguage ?? "en";
+  const candidatePaths = buildLocaleCandidatePaths(
+    workspaceRoot,
+    localesDir,
+    sourceLanguage
+  );
   const targetPath = candidatePaths.find((candidate) => {
     try {
       return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
@@ -752,13 +823,19 @@ async function openSourceLocaleFile() {
   await vscode.window.showTextDocument(document, { preview: false });
 }
 
-function buildLocaleCandidatePaths(workspaceRoot: string, localesDir: string, sourceLanguage: string): string[] {
+function buildLocaleCandidatePaths(
+  workspaceRoot: string,
+  localesDir: string,
+  sourceLanguage: string
+): string[] {
   const localeRoot = path.isAbsolute(localesDir)
     ? path.normalize(localesDir)
     : path.join(workspaceRoot, localesDir);
   const normalizedRoot = path.normalize(localeRoot);
-  const extensions = ['.json', '.jsonc', '.yaml', '.yml', '.ts', '.js'];
-  const baseNames = Array.from(new Set([sourceLanguage, sourceLanguage.toLowerCase()]));
+  const extensions = [".json", ".jsonc", ".yaml", ".yml", ".ts", ".js"];
+  const baseNames = Array.from(
+    new Set([sourceLanguage, sourceLanguage.toLowerCase()])
+  );
   const candidates: string[] = [];
 
   for (const base of baseNames) {
@@ -785,6 +862,3 @@ function buildLocaleCandidatePaths(workspaceRoot: string, localesDir: string, so
 
   return Array.from(new Set(candidates));
 }
-
-
-
