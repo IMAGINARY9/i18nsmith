@@ -85,6 +85,17 @@ function extractJson<T>(output: string): T {
   return JSON.parse(jsonMatch[0]);
 }
 
+function parseRenameMap(content: string): Record<string, string> {
+  const mapping: Record<string, string> = {};
+  for (const line of content.split('\n')) {
+    const match = line.trim().match(/^"([^"]+)"\s*=\s*"([^"]+)"/);
+    if (match) {
+      mapping[match[1]] = match[2];
+    }
+  }
+  return mapping;
+}
+
 beforeAll(async () => {
   await ensureCliBuilt(CLI_PATH);
 });
@@ -258,20 +269,29 @@ describe('E2E Fixture Tests', () => {
 
       const enLocalePath = path.join(fixtureDir, 'locales', 'en.json');
       const frLocalePath = path.join(fixtureDir, 'locales', 'fr.json');
-      const enLocale = JSON.parse(await fs.readFile(enLocalePath, 'utf8'));
-      const frLocale = JSON.parse(await fs.readFile(frLocalePath, 'utf8'));
+  const enLocale = JSON.parse(await fs.readFile(enLocalePath, 'utf8'));
+  const frLocale = JSON.parse(await fs.readFile(frLocalePath, 'utf8'));
 
-      expect(enLocale).toHaveProperty('common.hello-world');
-      expect(enLocale).not.toHaveProperty('Hello World');
-      expect(frLocale).toHaveProperty('common.hello-world');
+  expect(enLocale).not.toHaveProperty('Hello World');
+  expect(frLocale).not.toHaveProperty('Hello World');
 
-      const sourceFile = await fs.readFile(path.join(fixtureDir, 'src', 'BadKeys.tsx'), 'utf8');
-      expect(sourceFile).toContain("t('common.hello-world')");
-      expect(sourceFile).not.toContain("t('Hello World')");
+  const mapPath = path.join(fixtureDir, 'auto-rename-map.txt');
+  const mapContents = await fs.readFile(mapPath, 'utf8');
+  expect(mapContents).toContain('"Hello World" = ');
+  const renameMap = parseRenameMap(mapContents);
+  const helloKey = renameMap['Hello World'];
+  expect(helloKey).toBeDefined();
+  const submitKey = renameMap['buttons.submit'];
+  expect(submitKey).toBeDefined();
 
-      const mapPath = path.join(fixtureDir, 'auto-rename-map.txt');
-      const mapContents = await fs.readFile(mapPath, 'utf8');
-      expect(mapContents).toContain('"Hello World" = "common.hello-world"');
+  expect(enLocale).toHaveProperty(helloKey!);
+  expect(frLocale).toHaveProperty(helloKey!);
+  expect(enLocale).toHaveProperty(submitKey!);
+  expect(frLocale).toHaveProperty(submitKey!);
+
+  const sourceFile = await fs.readFile(path.join(fixtureDir, 'src', 'BadKeys.tsx'), 'utf8');
+  expect(sourceFile).toContain(`t('${helloKey!}')`);
+  expect(sourceFile).not.toContain("t('Hello World')");
     });
   });
 
