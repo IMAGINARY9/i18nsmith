@@ -32,6 +32,10 @@ interface CheckCommandOptions {
   preferDiagnosticsExit?: boolean;
   audit?: boolean;
   auditStrict?: boolean;
+  auditLocales?: string[];
+  auditDuplicates?: boolean;
+  auditInconsistent?: boolean;
+  auditOrphaned?: boolean;
 }
 
 const collectAssumedKeys = (value: string, previous: string[]) => {
@@ -124,6 +128,10 @@ export function registerCheck(program: Command) {
     .option('--prefer-diagnostics-exit', 'Prefer diagnostics exit codes when --fail-on=conflicts and blocking conflicts exist', false)
     .option('--audit', 'Include locale quality audit (duplicates, inconsistent keys, orphaned namespaces)', false)
     .option('--audit-strict', 'Fail if locale audit finds issues (implies --audit)', false)
+  .option('--audit-locales <locales...>', 'Limit locale audit to specific locales (comma-separated)', collectTargetPatterns, [])
+  .option('--audit-duplicates', 'Include duplicate-value quality check during audit (defaults on when no other audit filters provided)', false)
+  .option('--audit-inconsistent', 'Include inconsistent-key quality check during audit', false)
+  .option('--audit-orphaned', 'Include orphaned-namespace quality check during audit', false)
     .action(async (options: CheckCommandOptions) => runCheck(options));
 }
 
@@ -160,12 +168,16 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
 
     let localeAudit: LocaleAuditSummary | undefined;
     if (auditEnabled) {
+      const auditLocales = options.auditLocales?.filter(Boolean) ?? [];
+      const auditOverridesProvided = Boolean(options.auditDuplicates) || Boolean(options.auditInconsistent) || Boolean(options.auditOrphaned);
+
       localeAudit = await runLocaleAudit(
         { config, projectRoot },
         {
-          checkDuplicates: true,
-          checkInconsistent: true,
-          checkOrphaned: true,
+          locales: auditLocales.length ? auditLocales : undefined,
+          checkDuplicates: auditOverridesProvided ? Boolean(options.auditDuplicates) : true,
+          checkInconsistent: auditOverridesProvided ? Boolean(options.auditInconsistent) : true,
+          checkOrphaned: auditOverridesProvided ? Boolean(options.auditOrphaned) : true,
         }
       );
     }

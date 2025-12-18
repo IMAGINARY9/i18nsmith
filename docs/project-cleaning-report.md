@@ -73,6 +73,8 @@ const result = await runResolvedCliCommand(resolved, { ... });
 const result = await this.cliService.runCliCommand(rawCommand, { ... });
 ```
 
+**Status (Dec 2025):** ✅ Completed. The extension now routes every CLI call (scanner, preview manager, sync/transform controllers, quick actions) through `CliService`, leaving `resolveCliCommand`/`runResolvedCliCommand` usage isolated within the service itself.
+
 ---
 
 ### 1.3 Config Loading
@@ -105,6 +107,8 @@ const result = await this.cliService.runCliCommand(rawCommand, { ... });
 - Provides `getConfig()`, `getProjectRoot()`, `getConfigPath()`
 
 The `SmartScanner` already partially does this but it's tightly coupled to scanning.
+
+**Status (Dec 2025):** ✅ Completed. `ConfigurationService` now watches `i18n.config.json`, caches snapshots per workspace, emits change events, and all consumers (controllers, providers, helpers) access config exclusively through it.
 
 ---
 
@@ -227,6 +231,8 @@ The `SmartScanner` already partially does this but it's tightly coupled to scann
 2. Add `check --audit` flag for quality issues currently in `audit`
 3. `sync --check` becomes an alias for `check`
 4. Deprecate standalone `audit` command over time
+
+**Status (Dec 2025):** ✅ Completed. `sync --check` delegates to `check`, and the legacy `audit` command now proxies to `check --audit` (which also supports `--audit-locales`, `--audit-duplicates|--audit-inconsistent|--audit-orphaned` for feature parity). Users get one path plus stricter exit handling via `--audit-strict`.
 
 ---
 
@@ -366,9 +372,9 @@ export function withErrorHandling(action: (...args: any[]) => Promise<void>) {
 
 | Priority | Item | Effort | Impact |
 |----------|------|--------|--------|
-| 🔴 HIGH | Consolidate CLI execution through `CliService` | Medium | High — Reduces bugs, centralizes logic |
-| 🔴 HIGH | Unify `check`/`sync --check`/`audit` | Medium | High — Clearer user experience |
-| 🟡 MEDIUM | Create `ConfigurationService` for extension | Low | Medium — Reduces redundant loads |
+| 🔴 HIGH | ~~Consolidate CLI execution through `CliService`~~ **✅ (Dec 2025)** | Medium | High — Reduces bugs, centralizes logic |
+| 🔴 HIGH | ~~Unify `check`/`sync --check`/`audit`~~ **✅ (Dec 2025)** | Medium | High — Clearer user experience |
+| 🟡 MEDIUM | ~~Create `ConfigurationService` for extension~~ **✅ (Dec 2025)** | Low | Medium — Reduces redundant loads |
 | 🟡 MEDIUM | Extract shared controller logic | Medium | Medium — Cleaner architecture |
 | 🟡 MEDIUM | Standardize error handling | Low | Medium — Better UX |
 | 🟡 MEDIUM | Add controller/integration tests | High | High — Reliability |
@@ -384,12 +390,12 @@ The codebase is well-structured but has grown organically, leading to:
 
 1. **Duplication in CLI execution** — Multiple files import and use the same CLI patterns instead of going through `CliService`
 2. **Overlapping CLI commands** — `check`, `sync --check`, and `audit` serve similar purposes
-3. **Config loading spread** — Extension loads config in multiple places
+3. **Config loading spread** — ✅ Addressed via `ConfigurationService`
 
 **Quick wins:**
-1. Route all extension CLI calls through `CliService` (consolidation)
-2. Add `--audit` flag to `check` command and deprecate standalone `audit`
-3. Create `ConfigurationService` wrapper for cached config access
+1. Route all extension CLI calls through `CliService` — ✅ completed
+2. Add `--audit` flag to `check` command and deprecate standalone `audit` — ✅ completed (legacy command now proxies)
+3. Create `ConfigurationService` wrapper for cached config access — ✅ completed
 
 **Longer-term improvements:**
 1. Standardize error handling across CLI
