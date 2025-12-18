@@ -371,6 +371,24 @@ i18nsmith rename-keys --map rename-map.json --write
 
 The batch command reuses the same safety rails as `rename-key`: duplicate destinations are surfaced per-locale, missing source locales are highlighted, and `--write` performs all mutations in a single pass so updates stay in sync across code and locales.
 
+### When to use rename-key vs sync --auto-rename-suspicious
+
+Choose the right tool for your use case:
+
+- **`i18nsmith rename-key`** (or `rename-keys`): For **intentional, explicit renames** where you know exactly what the old and new keys should be. Use this when:
+  - Refactoring component names, feature names, or business logic that changes key semantics
+  - Consolidating duplicate keys with different names
+  - Following a planned key naming convention change
+  - You want full control over the exact new key names
+
+- **`i18nsmith sync --auto-rename-suspicious`**: For **automated normalization** of problematic keys that the tool detects. Use this when:
+  - Keys contain spaces, special characters, or inconsistent casing
+  - You want the tool to suggest normalized names using your configured naming convention
+  - Cleaning up "accidental" keys that were copy-pasted as values
+  - Batch normalizing many suspicious keys at once
+
+The key difference: `rename-key` requires you to specify both old and new names, while `sync --auto-rename-suspicious` lets the tool propose normalized names automatically.
+
 ## Translation Workflows (Manual → External → Automated)
 
 We recommend a tiered approach to translating strings so teams can adopt i18n without handing over sensitive API keys or paying for machine translation prematurely.

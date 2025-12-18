@@ -1,3 +1,9 @@
+/**
+ * CLI presentation layer for diff utilities.
+ * This module handles printing and writing locale diffs for CLI commands.
+ * Core diff building logic is in packages/core/src/diff-utils.ts.
+ */
+
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
