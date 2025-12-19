@@ -14,10 +14,14 @@ export class DiffPreviewService {
   async showPreview(
     diffs: DiffEntry[],
     onApply: () => Promise<void>,
-    options: DiffPreviewOptions
+    options: DiffPreviewOptions,
+    onCancel?: () => Promise<void>
   ): Promise<void> {
     if (!diffs || diffs.length === 0) {
       vscode.window.showInformationMessage('No changes to preview.');
+      if (onCancel) {
+        await onCancel();
+      }
       return;
     }
 
@@ -46,6 +50,10 @@ export class DiffPreviewService {
       // Close the preview editor first to avoid confusion
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       await onApply();
+    } else {
+      if (onCancel) {
+        await onCancel();
+      }
     }
   }
 }

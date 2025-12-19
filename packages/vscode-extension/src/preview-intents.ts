@@ -8,7 +8,7 @@ export interface TranslateRunOptions {
 }
 
 export type PreviewableCommand =
-  | { kind: 'sync' | 'transform'; targets?: string[] }
+  | { kind: 'sync' | 'transform'; targets?: string[]; extraArgs?: string[] }
   | { kind: 'rename-key'; from: string; to: string }
   | { kind: 'translate'; options: TranslateRunOptions }
   | { kind: 'scaffold-adapter'; args: string[] };
@@ -41,7 +41,37 @@ export function parsePreviewableCommand(rawCommand: string): PreviewableCommand 
 
   if (kind === 'sync' || kind === 'transform') {
     const targets = parseTargetArgs(args);
-    return { kind, targets: targets.length ? targets : undefined };
+    // Preserve other meaningful flags (e.g. --auto-rename-suspicious, --prune)
+    // but strip preview/report/write/apply flags that the extension controls.
+    const extraArgs: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const token = args[i];
+      // strip preview/control flags and their values
+      if (
+        token === '--preview-output' ||
+        token.startsWith('--preview-output=') ||
+        token === '--report' ||
+        token.startsWith('--report=') ||
+        token === '--apply-preview' ||
+        token.startsWith('--apply-preview=') ||
+        token === '--json' ||
+        token === '--write'
+      ) {
+        // if the flag takes a value as the next arg, skip it
+        if (
+          token === '--preview-output' ||
+          token === '--report' ||
+          token === '--apply-preview'
+        ) {
+          i += 1;
+        }
+        continue;
+      }
+      // otherwise keep the token
+      extraArgs.push(token);
+    }
+
+    return { kind, targets: targets.length ? targets : undefined, extraArgs: extraArgs.length ? extraArgs : undefined };
   }
 
   if (kind === 'rename-key') {

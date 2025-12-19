@@ -11,6 +11,7 @@ export interface TransformRunOptions {
   targets?: string[];
   label?: string;
   workspaceFolder?: vscode.WorkspaceFolder;
+  extraArgs?: string[];
 }
 
 export class TransformController extends PreviewApplyController implements vscode.Disposable {
@@ -29,14 +30,16 @@ export class TransformController extends PreviewApplyController implements vscod
       return;
     }
 
-    const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
+  const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
+  // preserve any extra CLI flags parsed from a previewable command (e.g. target globs)
+  const args = options.extraArgs && options.extraArgs.length ? [...baseArgs, ...options.extraArgs] : baseArgs;
     const label = options.label ?? (options.targets?.length === 1 ? options.targets[0] : 'workspace');
 
     this.services.logVerbose(`runTransform: Starting preview for ${label}`);
 
     const previewResult = await this.runPreview<TransformSummary>({
       kind: 'transform',
-      args: baseArgs,
+      args,
       workspaceFolder,
       label: `transform preview (${label})`,
       progressTitle: 'i18nsmith: Analyzing transform candidates…',
@@ -65,6 +68,7 @@ export class TransformController extends PreviewApplyController implements vscod
     ];
 
     if (allDiffs.length > 0) {
+      this.services.previewShown = true;
       await this.services.diffPreviewService.showPreview(
         allDiffs,
         async () => {

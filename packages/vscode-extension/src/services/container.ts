@@ -14,6 +14,10 @@ import { ConfigurationService } from "./configuration-service";
 import { OutputChannelService } from "./output-channel-service";
 
 export class ServiceContainer implements vscode.Disposable {
+  // Set to true when a preview UI (diff/plan) was shown to the user.
+  // Used by the extension runtime to avoid showing a premature "finished" notification
+  // for quick actions that open interactive previews and wait for user Apply.
+  public previewShown: boolean = false;
   public readonly outputChannelService: OutputChannelService;
   public readonly verboseOutputChannel: vscode.OutputChannel;
   public readonly cliOutputChannel: vscode.OutputChannel;

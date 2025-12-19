@@ -100,6 +100,7 @@ export class ExtractionController implements vscode.Disposable {
     const cleanupTasks = [sourceChange.cleanup, localePlan.cleanup];
     
     // Use the shared DiffPreviewService
+    this.services.previewShown = true;
     await this.services.diffPreviewService.showPreview(
       [sourceChange.diffEntry, ...localePlan.diffs],
       async () => {

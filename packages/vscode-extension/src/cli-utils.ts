@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface ResolvedCliCommand {
   /** Full command string for display/logging */
@@ -8,11 +10,12 @@ export interface ResolvedCliCommand {
   /** Argument array for spawn/execFile */
   args: string[];
   /** Indicates whether we used a configured cliPath */
-  source: 'configured-cli' | 'npx-pass-through' | 'external';
+  source: 'configured-cli' | 'workspace-local' | 'npx-pass-through' | 'external';
 }
 
 interface ResolveOptions {
   preferredCliPath?: string;
+  workspaceRoot?: string;
 }
 
 export function resolveCliCommand(raw: string, options: ResolveOptions = {}): ResolvedCliCommand {
@@ -26,7 +29,14 @@ export function resolveCliCommand(raw: string, options: ResolveOptions = {}): Re
   const preferredCliPath = sanitizeCliPath(options.preferredCliPath ?? '');
   const targetsI18nsmith = trimmed.startsWith('i18nsmith');
 
-  const commandLine = buildCommandLine(trimmed, configuredPath || preferredCliPath);
+  let resolvedCliPath = configuredPath || preferredCliPath;
+
+  // If no configured CLI path and targeting i18nsmith, try to auto-detect workspace-local CLI
+  if (!resolvedCliPath && targetsI18nsmith && options.workspaceRoot) {
+    resolvedCliPath = findWorkspaceLocalCli(options.workspaceRoot);
+  }
+
+  const commandLine = buildCommandLine(trimmed, resolvedCliPath);
   const tokens = splitCommandLine(commandLine);
   const command = tokens.shift() ?? '';
 
@@ -35,8 +45,10 @@ export function resolveCliCommand(raw: string, options: ResolveOptions = {}): Re
     command,
     args: tokens,
     source: targetsI18nsmith
-      ? configuredPath || preferredCliPath
-        ? 'configured-cli'
+      ? resolvedCliPath
+        ? configuredPath
+          ? 'configured-cli'
+          : 'workspace-local'
         : 'npx-pass-through'
       : 'external',
   };
@@ -63,6 +75,30 @@ function sanitizeCliPath(value: string | undefined): string {
     return '';
   }
   return trimmed;
+}
+
+function findWorkspaceLocalCli(workspaceRoot: string): string {
+  // Candidate paths in order of preference
+  const candidates = [
+    path.join(workspaceRoot, '.i18nsmith', 'cli.js'), // project-scoped custom CLI
+    path.join(workspaceRoot, 'node_modules', '.bin', 'i18nsmith'), // installed via npm/yarn/pnpm
+    path.join(workspaceRoot, 'packages', 'cli', 'dist', 'index.js'), // monorepo layout
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        // Basic safety check: ensure no shell metacharacters
+        if (!/[\n\r`$;&|<>]/.test(candidate)) {
+          return candidate;
+        }
+      }
+    } catch {
+      // Ignore errors and continue to next candidate
+    }
+  }
+
+  return '';
 }
 
 function splitCommandLine(input: string): string[] {
