@@ -65,6 +65,7 @@ export class CliService {
 
     const resolved = resolveCliCommand(rawCommand, {
       preferredCliPath: options.preferredCliPath,
+      workspaceRoot: cwd,
     });
     if (!resolved.command) {
       vscode.window.showErrorMessage('Unable to determine CLI command to run.');
@@ -72,6 +73,9 @@ export class CliService {
     }
 
     this.logVerbose(`runCliCommand: raw='${rawCommand}' resolved='${resolved.display}'`);
+
+    // Log CLI resolution details for debugging
+    this.logVerbose(`CLI resolution: source='${resolved.source}' command='${resolved.command}' args=[${resolved.args.map(arg => `'${arg}'`).join(', ')}]`);
 
     if (options.confirmMessage || options.interactive) {
       const detailLines: string[] = [];

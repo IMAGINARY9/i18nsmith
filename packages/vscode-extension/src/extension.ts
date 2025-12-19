@@ -64,6 +64,9 @@ let smartScanner: SmartScanner;
 let statusBarManager: StatusBarManager;
 
 let verboseOutputChannel: vscode.OutputChannel;
+// Expose the service container so other extension-level helpers can inspect
+// transient runtime state (e.g. whether a preview UI was shown).
+let services: ServiceContainer;
 
 let configController: ConfigurationController;
 let syncController: SyncController;
@@ -209,7 +212,7 @@ export function activate(context: vscode.ExtensionContext) {
   console.log("i18nsmith extension activated");
 
   // Initialize Service Container
-  const services = new ServiceContainer(context);
+  services = new ServiceContainer(context);
 
   // Assign globals for backward compatibility
   verboseOutputChannel = services.verboseOutputChannel;
@@ -733,6 +736,19 @@ async function offerQuickActionOutputLink(action: QuickActionDefinition) {
     return;
   }
 
+  // If a preview UI was shown to the user as part of this quick action,
+  // avoid showing the "finished" notification — the preview flow will
+  // surface its own Apply/Done UX when appropriate.
+  try {
+    if (services?.previewShown) {
+      // clear the flag for subsequent actions and skip the offer
+      services.previewShown = false;
+      return;
+    }
+  } catch (e) {
+    // ignore
+  }
+
   const shouldOffer =
     action.postRunBehavior === "offer-output" ||
     (action.command && QUICK_ACTION_OUTPUT_COMMANDS.has(action.command));
@@ -756,12 +772,15 @@ async function offerQuickActionOutputLink(action: QuickActionDefinition) {
 
 async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
   if (intent.kind === "sync") {
-    await syncController.runSync({ targets: intent.targets });
+    // Pass through any extraArgs parsed from the CLI suggestion (e.g. --auto-rename-suspicious)
+    // so that the preview includes the same behavior the raw CLI would.
+    await syncController.runSync({ targets: intent.targets, extraArgs: intent.extraArgs });
     return;
   }
 
   if (intent.kind === "transform") {
-    await transformController.runTransform({ targets: intent.targets });
+    // allow transform extras (e.g. target flags) to be passed through
+    await transformController.runTransform({ targets: intent.targets, extraArgs: intent.extraArgs });
     return;
   }
 

@@ -39,6 +39,9 @@ export class PreviewManager {
     const previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
     await fs.mkdir(previewDir, { recursive: true });
 
+    // Cleanup old previews (older than 1 hour)
+    this.cleanupOldPreviews(previewDir).catch(() => {});
+
     const previewPath = path.join(previewDir, `${kind}-preview-${Date.now()}.json`);
     const commandParts = ['i18nsmith', kind, ...args, '--preview-output', quoteCliArg(previewPath)].filter(Boolean);
     const humanReadable = commandParts.join(' ').trim();
@@ -94,6 +97,31 @@ export class PreviewManager {
         }
       }
       throw error;
+    }
+  }
+
+  private async cleanupOldPreviews(previewDir: string): Promise<void> {
+    try {
+      const files = await fs.readdir(previewDir);
+      const now = Date.now();
+      const ONE_HOUR = 60 * 60 * 1000;
+
+      for (const file of files) {
+        if (!file.endsWith('.json')) {
+          continue;
+        }
+        const filePath = path.join(previewDir, file);
+        try {
+          const stats = await fs.stat(filePath);
+          if (now - stats.mtimeMs > ONE_HOUR) {
+            await fs.unlink(filePath);
+          }
+        } catch {
+          // Ignore errors for individual files
+        }
+      }
+    } catch {
+      // Ignore errors reading directory
     }
   }
 }

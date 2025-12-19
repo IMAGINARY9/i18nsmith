@@ -4,6 +4,8 @@ import { ConfigurationController } from './configuration-controller';
 import { type PlannedChange } from '../preview-flow';
 import { SyncSummary, SuspiciousKeyWarning, LocaleDiffEntry, SourceFileDiffEntry } from '@i18nsmith/core';
 import { PreviewPayload } from '../preview-manager';
+import * as fs from 'fs';
+import * as path from 'path';
 import { quoteCliArg } from '../command-helpers';
 import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
 import { PreviewApplyController } from './preview-apply-controller';
@@ -41,7 +43,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
 
     const args = ['--diff'];
     if (options.targets) {
-      args.push('--target', ...options.targets);
+      args.push('--target', ...options.targets.map(quoteCliArg));
     }
     if (options.extraArgs) {
       args.push(...options.extraArgs);
@@ -100,15 +102,33 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       
       const label = parts.join(', ');
 
+      // Mark that a preview UI will be shown so the quick-action completion
+      // notification doesn't appear prematurely.
+  this.services.previewShown = true;
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await this.services.diffPreviewService.showPreview(
         allDiffs,
         async () => {
           await this.applySync(previewResult.previewPath, { prune: unusedCount > 0 });
+          // Cleanup after apply
+          try {
+            await fs.promises.unlink(previewResult.previewPath);
+          } catch (e) {
+            // ignore
+          }
         },
         {
           title: 'Sync Preview',
           detail: `Sync Locales: ${label}. Apply changes?`,
+        },
+        async () => {
+          // Cleanup on cancel
+          try {
+            await fs.promises.unlink(previewResult.previewPath);
+          } catch (e) {
+            // ignore
+          }
         }
       );
     } else {
@@ -187,7 +207,11 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       changes,
       cleanup: async () => {
         // Cleanup preview file
-        // In real impl we'd delete previewPath
+        try {
+          await fs.promises.unlink(previewPath);
+        } catch (e) {
+          this.services.logVerbose(`Failed to cleanup preview file: ${previewPath}`);
+        }
       },
     });
 
@@ -207,9 +231,61 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
   }
 
   private async applySync(previewPath: string, options: { prune?: boolean } = {}) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceRoot = workspaceFolder?.uri.fsPath;
+
     let command = `i18nsmith sync --apply-preview ${quoteCliArg(previewPath)} --yes`;
     if (options.prune) {
       command += ' --prune';
+    }
+
+    // If the preview contains suspicious missing keys, the CLI will by default skip
+    // writing them unless explicitly selected. To ensure Apply actually writes the
+    // intended missing keys, create a temporary selection file listing the missing
+    // keys found in the preview and pass it to the --selection-file option.
+    try {
+      if (workspaceRoot) {
+        const previewFull = path.resolve(workspaceRoot, previewPath);
+        if (fs.existsSync(previewFull)) {
+          const raw = fs.readFileSync(previewFull, 'utf8');
+          const payload = JSON.parse(raw) as {
+            summary?: { missingKeys?: Array<{ key: string }>; renameDiffs?: unknown[] };
+            args?: string[];
+          } | undefined;
+
+          // Build selection file if missing keys exist
+          const missing: string[] = Array.isArray(payload?.summary?.missingKeys)
+            ? (payload!.summary!.missingKeys as Array<{ key: string }>).map((m) => m.key)
+            : [];
+
+          if (missing.length > 0) {
+            const selection = { missing, unused: [] };
+            const dir = path.join(workspaceRoot, '.i18nsmith');
+            try {
+              fs.mkdirSync(dir, { recursive: true });
+            } catch (e) {
+              // ignore
+            }
+            const filename = `selection-${Date.now()}.json`;
+            const selectionPath = path.join(dir, filename);
+            fs.writeFileSync(selectionPath, JSON.stringify(selection, null, 2), 'utf8');
+            command += ` --selection-file ${quoteCliArg(selectionPath)}`;
+          }
+
+          // If the preview included auto-rename intent or rename diffs, ensure the apply command
+          // includes --auto-rename-suspicious so the CLI actually runs the renamer during replay.
+          const hadAutoRenameFlag = Array.isArray(payload?.args) && payload!.args!.includes('--auto-rename-suspicious');
+          const hasRenameDiffs = Array.isArray(payload?.summary?.renameDiffs) && payload!.summary!.renameDiffs!.length > 0;
+          if (hadAutoRenameFlag || hasRenameDiffs) {
+            if (!command.includes('--auto-rename-suspicious')) {
+              command += ' --auto-rename-suspicious';
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // If anything goes wrong reading/writing the selection file, continue without it.
+      this.services.logVerbose(`applySync: failed to create selection file: ${(e as Error).message}`);
     }
 
     await this.applyPreviewCommand({
@@ -406,7 +482,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     
     const args = ['--diff', '--auto-rename-suspicious'];
 
-    const previewResult = await vscode.window.withProgress(
+    let previewResult = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `i18nsmith: Analyzing bulk rename…`,
@@ -421,14 +497,79 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
         })
     );
 
-    const summary = previewResult.payload.summary;
+    // Log preview file and CLI output into the CLI output channel for visibility in the UI.
+    try {
+      if (previewResult?.previewPath) {
+        this.services.cliOutputChannel.appendLine(`\n[Bulk Rename Preview] ${previewResult.previewPath}`);
+      }
+      if (previewResult?.stdout) {
+        this.services.cliOutputChannel.appendLine(previewResult.stdout);
+      }
+      if (previewResult?.stderr) {
+        this.services.cliOutputChannel.appendLine(`[stderr] ${previewResult.stderr}`);
+      }
+    } catch (e) {
+      // best-effort logging
+      this.services.logVerbose(`renameAllSuspiciousKeys: failed to log preview result: ${(e as Error).message}`);
+    }
+
+    let summary = previewResult.payload.summary;
     const allDiffs = [
       ...(summary.diffs || []),
       ...(summary.localeDiffs || []),
       ...(summary.renameDiffs || [])
     ];
 
+    // If the preview detected suspicious keys but produced no rename proposals or diffs,
+    // try re-running the preview once (some analyzer runs produce different output on a fresh run).
+    if (allDiffs.length === 0 && (summary.suspiciousKeys?.length ?? 0) > 0) {
+      try {
+        this.services.cliOutputChannel.appendLine('[Bulk Rename] No diffs found in preview — re-running preview with --auto-rename-suspicious');
+        const rerun = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `i18nsmith: Re-analyzing bulk rename (auto-rename)…`,
+            cancellable: false,
+          },
+          () =>
+            this.services.previewManager.run<SyncSummary>({
+              kind: 'sync',
+              args, // args already contains --auto-rename-suspicious
+              workspaceRoot: workspaceFolder.uri.fsPath,
+              label: 'Bulk Rename Suspicious Keys (re-run)',
+            })
+        );
+
+        // replace previewResult/summary with rerun results and recompute diffs
+        previewResult = rerun;
+        summary = previewResult.payload.summary;
+        const rerunDiffs = [
+          ...(summary.diffs || []),
+          ...(summary.localeDiffs || []),
+          ...(summary.renameDiffs || []),
+        ];
+
+        if (rerunDiffs.length > 0) {
+          await this.services.diffPreviewService.showPreview(
+            rerunDiffs,
+            async () => {
+              await this.applySync(previewResult.previewPath, { prune: false });
+            },
+            {
+              title: 'Bulk Rename Preview',
+              detail: `Rename ${this.lastSyncSuspiciousWarnings.length} suspicious keys?`,
+            }
+          );
+          return;
+        }
+        // else fall through and show Open Preview option below
+      } catch (e) {
+        this.services.logVerbose(`renameAllSuspiciousKeys: re-run preview failed: ${(e as Error).message}`);
+      }
+    }
+
     if (allDiffs.length > 0) {
+  this.services.previewShown = true;
       await this.services.diffPreviewService.showPreview(
         allDiffs,
         async () => {
@@ -447,6 +588,24 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
           'Show CLI Output'
         );
         if (choice === 'Show CLI Output') {
+          this.services.cliOutputChannel.show(true);
+        }
+      } else if (previewResult?.previewPath) {
+        const openLabel = 'Open Preview';
+        const choice = await vscode.window.showInformationMessage(
+          'No changes detected for bulk rename.',
+          openLabel,
+          'Show CLI Output'
+        );
+        if (choice === openLabel) {
+          try {
+            const doc = await vscode.workspace.openTextDocument(previewResult.previewPath);
+            await vscode.window.showTextDocument(doc, { preview: false });
+          } catch (e) {
+            this.services.cliOutputChannel.appendLine(`Failed to open preview file: ${(e as Error).message}`);
+            this.services.cliOutputChannel.show(true);
+          }
+        } else if (choice === 'Show CLI Output') {
           this.services.cliOutputChannel.show(true);
         }
       } else {
