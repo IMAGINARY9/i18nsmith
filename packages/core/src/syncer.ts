@@ -71,6 +71,7 @@ export interface MissingKeyRecord {
   key: string;
   references: TranslationReference[];
   suspicious?: boolean;
+  recoveredValue?: string;
 }
 
 export interface UnusedKeyRecord {
@@ -261,7 +262,8 @@ export class Syncer {
       scopedReferencesByKey,
       localeKeySets,
       projectedLocaleData,
-      runtime.selectedMissingKeys
+      runtime.selectedMissingKeys,
+      localeData
     );
 
     const { unusedKeys, unusedKeysToApply } = this.processUnusedKeys(
@@ -468,10 +470,11 @@ export class Syncer {
     referencesByKey: Map<string, TranslationReference[]>,
     localeKeySets: Map<string, Set<string>>,
     projectedLocaleData: Map<string, Record<string, string>>,
-    selectedMissingKeys?: Set<string>
+    selectedMissingKeys?: Set<string>,
+    localeData?: Map<string, Record<string, string>>
   ) {
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
-    const missingKeys = Array.from(keySet)
+    const missingKeys: MissingKeyRecord[] = Array.from(keySet)
       .filter((key) => !sourceLocaleKeys.has(key))
       .map((key) => ({
         key,
@@ -483,8 +486,34 @@ export class Syncer {
       this.shouldAutoApplyMissingKey(record, selectedMissingKeys)
     );
     const missingKeysToApply = filterSelection(autoApplyCandidates, selectedMissingKeys);
+
+    // Pre-calculate unused keys for value recovery if localeData is available
+    const unusedKeysForRecovery: string[] = [];
+    if (localeData) {
+      const sourceKeys = localeKeySets.get(this.sourceLocale);
+      if (sourceKeys) {
+        for (const key of sourceKeys) {
+          if (!keySet.has(key)) {
+            unusedKeysForRecovery.push(key);
+          }
+        }
+        // Sort by length descending to match longest possible key first
+        unusedKeysForRecovery.sort((a, b) => b.length - a.length);
+      }
+    }
+
     for (const record of missingKeysToApply) {
-      const defaultValue = buildDefaultSourceValue(record.key);
+      let defaultValue = buildDefaultSourceValue(record.key);
+
+      // Try to recover value from unused keys
+      if (localeData && unusedKeysForRecovery.length > 0) {
+        const recovered = this.recoverValueFromUnused(record.key, unusedKeysForRecovery, localeData);
+        if (recovered) {
+          defaultValue = recovered;
+          record.recoveredValue = recovered;
+        }
+      }
+
       applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         const seedValue = this.config.sync?.seedValue ?? '';
@@ -494,6 +523,33 @@ export class Syncer {
       }
     }
     return { missingKeys, missingKeysToApply };
+  }
+
+  private recoverValueFromUnused(
+    missingKey: string,
+    unusedKeys: string[],
+    localeData: Map<string, Record<string, string>>
+  ): string | undefined {
+    for (const unusedKey of unusedKeys) {
+      if (this.isKeyComponent(missingKey, unusedKey)) {
+        const value = localeData.get(this.sourceLocale)?.[unusedKey];
+        if (value) return value;
+      }
+    }
+    return undefined;
+  }
+
+  private isKeyComponent(fullKey: string, component: string): boolean {
+    if (fullKey === component) return false;
+    if (!fullKey.includes(component)) return false;
+
+    const idx = fullKey.indexOf(component);
+    if (idx === -1) return false;
+
+    const charBefore = idx > 0 ? fullKey[idx - 1] : '.';
+    const charAfter = idx + component.length < fullKey.length ? fullKey[idx + component.length] : '.';
+
+    return charBefore === '.' && charAfter === '.';
   }
 
   private processUnusedKeys(
@@ -736,7 +792,7 @@ export class Syncer {
 
   private async applyMissingKeys(missingKeys: MissingKeyRecord[]) {
     for (const record of missingKeys) {
-      const defaultValue = buildDefaultSourceValue(record.key);
+      const defaultValue = record.recoveredValue ?? buildDefaultSourceValue(record.key);
       await this.localeStore.upsert(this.sourceLocale, record.key, defaultValue);
       if (this.config.seedTargetLocales) {
         const seedValue = this.config.sync?.seedValue ?? '';
