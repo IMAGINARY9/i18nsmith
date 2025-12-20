@@ -4,6 +4,12 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-20
+### Patch
+- Bump patch version to 0.3.1 and prepare republishing because v0.3.0 already exists in the Visual Studio Marketplace.
+- Packaging: produce i18nsmith-vscode-0.3.1.vsix for release artifacts.
+
+
 ## [0.3.0] - 2025-12-15
 ### Refactoring
 - Major architectural refactor: moved core logic into dedicated controllers (`SyncController`, `TransformController`, `ExtractionController`, `ConfigurationController`).
