@@ -3,16 +3,16 @@
   "version": "0.3.2",
   "description": "CLI for i18nsmith",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "bin": {
-    "i18nsmith": "dist/index.js"
+    "i18nsmith": "dist/index.cjs"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
     }
   },
   "scripts": {
