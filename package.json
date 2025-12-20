@@ -4,6 +4,12 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "build:packages": "pnpm --filter \"@i18nsmith/*\" build",
+    "build:workspace": "pnpm -w -r run build",
+    "package:extension": "pnpm --filter i18nsmith-vscode exec -- vsce package --no-dependencies",
+    "package:extension:local": "pnpm --filter i18nsmith-vscode exec -- vsce package",
+    "publish:cli:hint": "node -e \"console.log('Run from CI with NPM_TOKEN set or run locally: cd packages/cli && npm publish --access public')\"",
+    "publish:extension:hint": "node -e \"console.log('Publish via vsce or upload the VSIX to Marketplace/Release; set VSCE_TOKEN when running vsce publish')\"",
+    "release:all:hint": "node -e \"console.log('Use `pnpm run build:workspace && pnpm run package:extension` then publish CLI and extension with appropriate tokens')\"",
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
     "rebuild": "pnpm clean && pnpm build",
     "pretest": "pnpm build",
