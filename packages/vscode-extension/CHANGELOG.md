@@ -4,6 +4,11 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3] - 2025-12-21
+### Fix
+- Prepare release 0.3.3: minor fixes and packaging updates.
+
+
 ## [0.3.2] - 2025-12-20
 ### Fix
 - Fix `npm ERR! EUNSUPPORTEDPROTOCOL` when running CLI via `npx` by bundling workspace dependencies.
