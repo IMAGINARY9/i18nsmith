@@ -22,7 +22,7 @@ export const program = new Command();
 program
   .name('i18nsmith')
   .description('Universal Automated i18n Library')
-  .version('0.1.0');
+  .version('0.3.2');
 
 registerInit(program);
 registerScaffoldAdapter(program);
