@@ -1,6 +1,6 @@
 import * as esbuild from 'esbuild';
 import { execSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 JSON.parse(readFileSync('./package.json', 'utf8'));
 
@@ -30,4 +30,12 @@ await esbuild.build({
   minify: false,
 });
 
+// Add shebang was above to make the CJS bundle executable when installed via npm/npx
+// (esbuild supports banner to prepend text).
 console.log('CLI bundle built at dist/index.cjs (CommonJS)');
+
+// Emit a small ESM shim that forwards imports to the CJS bundle. This satisfies
+// `exports.import` consumers while keeping the runtime CLI as CommonJS.
+const shim = `import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst cjs = require('./index.cjs');\nexport default cjs;\nfor (const k of Object.keys(cjs)) { try { Object.defineProperty(exports, k, { enumerable: true, get: () => cjs[k] }); } catch (e) {} }\n`;
+writeFileSync('dist/index.js', shim, 'utf8');
+console.log('ESM shim written to dist/index.js');
