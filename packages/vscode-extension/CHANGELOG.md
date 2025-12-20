@@ -4,6 +4,11 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-12-20
+### Fix
+- Fix `npm ERR! EUNSUPPORTEDPROTOCOL` when running CLI via `npx` by bundling workspace dependencies.
+- Ensure `npx i18nsmith` works correctly without requiring `pnpm` or workspace setup.
+
 ## [0.3.1] - 2025-12-20
 ### Patch
 - Bump patch version to 0.3.1 and prepare republishing because v0.3.0 already exists in the Visual Studio Marketplace.
