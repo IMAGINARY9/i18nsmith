@@ -78,6 +78,8 @@ export async function handleCsvExport(options: TranslateCommandOptions): Promise
     const plan = await translationService.buildPlan({
       locales: options.locales,
       force: options.force,
+      // Export should represent what the UI calls "missing" (usually includes empty strings)
+      treatEmptyAsMissing: true,
     });
 
     if (!plan.totalTasks) {
@@ -165,7 +167,6 @@ export async function handleCsvImport(options: TranslateCommandOptions): Promise
     // Parse header
     const headerFields = parseCsvLine(lines[0]);
     const keyIdx = headerFields.indexOf('key');
-    const sourceLocaleIdx = headerFields.indexOf('sourceLocale');
     const sourceValueIdx = headerFields.indexOf('sourceValue');
     const targetLocaleIdx = headerFields.indexOf('targetLocale');
     const translatedValueIdx = headerFields.indexOf('translatedValue');

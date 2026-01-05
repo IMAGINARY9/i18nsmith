@@ -14,6 +14,13 @@ import { createDefaultProject } from './project-factory.js';
 
 export interface TranslationReference {
   key: string;
+  /**
+   * Optional fallback literal associated with the key in code.
+   * Example: `t('common.email') || 'Email'`.
+   *
+   * Used by sync to seed missing entries with a high-confidence default.
+   */
+  fallbackLiteral?: string;
   filePath: string;
   position: {
     line: number;
@@ -143,6 +150,7 @@ export class ReferenceExtractor {
       }
 
       const reference = this.createReference(file, node, analysis.key);
+      reference.fallbackLiteral = this.extractFallbackLiteral(node);
       references.push(reference);
     });
 
@@ -186,6 +194,55 @@ export class ReferenceExtractor {
     }
 
     return { kind: 'dynamic', reason: 'expression' };
+  }
+
+  private extractFallbackLiteral(call: CallExpression): string | undefined {
+    // In JSX/TS, the call is often wrapped (e.g. inside a JsxExpression or parentheses)
+    // before participating in a binary expression.
+    let current: Node = call;
+    for (let depth = 0; depth < 4; depth++) {
+      const parentNode = current.getParent() as Node | undefined;
+      if (!parentNode) break;
+
+      if (
+        Node.isParenthesizedExpression(parentNode) ||
+        Node.isAsExpression(parentNode) ||
+        Node.isNonNullExpression(parentNode) ||
+        Node.isJsxExpression(parentNode)
+      ) {
+        current = parentNode;
+        continue;
+      }
+
+      current = parentNode;
+      break;
+    }
+
+    // Find the binary expression that actually uses this call (or its wrapper) as the left operand.
+    // This avoids accidentally detecting unrelated binaries (or failing to match JSX wrappers).
+    let binary: Node | undefined = current;
+    for (let depth = 0; depth < 3; depth++) {
+      if (binary && Node.isBinaryExpression(binary)) {
+        break;
+      }
+      binary = binary?.getParent() as Node | undefined;
+    }
+
+    if (binary && Node.isBinaryExpression(binary)) {
+      const operator = binary.getOperatorToken().getText();
+      if (operator === '||' || operator === '??') {
+        const left = binary.getLeft();
+        // Only treat it as a fallback for *this* call.
+        if (left.getText().includes(call.getText())) {
+          const right = binary.getRight();
+          if (Node.isStringLiteral(right) || Node.isNoSubstitutionTemplateLiteral(right)) {
+            return right.getLiteralText();
+          }
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
