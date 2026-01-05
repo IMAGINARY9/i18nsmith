@@ -85,18 +85,18 @@ export class ConfigurationController implements vscode.Disposable {
       return;
     }
 
-    // Enrich suggestions with count and example if available (mocking for now as deriveWhitelistSuggestions doesn't return them)
-    // In a real scenario, we'd aggregate warnings to get counts.
+    // Aggregate suggestions by their *normalized* assumption so we don't offer duplicates
+    // that differ only by quoting/whitespace.
     const aggregated = new Map<
       string,
       { suggestion: WhitelistSuggestion; count: number; example: string }
     >();
     for (const s of suggestions) {
-      const key = s.assumption;
-      if (!aggregated.has(key)) {
-        aggregated.set(key, { suggestion: s, count: 0, example: s.expression });
+      const normalizedKey = normalizeManualAssumption(s.assumption) ?? s.assumption;
+      if (!aggregated.has(normalizedKey)) {
+        aggregated.set(normalizedKey, { suggestion: s, count: 0, example: s.expression });
       }
-      aggregated.get(key)!.count++;
+      aggregated.get(normalizedKey)!.count++;
     }
 
     const items = Array.from(aggregated.values()).map(
@@ -139,7 +139,18 @@ export class ConfigurationController implements vscode.Disposable {
       );
 
       this.services.configurationService.refresh(workspaceFolder.uri.fsPath);
-      this.services.reportWatcher.refresh();
+      // Clear any short-lived suppression state and force a fresh report.
+      this.clearDynamicWarningSuppression();
+      await this.services.reportWatcher.refresh();
+
+      // After refresh, also prune any warnings that are now covered by the *actual*
+      // persisted whitelist, to avoid the action reappearing due to stale in-memory state.
+      const refreshedSnapshot = await loadDynamicWhitelistSnapshot(workspaceFolder.uri.fsPath);
+      if (refreshedSnapshot?.normalizedEntries?.length) {
+        this.services.diagnosticsManager.pruneDynamicWarnings(
+          new Set(refreshedSnapshot.normalizedEntries)
+        );
+      }
 
       vscode.window.showInformationMessage(
         `Added ${additions.length} pattern${additions.length === 1 ? "" : "s"} to whitelist.`

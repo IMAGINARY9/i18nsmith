@@ -288,12 +288,22 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       this.services.logVerbose(`applySync: failed to create selection file: ${(e as Error).message}`);
     }
 
+    // Force CLI to invalidate any persisted check/sync cache so a follow-up health report
+    // reflects the just-applied changes.
+    const cacheBustedCommand = `${command} --invalidate-cache`;
+
     await this.applyPreviewCommand({
-      command,
+      command: cacheBustedCommand,
       progressTitle: 'i18nsmith: Applying sync changes…',
       successMessage: 'Sync applied successfully.',
       scannerTrigger: 'sync',
       failureMessage: 'Sync failed. Check the i18nsmith output channel.',
+      onAfterSuccess: async () => {
+        // Double refresh to reduce the chance of stale actionable items reappearing due to:
+        // - file watcher race on locale write
+        // - cached report reads
+        await this.services.reportWatcher.refresh();
+      },
     });
   }
 
