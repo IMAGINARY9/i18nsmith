@@ -510,8 +510,18 @@ export class Syncer {
       for (const record of missingKeysToApply) {
         let defaultValue = buildDefaultSourceValue(record.key);
 
+        // Prefer a literal UI fallback from code when present.
+        // Example: `t('form.email') || 'Email'` → seed source value as 'Email'.
+        const references = referencesByKey.get(record.key) ?? [];
+        const fallbackLiteral = references.find((ref) => typeof ref.fallbackLiteral === 'string')
+          ?.fallbackLiteral;
+        if (fallbackLiteral && fallbackLiteral.trim().length) {
+          defaultValue = fallbackLiteral;
+          record.recoveredValue = fallbackLiteral;
+        }
+
         // Try to recover value from unused keys
-        if (localeData && unusedKeysForRecovery.length > 0) {
+        if (!fallbackLiteral && localeData && unusedKeysForRecovery.length > 0) {
           const recovered = this.recoverValueFromUnused(record.key, unusedKeysForRecovery, localeData);
           if (recovered) {
             defaultValue = recovered;

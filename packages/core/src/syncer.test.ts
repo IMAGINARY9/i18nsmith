@@ -273,6 +273,41 @@ export default SentenceKeys;
     expect(enContents).toHaveProperty('normal.valid.key');
   });
 
+  it('seeds missing keys using fallback literals from code (t(key) || "literal")', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Fallback.tsx'),
+      `import { useTranslation } from 'react-i18next';
+
+const Fallback = () => {
+  const { t } = useTranslation();
+  return <div>{t('form.email_address') || 'Email Address'}</div>;
+};
+
+export default Fallback;
+`
+    );
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), '{}');
+
+    const syncer = new Syncer(
+      {
+        sourceLanguage: 'en',
+        targetLanguages: [],
+        localesDir: path.join(tempDir, 'locales'),
+        include: ['src/**/*.tsx'],
+      } as I18nConfig,
+      { workspaceRoot: tempDir }
+    );
+
+    await syncer.run({ write: true });
+
+    const enContents = JSON.parse(
+      await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8')
+    ) as Record<string, string>;
+
+    expect(enContents['form.email_address']).toBe('Email Address');
+  });
+
   it('reports placeholder mismatches when interpolation validation is enabled', async () => {
     await fs.writeFile(
       path.join(tempDir, 'src', 'Greeting.tsx'),
