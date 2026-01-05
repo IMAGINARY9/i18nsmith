@@ -1031,10 +1031,15 @@ export class Scanner {
           : path.join(this.workspaceRoot, pattern)
       );
 
+    // Important: targets are still subject to config exclude globs.
+    // Otherwise, running transforms/syncs on explicit targets could mutate files the
+    // user intentionally excluded (e.g., legal pages).
+    const patterns = this.getGlobPatterns();
     const matches = fg.sync(normalizedPatterns, {
       onlyFiles: true,
       unique: true,
       followSymbolicLinks: true,
+      ignore: patterns.exclude ?? [],
     }) as string[];
 
     return matches.sort((a, b) => a.localeCompare(b));

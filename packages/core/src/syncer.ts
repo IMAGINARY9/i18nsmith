@@ -1,4 +1,3 @@
-import fs from 'fs/promises';
 import path from 'path';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import fg from 'fast-glob';
@@ -11,7 +10,7 @@ import {
 } from './config.js';
 import { createBackup, BackupResult } from './backup.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
-import { buildPlaceholderPatterns, extractPlaceholders, PlaceholderPatternInstance } from './placeholders.js';
+import { buildPlaceholderPatterns, PlaceholderPatternInstance } from './placeholders.js';
 import { createDefaultProject } from './project-factory.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview, SourceFileDiffEntry } from './diff-utils.js';
@@ -23,19 +22,15 @@ import type {
   ReferenceCacheFile,
 } from './reference-extractor.js';
 import {
-  type FileFingerprint,
   type ReferenceCacheEntry,
   loadReferenceCache,
   saveReferenceCache,
-  clearReferenceCache,
   computeFileFingerprint,
   getCachedEntry,
-  REFERENCE_CACHE_VERSION,
 } from './syncer/reference-cache.js';
 import {
   type PlaceholderIssue,
   type EmptyValueViolation,
-  type EmptyValueViolationReason,
   collectPlaceholderIssues,
   collectEmptyValueViolations,
 } from './syncer/sync-validator.js';
@@ -263,7 +258,8 @@ export class Syncer {
       localeKeySets,
       projectedLocaleData,
       runtime.selectedMissingKeys,
-      localeData
+      localeData,
+      runtime.write
     );
 
     const { unusedKeys, unusedKeysToApply } = this.processUnusedKeys(
@@ -471,7 +467,8 @@ export class Syncer {
     localeKeySets: Map<string, Set<string>>,
     projectedLocaleData: Map<string, Record<string, string>>,
     selectedMissingKeys?: Set<string>,
-    localeData?: Map<string, Record<string, string>>
+    localeData?: Map<string, Record<string, string>>,
+    allowWrites: boolean = false
   ) {
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
     const missingKeys: MissingKeyRecord[] = Array.from(keySet)
@@ -502,23 +499,32 @@ export class Syncer {
       }
     }
 
-    for (const record of missingKeysToApply) {
-      let defaultValue = buildDefaultSourceValue(record.key);
+    // NOTE: placeholder validation (--validate-interpolations) should not implicitly
+    // write missing-key defaults. Missing keys are only applied when the user
+    // explicitly requested sync writes (or selected missing keys via interactive/selection).
+    // We still *report* missingKeys/missingKeysToApply, but don't mutate projected locale
+    // data unless the run is allowed to write.
+  const allowMissingKeyWrites = allowWrites;
 
-      // Try to recover value from unused keys
-      if (localeData && unusedKeysForRecovery.length > 0) {
-        const recovered = this.recoverValueFromUnused(record.key, unusedKeysForRecovery, localeData);
-        if (recovered) {
-          defaultValue = recovered;
-          record.recoveredValue = recovered;
+    if (allowMissingKeyWrites) {
+      for (const record of missingKeysToApply) {
+        let defaultValue = buildDefaultSourceValue(record.key);
+
+        // Try to recover value from unused keys
+        if (localeData && unusedKeysForRecovery.length > 0) {
+          const recovered = this.recoverValueFromUnused(record.key, unusedKeysForRecovery, localeData);
+          if (recovered) {
+            defaultValue = recovered;
+            record.recoveredValue = recovered;
+          }
         }
-      }
 
-      applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
-      if (this.config.seedTargetLocales) {
-        const seedValue = this.config.sync?.seedValue ?? '';
-        for (const locale of this.targetLocales) {
-          applyProjectedValue(projectedLocaleData, locale, record.key, seedValue);
+        applyProjectedValue(projectedLocaleData, this.sourceLocale, record.key, defaultValue);
+        if (this.config.seedTargetLocales) {
+          const seedValue = this.config.sync?.seedValue ?? '';
+          for (const locale of this.targetLocales) {
+            applyProjectedValue(projectedLocaleData, locale, record.key, seedValue);
+          }
         }
       }
     }
