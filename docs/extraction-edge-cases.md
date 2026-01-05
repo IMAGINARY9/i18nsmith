@@ -87,3 +87,7 @@ Long-term fix:
 - Extend reference extraction to recognize `t('key') || 'literal'` and treat `'literal'` as the preferred default source value for that key during sync.
 
 This yields better seeded locale values and reduces the need for manual backfilling.
+
+Notes:
+- This only applies when the fallback is a static string literal.
+- The exported “missing translations” handoff may include keys that exist but have an empty value (treated as missing for handoff).

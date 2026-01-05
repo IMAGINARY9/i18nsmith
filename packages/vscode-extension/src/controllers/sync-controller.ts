@@ -330,13 +330,13 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Exporting missing translations...',
+        title: 'Exporting missing/empty translations...',
       },
       async () => {
         const result = await this.services.cliService.runCliCommand(command);
         
         if (result?.success) {
-          vscode.window.showInformationMessage(`Exported missing translations to ${uri.fsPath}`);
+          vscode.window.showInformationMessage(`Exported missing/empty translations to ${uri.fsPath}`);
         } else {
           vscode.window.showErrorMessage(`Export failed: ${result?.stderr ?? 'Unknown error'}`);
         }

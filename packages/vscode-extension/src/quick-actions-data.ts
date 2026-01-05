@@ -325,7 +325,7 @@ function createProjectHealthSection(
         title: missingCount > 0 ? `Handoff to Translators (${missingCount})` : 'Handoff to Translators',
         description:
           missingCount > 0
-            ? `Export ${missingCount} missing key${missingCount === 1 ? '' : 's'} to CSV.`
+            ? `Export ${missingCount} missing/empty translation${missingCount === 1 ? '' : 's'} to CSV.`
             : 'Export missing translations for localization teams.',
         detail: translationSuggestion?.reason,
         command: 'i18nsmith.exportMissingTranslations',
