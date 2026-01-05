@@ -103,12 +103,16 @@ export class Transformer {
       }
     }
 
+    const normalizedTargets = Array.isArray(runOptions.targets) && runOptions.targets.length
+      ? runOptions.targets.map((t) => this.normalizeTargetPath(t))
+      : undefined;
+
     const scanner = new Scanner(this.config, {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
     });
     const scanSummary = scanner.scan({
-      targets: runOptions.targets,
+      targets: normalizedTargets,
       scanCalls: runOptions.migrateTextKeys,
     });
 
@@ -197,7 +201,7 @@ export class Transformer {
         try {
           const detailedSummary = scanner.scan({
             collectNodes: true,
-            targets: [relativePath],
+            targets: [this.normalizeTargetPath(relativePath)],
             scanCalls: runOptions.migrateTextKeys,
           });
           const detailedCandidates = detailedSummary.detailedCandidates;
@@ -376,6 +380,16 @@ export class Transformer {
       skippedFiles,
       write,
     };
+  }
+
+  private normalizeTargetPath(target: string): string {
+    if (!target) {
+      return target;
+    }
+    // Scanner resolves targets via fast-glob using workspace-root-based patterns.
+    // Returning an absolute path prevents accidental scanning when a relative path
+    // bypasses exclude globs in some host setups.
+    return path.isAbsolute(target) ? target : path.join(this.workspaceRoot, target);
   }
 
   private async generateDiffs(originalData: Map<string, Record<string, string>>) {
