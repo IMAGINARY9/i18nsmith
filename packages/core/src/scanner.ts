@@ -101,7 +101,7 @@ type CandidateRecorder = (
   file: SourceFile
 ) => void;
 
-const TRANSLATABLE_ATTRIBUTES = new Set([
+export const DEFAULT_TRANSLATABLE_ATTRIBUTES = new Set([
   "alt",
   "aria-label",
   "aria-placeholder",
@@ -282,7 +282,7 @@ export class Scanner {
     record: CandidateRecorder
   ) {
     const attributeName = node.getNameNode().getText();
-    if (!TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
+    if (!DEFAULT_TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
       return;
     }
 
@@ -339,7 +339,7 @@ export class Scanner {
     const parent = node.getParent();
     if (Node.isJsxAttribute(parent)) {
       const attributeName = parent.getNameNode().getText();
-      if (!TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
+      if (!DEFAULT_TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
         return;
       }
     }
