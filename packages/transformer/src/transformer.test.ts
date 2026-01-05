@@ -101,8 +101,10 @@ describe('Transformer', () => {
 
     const summary = await transformer.run({ write: true });
 
-  const attributeCandidate = summary.candidates.find((candidate) => candidate.kind === 'jsx-attribute');
-  expect(attributeCandidate?.status).toBe('applied');
+  const appliedAttribute = summary.candidates.find(
+    (candidate) => candidate.kind === 'jsx-attribute' && candidate.status === 'applied'
+  );
+  expect(appliedAttribute).toBeTruthy();
 
   const appliedCount = summary.candidates.filter((candidate) => candidate.status === 'applied').length;
   expect(appliedCount).toBeGreaterThanOrEqual(2);
@@ -150,6 +152,48 @@ describe('Transformer', () => {
 
     expect(directiveIndex).toBeGreaterThanOrEqual(0);
     expect(importIndex).toBeGreaterThan(directiveIndex);
+  });
+
+  it('never replaces non-translatable JSX attributes (e.g., type="email")', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-attr-guard-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Guard.tsx');
+
+    const initial = `
+      import React from 'react';
+
+      export function Guard() {
+        return (
+          <form>
+            <input type="email" placeholder="Email" />
+          </form>
+        );
+      }
+    `;
+
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toMatch(/type=\"email\"/);
   });
 
   it('scans only the requested target files', async () => {

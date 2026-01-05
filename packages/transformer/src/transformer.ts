@@ -19,6 +19,7 @@ import {
   SourceFileDiffEntry,
   generateValueFromKey,
 } from '@i18nsmith/core';
+import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '@i18nsmith/core';
 import {
   detectExistingTranslationImport,
   ensureClientDirective,
@@ -552,6 +553,7 @@ export class Transformer {
       if (!Node.isJsxAttribute(node)) {
         throw new Error('Candidate node mismatch for jsx-attribute');
       }
+
       const newInitializer = `{${keyCall}}`;
       const initializer = node.getInitializer();
       if (
@@ -569,6 +571,19 @@ export class Transformer {
       if (!Node.isJsxExpression(node)) {
         throw new Error('Candidate node mismatch for jsx-expression');
       }
+
+      // Guardrail: if this expression is used as a JSX attribute initializer,
+      // only transform it when that attribute is in the Scanner allowlist.
+      const parent = node.getParent();
+      if (Node.isJsxAttribute(parent)) {
+        const attributeName = parent.getNameNode().getText();
+        if (!DEFAULT_TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
+          candidate.status = 'skipped';
+          candidate.reason = `Non-translatable attribute: ${attributeName}`;
+          return false;
+        }
+      }
+
       const expression = node.getExpression();
       if (expression) {
         if (
