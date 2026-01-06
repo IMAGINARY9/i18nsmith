@@ -502,9 +502,23 @@ export class Syncer {
     localeData?: Map<string, Record<string, string>>,
     allowWrites: boolean = false
   ) {
-    const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
+  const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
+  const shouldTreatEmptyAsMissing = this.defaultEmptyValuePolicy !== 'ignore';
     const missingKeys: MissingKeyRecord[] = [];
-    for (const key of Array.from(keySet).filter((k) => !sourceLocaleKeys.has(k))) {
+
+    const sourceProjected = projectedLocaleData.get(this.sourceLocale) ?? {};
+    const missingKeyCandidates = Array.from(keySet).filter((k) => {
+      if (!sourceLocaleKeys.has(k)) {
+        return true;
+      }
+      if (!shouldTreatEmptyAsMissing) {
+        return false;
+      }
+      const existingValue = sourceProjected[k];
+      return typeof existingValue === 'string' && existingValue.trim().length === 0;
+    });
+
+    for (const key of missingKeyCandidates) {
       const refs = referencesByKey.get(key) ?? [];
       let fallbackLiteral = refs.find((ref) => typeof ref.fallbackLiteral === 'string')?.fallbackLiteral;
       // Heuristic fallback: if the reference cache didn't include a fallbackLiteral
