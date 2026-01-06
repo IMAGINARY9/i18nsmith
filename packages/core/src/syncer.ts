@@ -278,7 +278,12 @@ export class Syncer {
     const placeholderIssues = runtime.validateInterpolations
       ? collectPlaceholderIssues(localeData, scopedReferencesByKey, this.sourceLocale, this.targetLocales, this.placeholderPatterns)
       : [];
-    const emptyValueViolations = collectEmptyValueViolations(localeData, this.targetLocales, this.emptyValueMarkers);
+    const emptyValueViolations = collectEmptyValueViolations(
+      localeData,
+      referencesByKey,
+      this.targetLocales,
+      this.emptyValueMarkers
+    );
 
     // Collect suspicious keys from code references
     const suspiciousKeys: SuspiciousKeyWarning[] = [];

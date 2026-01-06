@@ -27,6 +27,8 @@ export interface EmptyValueViolation {
   locale: string;
   value: string | null;
   reason: EmptyValueViolationReason;
+  /** Optional static fallback literal captured from code (e.g. `t('k') || 'Label'`). */
+  fallbackLiteral?: string;
 }
 
 /**
@@ -82,6 +84,7 @@ export function collectPlaceholderIssues(
  */
 export function collectEmptyValueViolations(
   localeData: Map<string, Record<string, string>>,
+  referencesByKey: Map<string, TranslationReference[]>,
   targetLocales: string[],
   emptyValueMarkers: Set<string>
 ): EmptyValueViolation[] {
@@ -99,11 +102,15 @@ export function collectEmptyValueViolations(
         continue;
       }
 
+      const refs = referencesByKey.get(key) ?? [];
+      const fallbackLiteral = refs.find((ref) => typeof ref.fallbackLiteral === 'string')?.fallbackLiteral;
+
       violations.push({
         key,
         locale,
         value: typeof value === 'string' ? value : null,
         reason,
+        fallbackLiteral: typeof fallbackLiteral === 'string' && fallbackLiteral.trim().length ? fallbackLiteral : undefined,
       });
     }
   }
