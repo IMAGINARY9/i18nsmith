@@ -252,6 +252,7 @@ function buildSuggestedCommands(
   if (sync.placeholderIssues.length) {
     add({
       label: 'Fix placeholder mismatches',
+      // NOTE: validate-only; must not seed/add any missing keys.
       command: 'i18nsmith sync --validate-interpolations',
       reason: `${sync.placeholderIssues.length} placeholder mismatch(es) detected across locales`,
       severity: deriveSeverityForKinds(['placeholder-mismatch'], 'error'),
@@ -341,7 +342,9 @@ function buildSuggestedCommands(
     const relevantFiles = [...new Set(sync.dynamicKeyWarnings.map((w) => w.filePath))].slice(0, 5);
     add({
       label: 'Whitelist dynamic keys',
-      command: 'i18nsmith sync --assume key1,key2',
+      // Do not use placeholder defaults like key1/key2; the extension has a dedicated flow.
+      // Keep this as a safe entrypoint into the VS Code command.
+      command: 'i18nsmith.whitelistDynamicKeys',
       reason: `${sync.dynamicKeyWarnings.length} dynamic translation key(s) detected that may need whitelisting`,
       severity: 'info',
       category: 'validation',
