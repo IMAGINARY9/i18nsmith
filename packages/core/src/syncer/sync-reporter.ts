@@ -13,6 +13,8 @@ export interface MissingKeyRecord {
     position: { line: number; column: number };
   }>;
   suspicious?: boolean;
+  // Optional static fallback literal captured from code (e.g. `t('k') || 'Label'`).
+  fallbackLiteral?: string;
 }
 
 /**
@@ -86,14 +88,18 @@ export function buildActionableItems(input: BuildActionableItemsInput): Actionab
 
   input.missingKeys.forEach((record) => {
     const reference = record.references[0];
+    const hasFallback = typeof record.fallbackLiteral === 'string' && record.fallbackLiteral.trim().length > 0;
     items.push({
       kind: 'missing-key',
-      severity: 'error',
+      severity: hasFallback ? 'warn' : 'error',
       key: record.key,
       filePath: reference?.filePath,
-      message: `Key "${record.key}" referenced ${record.references.length} time${record.references.length === 1 ? '' : 's'} but missing from source locale`,
+      message: hasFallback
+        ? `Key "${record.key}" referenced ${record.references.length} time${record.references.length === 1 ? '' : 's'} but missing from source locale — a fallback literal was detected in code and can be used to seed the source locale during sync.`
+        : `Key "${record.key}" referenced ${record.references.length} time${record.references.length === 1 ? '' : 's'} but missing from source locale`,
       details: {
         referenceCount: record.references.length,
+        fallbackLiteral: record.fallbackLiteral,
       },
     });
   });

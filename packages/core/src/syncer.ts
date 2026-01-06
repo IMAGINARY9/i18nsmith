@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs/promises';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import fg from 'fast-glob';
 import {
@@ -66,6 +67,9 @@ export interface MissingKeyRecord {
   key: string;
   references: TranslationReference[];
   suspicious?: boolean;
+  // Whether a static fallback literal was found in code (e.g. `t('k') || 'label'`).
+  fallbackLiteral?: string;
+  // Value recovered/used when seeding missing keys during a write run.
   recoveredValue?: string;
 }
 
@@ -252,7 +256,7 @@ export class Syncer {
     const projectedLocaleData = cloneLocaleData(localeData);
     const localeKeySets = buildLocaleKeySets(localeData);
 
-    const { missingKeys, missingKeysToApply } = this.processMissingKeys(
+    const { missingKeys, missingKeysToApply } = await this.processMissingKeys(
       scopedKeySet,
       scopedReferencesByKey,
       localeKeySets,
@@ -461,7 +465,7 @@ export class Syncer {
     };
   }
 
-  private processMissingKeys(
+  private async processMissingKeys(
     keySet: Set<string>,
     referencesByKey: Map<string, TranslationReference[]>,
     localeKeySets: Map<string, Set<string>>,
@@ -471,13 +475,36 @@ export class Syncer {
     allowWrites: boolean = false
   ) {
     const sourceLocaleKeys = localeKeySets.get(this.sourceLocale) ?? new Set<string>();
-    const missingKeys: MissingKeyRecord[] = Array.from(keySet)
-      .filter((key) => !sourceLocaleKeys.has(key))
-      .map((key) => ({
+    const missingKeys: MissingKeyRecord[] = [];
+    for (const key of Array.from(keySet).filter((k) => !sourceLocaleKeys.has(k))) {
+      const refs = referencesByKey.get(key) ?? [];
+      let fallbackLiteral = refs.find((ref) => typeof ref.fallbackLiteral === 'string')?.fallbackLiteral;
+      // Heuristic fallback: if the reference cache didn't include a fallbackLiteral
+      // (e.g., stale cache), try a cheap text-based scan of the source file to find
+      // a literal fallback pattern like `t('key') || 'label'`.
+      if (!fallbackLiteral && refs.length > 0) {
+        try {
+          const refPath = path.join(this.workspaceRoot, refs[0].filePath);
+          const txt = await fs.readFile(refPath, 'utf8');
+          const escapedKey = escapeRegExp(key);
+          const re = new RegExp(
+            String.raw`t\(\s*['\"]${escapedKey}['\"]\s*\)\s*(?:\|\||\?\?)\s*['\"]([^'\"]+)['\"]`
+          );
+          const m = txt.match(re);
+          if (m && m[1]) {
+            fallbackLiteral = m[1];
+          }
+        } catch (e) {
+          // ignore read errors; fallback remains undefined
+        }
+      }
+      missingKeys.push({
         key,
-        references: referencesByKey.get(key) ?? [],
+        references: refs,
         suspicious: this.isSuspiciousKey(key),
-      }));
+        fallbackLiteral: typeof fallbackLiteral === 'string' && fallbackLiteral.trim().length ? fallbackLiteral : undefined,
+      } as MissingKeyRecord);
+    }
 
     const autoApplyCandidates = missingKeys.filter((record) =>
       this.shouldAutoApplyMissingKey(record, selectedMissingKeys)
@@ -966,4 +993,8 @@ export class Syncer {
 
     return selectedMissingKeys?.has(record.key) ?? false;
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

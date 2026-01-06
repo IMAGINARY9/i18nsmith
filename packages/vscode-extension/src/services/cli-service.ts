@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { resolveCliCommand } from '../cli-utils';
 import { runResolvedCliCommand } from '../cli-runner';
 import type { TransformProgress } from '@i18nsmith/transformer';
@@ -56,8 +58,29 @@ export class CliService {
     rawCommand: string,
     options: CliRunOptions = {}
   ): Promise<CliRunResult | undefined> {
-    const workspaceFolder = options.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
-    const cwd = options.cwd ?? workspaceFolder?.uri.fsPath;
+    let workspaceFolder = options.workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+    let cwd = options.cwd ?? workspaceFolder?.uri.fsPath;
+    // If the resolved cwd doesn't contain an i18n.config.json and there are multiple
+    // workspace folders open (for example the extension sources + the user's project),
+    // prefer the folder that contains the config file so CLI commands run against the
+    // actual project instead of the extension package.
+    try {
+      const configAtCwd = cwd ? fs.existsSync(path.join(cwd, 'i18n.config.json')) : false;
+      if (!configAtCwd && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 1) {
+        for (const wf of vscode.workspace.workspaceFolders) {
+          const candidate = wf.uri.fsPath;
+          if (fs.existsSync(path.join(candidate, 'i18n.config.json'))) {
+            workspaceFolder = wf;
+            cwd = candidate;
+            this.logVerbose(`runCliCommand: switching cwd to workspace folder with config: ${cwd}`);
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      // ignore FS errors and fall back to the original cwd
+      this.logVerbose(`runCliCommand: failed to probe workspace folders for config: ${(e as Error).message}`);
+    }
     if (!cwd) {
       vscode.window.showErrorMessage('No workspace folder found');
       return;
