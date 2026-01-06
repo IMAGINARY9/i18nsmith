@@ -188,7 +188,11 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
         title: 'Resolve Placeholder Issues',
         description: 'Fix interpolation mismatches before they break translations.',
         detail: validationSuggestion.reason,
-        command: validationSuggestion.command,
+        // Do not execute the suggested raw CLI command here.
+        // Use a dedicated safe preview intent that validates placeholders only.
+        previewIntent: { kind: 'sync', extraArgs: ['--validate-interpolations'] },
+        // Provide a no-op command so the action is still renderable via the existing factory.
+        command: 'i18nsmith sync --validate-interpolations',
       });
       if (validationAction) {
         problems.push(validationAction);
@@ -399,6 +403,7 @@ interface CommandActionConfig {
   description: string;
   detail?: string;
   command?: string;
+  previewIntent?: PreviewableCommand;
   confirmMessage?: string;
   longRunning?: boolean;
   postRunBehavior?: 'offer-output';
@@ -406,12 +411,13 @@ interface CommandActionConfig {
 }
 
 function createQuickAction(config: CommandActionConfig): QuickActionDefinition | null {
-  if (!config.command) {
+  if (!config.command && !config.previewIntent) {
     return null;
   }
 
-  const isVsCodeCommand = config.command.startsWith('i18nsmith.');
-  const previewIntent = !isVsCodeCommand ? parsePreviewableCommand(config.command) : null;
+  const rawCommand = config.command;
+  const isVsCodeCommand = Boolean(rawCommand && rawCommand.startsWith('i18nsmith.'));
+  const previewIntent = config.previewIntent ?? (!isVsCodeCommand && rawCommand ? parsePreviewableCommand(rawCommand) : null);
 
   return {
     id: config.id,
@@ -419,10 +425,10 @@ function createQuickAction(config: CommandActionConfig): QuickActionDefinition |
     iconLabel: config.icon.label,
     title: config.title,
     description: config.description,
-    detail: config.detail ?? (previewIntent ? formatPreviewIntentDetail(previewIntent, config.command) : undefined),
-    command: previewIntent ? undefined : config.command,
+    detail: config.detail ?? (previewIntent && rawCommand ? formatPreviewIntentDetail(previewIntent, rawCommand) : config.detail),
+    command: previewIntent ? undefined : rawCommand,
     previewIntent: previewIntent ?? undefined,
-    interactive: !isVsCodeCommand && isInteractiveCliCommand(config.command),
+    interactive: Boolean(rawCommand && !isVsCodeCommand && isInteractiveCliCommand(rawCommand)),
     confirmMessage: config.confirmMessage,
     longRunning: config.longRunning !== false,
     postRunBehavior: config.postRunBehavior,

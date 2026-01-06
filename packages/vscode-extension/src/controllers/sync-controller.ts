@@ -41,7 +41,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
 
     this.services.logVerbose(`runSync: Starting ${label}`);
 
-    const args = ['--diff'];
+  const args = ['--diff', '--no-empty-values'];
     if (options.targets) {
       args.push('--target', ...options.targets.map(quoteCliArg));
     }
@@ -74,11 +74,19 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       return;
     }
 
-    // If no changes needed
+    // If no changes needed.
+    // Note: placeholder validation can produce a preview that should still be applied
+    // even when there are no locale drift diffs.
+    const hasPlaceholderIssues = Boolean(
+      Array.isArray((summary as unknown as { placeholderIssues?: unknown[] }).placeholderIssues) &&
+        (summary as unknown as { placeholderIssues?: unknown[] }).placeholderIssues!.length > 0
+    );
+
     if (
       (!summary.missingKeys || summary.missingKeys.length === 0) &&
       (!summary.unusedKeys || summary.unusedKeys.length === 0) &&
-      (!summary.renameDiffs || summary.renameDiffs.length === 0)
+      (!summary.renameDiffs || summary.renameDiffs.length === 0) &&
+      !hasPlaceholderIssues
     ) {
       vscode.window.showInformationMessage('Locales are in sync. No changes needed.');
       return;
@@ -253,13 +261,20 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
             args?: string[];
           } | undefined;
 
-          // Build selection file if missing keys exist
+          // Build selection file if missing keys exist.
+          // Also include placeholder issue keys so placeholder-only runs can be applied.
           const missing: string[] = Array.isArray(payload?.summary?.missingKeys)
             ? (payload!.summary!.missingKeys as Array<{ key: string }>).map((m) => m.key)
             : [];
 
-          if (missing.length > 0) {
-            const selection = { missing, unused: [] };
+          const placeholder: string[] = Array.isArray((payload?.summary as unknown as { placeholderIssues?: unknown[] })?.placeholderIssues)
+            ? ((payload!.summary as unknown as { placeholderIssues: Array<{ key?: string }> }).placeholderIssues
+                .map((issue) => issue.key)
+                .filter((k): k is string => typeof k === 'string' && k.length > 0))
+            : [];
+
+          if (missing.length > 0 || placeholder.length > 0) {
+            const selection = { missing: Array.from(new Set([...missing, ...placeholder])), unused: [] };
             const dir = path.join(workspaceRoot, '.i18nsmith');
             try {
               fs.mkdirSync(dir, { recursive: true });
