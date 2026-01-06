@@ -579,9 +579,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     }
 
     if (allDiffs.length > 0) {
-  this.services.previewShown = true;
+      // Ensure diffs are unique; some upstream summaries can repeat identical locale diffs.
+    const uniqueDiffs = this.dedupeDiffsByIdOrContent(allDiffs) as typeof allDiffs;
       await this.services.diffPreviewService.showPreview(
-        allDiffs,
+        uniqueDiffs,
         async () => {
            await this.applySync(previewResult.previewPath, { prune: false });
         },
@@ -622,6 +623,27 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
         vscode.window.showInformationMessage('No changes detected for bulk rename.');
       }
     }
+  }
+
+  private dedupeDiffsByIdOrContent(diffs: unknown[]): unknown[] {
+    const seen = new Set<string>();
+    const result: unknown[] = [];
+
+    for (const diff of diffs) {
+      if (!diff || typeof diff !== 'object') continue;
+
+      const maybe = diff as { id?: unknown };
+      const key =
+        typeof maybe.id === 'string'
+          ? maybe.id
+          : JSON.stringify(diff, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(diff);
+    }
+
+    return result;
   }
 
   private async runApplyCommand(command: string, title: string) {
