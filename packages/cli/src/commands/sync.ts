@@ -827,7 +827,7 @@ function printSyncSummary(summary: SyncSummary) {
     } else {
       console.log(
         chalk.gray(
-          "Use --assume key1,key2 to prevent false positives for known runtime-only translation keys."
+          "Use --assume to prevent false positives for known runtime-only translation keys."
         )
       );
     }
