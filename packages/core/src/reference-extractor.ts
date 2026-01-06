@@ -220,28 +220,49 @@ export class ReferenceExtractor {
       break;
     }
 
-    // Find the binary expression that actually uses this call (or its wrapper) as the left operand.
-    // This avoids accidentally detecting unrelated binaries (or failing to match JSX wrappers).
-    let binary: Node | undefined = current;
-    for (let depth = 0; depth < 3; depth++) {
-      if (binary && Node.isBinaryExpression(binary)) {
-        break;
-      }
-      binary = binary?.getParent() as Node | undefined;
-    }
+    // BinaryExpression might be either the *parent* of the call, or the parent of a wrapper.
+    // Check both the current node (after wrapper lifting) and parents.
+    const tryBinary = (node: Node | undefined): string | undefined => {
+      if (!node || !Node.isBinaryExpression(node)) return undefined;
 
-    if (binary && Node.isBinaryExpression(binary)) {
-      const operator = binary.getOperatorToken().getText();
-      if (operator === '||' || operator === '??') {
-        const left = binary.getLeft();
-        // Only treat it as a fallback for *this* call.
-        if (left.getText().includes(call.getText())) {
-          const right = binary.getRight();
-          if (Node.isStringLiteral(right) || Node.isNoSubstitutionTemplateLiteral(right)) {
-            return right.getLiteralText();
-          }
-        }
+      const operator = node.getOperatorToken().getText();
+      if (operator !== '||' && operator !== '??') return undefined;
+
+      const left = node.getLeft();
+      if (!left.getText().includes(call.getText())) return undefined;
+
+      const right = node.getRight();
+      if (Node.isStringLiteral(right) || Node.isNoSubstitutionTemplateLiteral(right)) {
+        return right.getLiteralText();
       }
+
+      return undefined;
+    };
+
+    // First: binary is the current node itself.
+    const direct = tryBinary(current);
+    if (direct) return direct;
+
+    // Then: walk up across wrappers until we hit a binary or exit.
+    let candidate: Node | undefined = current;
+    for (let depth = 0; depth < 10; depth++) {
+      const parent = candidate?.getParent() as Node | undefined;
+      if (!parent) break;
+
+      const found = tryBinary(parent);
+      if (found) return found;
+
+      if (
+        Node.isParenthesizedExpression(parent) ||
+        Node.isAsExpression(parent) ||
+        Node.isNonNullExpression(parent) ||
+        Node.isJsxExpression(parent)
+      ) {
+        candidate = parent;
+        continue;
+      }
+
+      break;
     }
 
     return undefined;
