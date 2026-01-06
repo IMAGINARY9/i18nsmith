@@ -90,10 +90,12 @@ export class ReferenceExtractor {
     options: ReferenceExtractorOptions
   ) {
     this.workspaceRoot = options.workspaceRoot;
-  this.project = options.project ?? createDefaultProject();
+    this.project = options.project ?? createDefaultProject();
     this.cacheDir = options.cacheDir ?? path.join(this.workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
-    this.translationIdentifier = options.translationIdentifier ??
-      config.translationAdapter?.hookName ?? 't';
+    this.translationIdentifier =
+      options.translationIdentifier ??
+      config.sync?.translationIdentifier ??
+      't';
     this.referenceCachePath = path.join(this.cacheDir, 'references.json');
   }
 

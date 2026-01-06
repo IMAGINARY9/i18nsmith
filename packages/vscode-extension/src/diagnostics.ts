@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { DynamicKeyWarning } from '@i18nsmith/core';
 import { resolveWhitelistAssumption } from './dynamic-key-whitelist';
+import { loadDynamicWhitelistSnapshot } from './workspace-config';
 
 /**
  * Schema for actionable items from i18nsmith check/sync reports
@@ -67,7 +68,30 @@ export class DiagnosticsManager implements vscode.Disposable {
    */
   updateFromReport(report: CheckReport, workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
+    // Best-effort: prune dynamic key warnings that are already whitelisted by config.
+    // This avoids showing the "Resolve Dynamic Keys" action when it would do nothing.
+    void this.pruneDynamicWarningsFromConfig(report, workspaceRoot);
     this.replaceDiagnostics(report, workspaceRoot);
+  }
+
+  private async pruneDynamicWarningsFromConfig(report: CheckReport, workspaceRoot: string) {
+    if (!Array.isArray(report.sync?.dynamicKeyWarnings) || !report.sync?.dynamicKeyWarnings.length) {
+      return;
+    }
+    const snapshot = await loadDynamicWhitelistSnapshot(workspaceRoot);
+    if (!snapshot?.normalizedEntries?.length) {
+      return;
+    }
+    const normalized = new Set(snapshot.normalizedEntries);
+    const currentWarnings = report.sync.dynamicKeyWarnings as DynamicKeyWarning[];
+    const filtered = currentWarnings.filter((warning) => {
+      const derived = resolveWhitelistAssumption(warning);
+      if (!derived) {
+        return true;
+      }
+      return !normalized.has(derived.assumption);
+    });
+    report.sync.dynamicKeyWarnings = filtered;
   }
 
   private replaceDiagnostics(report: CheckReport, workspaceRoot: string) {

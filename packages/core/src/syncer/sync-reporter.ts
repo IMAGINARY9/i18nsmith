@@ -138,6 +138,9 @@ export function buildActionableItems(input: BuildActionableItemsInput): Actionab
         key: violation.key,
         locale: violation.locale,
         message: `Empty locale value detected for "${violation.key}" in ${violation.locale} (${violation.reason})`,
+        details: {
+          fallbackLiteral: violation.fallbackLiteral,
+        },
       });
     });
   }
