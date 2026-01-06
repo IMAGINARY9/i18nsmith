@@ -778,6 +778,11 @@ async function executePreviewIntent(intent: PreviewableCommand): Promise<void> {
     return;
   }
 
+  if (intent.kind === 'validate-placeholders') {
+    await syncController.resolvePlaceholderIssues({ targets: intent.targets, extraArgs: intent.extraArgs });
+    return;
+  }
+
   if (intent.kind === "transform") {
     // allow transform extras (e.g. target flags) to be passed through
     await transformController.runTransform({ targets: intent.targets, extraArgs: intent.extraArgs });

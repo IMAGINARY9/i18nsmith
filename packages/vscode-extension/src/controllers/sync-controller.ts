@@ -10,6 +10,20 @@ import { quoteCliArg } from '../command-helpers';
 import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
 import { PreviewApplyController } from './preview-apply-controller';
 
+type PlaceholderIssueSummary = {
+  key: string;
+  locale: string;
+  missing: string[];
+  extra: string[];
+};
+
+function formatPlaceholderIssue(issue: PlaceholderIssueSummary): string {
+  const missing = issue.missing?.length ? `missing: ${issue.missing.join(', ')}` : '';
+  const extra = issue.extra?.length ? `extra: ${issue.extra.join(', ')}` : '';
+  const parts = [missing, extra].filter(Boolean).join(' • ');
+  return `${issue.key} (${issue.locale})${parts ? ` — ${parts}` : ''}`;
+}
+
 export class SyncController extends PreviewApplyController implements vscode.Disposable {
   private lastSyncSuspiciousWarnings: SuspiciousKeyWarning[] = [];
 
@@ -142,6 +156,145 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     } else {
       // Fallback to markdown preview if no diffs (shouldn't happen with --diff)
   await this.showSyncPreview(previewResult.payload, previewResult.previewPath);
+    }
+  }
+
+  /**
+   * Placeholder-only quick action.
+   *
+   * Contract:
+   * - Runs `sync` preview with `--validate-interpolations`
+   * - Shows a focused list of placeholder mismatches
+   * - Applies only placeholder-related fixes (does NOT apply missing/unused drift)
+   */
+  public async resolvePlaceholderIssues(options: { targets?: string[]; extraArgs?: string[] } = {}) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    // Intentionally *not* adding `--no-empty-values` here; placeholder validation should be
+    // orthogonal to empty-value drift.
+    const args = ['--diff', '--validate-interpolations'];
+    if (options.targets) {
+      args.push('--target', ...options.targets.map(quoteCliArg));
+    }
+    if (options.extraArgs) {
+      // keep any extras, but ensure validate flag remains present
+      args.push(...options.extraArgs.filter((a) => a !== '--validate-interpolations'));
+    }
+
+    const previewResult = await this.runPreview<SyncSummary>({
+      kind: 'sync',
+      args,
+      workspaceFolder,
+      label: options.targets?.length
+        ? `Validate placeholders (${options.targets.length} target${options.targets.length === 1 ? '' : 's'})`
+        : 'Validate placeholders',
+      progressTitle: 'i18nsmith: Validating placeholders…',
+    });
+
+    const summary = previewResult.payload.summary;
+    const issues = (summary as unknown as { placeholderIssues?: PlaceholderIssueSummary[] }).placeholderIssues;
+    const placeholderIssues: PlaceholderIssueSummary[] = Array.isArray(issues) ? issues : [];
+
+    if (placeholderIssues.length === 0) {
+      vscode.window.showInformationMessage('No placeholder mismatches found.');
+      return;
+    }
+
+    // If the preview also contains drift diffs, warn and offer to open full sync preview instead.
+    const hasDrift =
+      (summary.missingKeys?.length ?? 0) > 0 ||
+      (summary.unusedKeys?.length ?? 0) > 0 ||
+      (summary.renameDiffs?.length ?? 0) > 0;
+
+    const max = 25;
+    const lines = placeholderIssues.slice(0, max).map((issue) => `- ${formatPlaceholderIssue(issue)}`);
+    if (placeholderIssues.length > max) {
+      lines.push(`- …and ${placeholderIssues.length - max} more`);
+    }
+
+    const applyLabel = 'Apply placeholder fixes';
+    const showSyncLabel = 'Show full sync preview';
+
+    const choice = await vscode.window.showWarningMessage(
+      hasDrift
+        ? `Found ${placeholderIssues.length} placeholder mismatch(es) (and locale drift).`
+        : `Found ${placeholderIssues.length} placeholder mismatch(es).`,
+      { modal: true, detail: lines.join('\n') },
+      applyLabel,
+      ...(hasDrift ? [showSyncLabel] : [])
+    );
+
+    if (choice === showSyncLabel) {
+      // Delegate to full sync flow (drift preview)
+      await this.runSync({ targets: options.targets, extraArgs: ['--validate-interpolations'] });
+      return;
+    }
+
+    if (choice !== applyLabel) {
+      return;
+    }
+
+    // Apply placeholder fixes ONLY.
+    // If drift exists, do not apply here (otherwise we'd be mixing responsibilities)
+    // and instead require the user to run full sync.
+    if (hasDrift) {
+      vscode.window.showInformationMessage(
+        'Placeholder issues were detected, but locale drift is also present. Use "Fix Locale Drift" to preview/apply drift changes.',
+      );
+      return;
+    }
+
+    // Create a temporary selection file containing only placeholder issue keys.
+    // This keeps the apply operation narrowly scoped and stable even if the CLI changes
+    // heuristics around what gets written.
+    const workspaceRoot = workspaceFolder.uri.fsPath;
+    const dir = path.join(workspaceRoot, '.i18nsmith');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore
+    }
+    const selectionPath = path.join(dir, `selection-placeholders-${Date.now()}.json`);
+    const selection = {
+      missing: Array.from(new Set(placeholderIssues.map((i) => i.key))).filter(Boolean),
+      unused: [],
+    };
+    try {
+      fs.writeFileSync(selectionPath, JSON.stringify(selection, null, 2), 'utf8');
+    } catch {
+      // If we fail to write a selection file, fall back to applySync (best-effort).
+    }
+
+    // Apply using CLI replay of preview.
+    // We bypass applySync's auto-selection inference and instead pass our explicit selection.
+    const baseApply = `i18nsmith sync --apply-preview ${quoteCliArg(previewResult.previewPath)} --selection-file ${quoteCliArg(selectionPath)} --invalidate-cache`;
+    await this.applyPreviewCommand({
+      command: baseApply,
+      progressTitle: 'i18nsmith: Applying placeholder fixes…',
+      successMessage: 'Placeholder fixes applied successfully.',
+      scannerTrigger: 'sync',
+      failureMessage: 'Failed to apply placeholder fixes. Check the i18nsmith output channel.',
+      onAfterSuccess: async () => {
+        await this.services.reportWatcher.refresh();
+      },
+    });
+
+    // Best-effort cleanup of preview file
+    try {
+      await fs.promises.unlink(previewResult.previewPath);
+    } catch {
+      // ignore
+    }
+
+    // Best-effort cleanup of selection file
+    try {
+      await fs.promises.unlink(selectionPath);
+    } catch {
+      // ignore
     }
   }
 

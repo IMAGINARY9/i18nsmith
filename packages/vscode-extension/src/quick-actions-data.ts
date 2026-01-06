@@ -181,7 +181,15 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     }
 
     const validationSuggestion = suggestionBuckets.get('validation')?.[0];
-    if (validationSuggestion) {
+      const rpt = report as unknown as { sync?: { placeholderIssues?: unknown[] } };
+      const placeholderIssuesCount = Array.isArray(rpt.sync?.placeholderIssues)
+        ? (rpt.sync!.placeholderIssues!.length as number)
+        : 0;
+
+      // Only show the Resolve Placeholder Issues quick action when the report actually
+      // contains placeholder mismatches. Don't show it just because a validation-style
+      // suggestion exists (e.g. dynamic key warnings) — avoid noisy or irrelevant actions.
+      if (validationSuggestion && placeholderIssuesCount > 0) {
       const validationAction = createQuickAction({
         id: 'resolve-placeholders',
         icon: ICONS.warning,
@@ -189,8 +197,8 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
         description: 'Fix interpolation mismatches before they break translations.',
         detail: validationSuggestion.reason,
         // Do not execute the suggested raw CLI command here.
-        // Use a dedicated safe preview intent that validates placeholders only.
-        previewIntent: { kind: 'sync', extraArgs: ['--validate-interpolations'] },
+        // Use a dedicated intent so the extension can render a placeholder-specific preview.
+        previewIntent: { kind: 'validate-placeholders', extraArgs: ['--validate-interpolations'] },
         // Provide a no-op command so the action is still renderable via the existing factory.
         command: 'i18nsmith sync --validate-interpolations',
       });

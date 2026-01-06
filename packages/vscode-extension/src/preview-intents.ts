@@ -8,7 +8,7 @@ export interface TranslateRunOptions {
 }
 
 export type PreviewableCommand =
-  | { kind: 'sync' | 'transform'; targets?: string[]; extraArgs?: string[] }
+  | { kind: 'sync' | 'transform' | 'validate-placeholders'; targets?: string[]; extraArgs?: string[] }
   | { kind: 'rename-key'; from: string; to: string }
   | { kind: 'translate'; options: TranslateRunOptions }
   | { kind: 'scaffold-adapter'; args: string[] };
@@ -16,6 +16,9 @@ export type PreviewableCommand =
 const SUPPORTED_SUBCOMMANDS = new Set<PreviewableCommand['kind']>([
   'sync',
   'transform',
+  // Extension-only alias: maps to `sync --validate-interpolations`.
+  // Keeps placeholder validation as a distinct intent/UX without adding new CLI subcommands.
+  'validate-placeholders',
   'rename-key',
   'translate',
   'scaffold-adapter',
@@ -39,7 +42,7 @@ export function parsePreviewableCommand(rawCommand: string): PreviewableCommand 
 
   const { kind, args } = invocation;
 
-  if (kind === 'sync' || kind === 'transform') {
+  if (kind === 'sync' || kind === 'transform' || kind === 'validate-placeholders') {
     const targets = parseTargetArgs(args);
     // Preserve other meaningful flags (e.g. --auto-rename-suspicious, --prune)
     // but strip preview/report/write/apply flags that the extension controls.
@@ -105,6 +108,17 @@ function findCliInvocation(tokens: string[]): SubcommandInvocation | null {
 
   const subcommand = tokens[executableIndex + 1];
   if (!isSupportedSubcommand(subcommand)) {
+    // Allow extension-only alias when the raw command is `i18nsmith sync --validate-interpolations`.
+    // That raw command remains the canonical CLI suggestion, but we want a distinct intent.
+    if (subcommand === 'sync') {
+      const args = tokens.slice(executableIndex + 2);
+      if (args.includes('--validate-interpolations')) {
+        return {
+          kind: 'validate-placeholders',
+          args,
+        };
+      }
+    }
     return null;
   }
 
