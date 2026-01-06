@@ -186,6 +186,18 @@ function buildSuggestedCommands(
     items.push(entry);
   };
 
+  // Helper: derive suggested command severity from actionable items in the sync summary
+  const deriveSeverityForKinds = (kinds: string[], defaultSeverity: ActionableSeverity = 'warn'): ActionableSeverity => {
+    // Find the highest-severity actionable item that matches any of the kinds
+    const sevOrder: ActionableSeverity[] = ['error', 'warn', 'info'];
+    for (const sev of sevOrder) {
+      if (sync.actionableItems.some((it) => kinds.includes(it.kind) && it.severity === sev)) {
+        return sev;
+      }
+    }
+    return defaultSeverity;
+  };
+
   // High priority: hardcoded text should be transformed
   if (scan.candidates.length > 0) {
     const relevantFiles = [...new Set(scan.candidates.map((c) => c.filePath))].slice(0, 5);
@@ -210,7 +222,7 @@ function buildSuggestedCommands(
       label: 'Apply locale fixes',
       command: 'i18nsmith sync --prune',
       reason: `${sync.missingKeys.length} missing key(s) to add, ${sync.unusedKeys.length} unused key(s) to remove`,
-      severity: 'error',
+      severity: deriveSeverityForKinds(['missing-key', 'unused-key'], 'error'),
       category: 'sync',
       relevantFiles: missingKeyFiles,
       priority: 20,
@@ -221,7 +233,7 @@ function buildSuggestedCommands(
       label: 'Add missing keys',
       command: 'i18nsmith sync',
       reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files`,
-      severity: 'error',
+      severity: deriveSeverityForKinds(['missing-key'], 'error'),
       category: 'sync',
       relevantFiles,
       priority: 20,
@@ -231,7 +243,7 @@ function buildSuggestedCommands(
       label: 'Prune unused keys',
       command: 'i18nsmith sync --prune',
       reason: `${sync.unusedKeys.length} key(s) in locale files but not used in code`,
-      severity: 'warn',
+      severity: deriveSeverityForKinds(['unused-key'], 'warn'),
       category: 'sync',
       priority: 30,
     });
@@ -242,7 +254,7 @@ function buildSuggestedCommands(
       label: 'Fix placeholder mismatches',
       command: 'i18nsmith sync --validate-interpolations',
       reason: `${sync.placeholderIssues.length} placeholder mismatch(es) detected across locales`,
-      severity: 'error',
+      severity: deriveSeverityForKinds(['placeholder-mismatch'], 'error'),
       category: 'validation',
       priority: 25,
     });
@@ -258,7 +270,7 @@ function buildSuggestedCommands(
         label: 'Fill empty translations',
         command: 'i18nsmith translate',
         reason: `${sync.emptyValueViolations.length} empty translation value(s) in ${emptyLocales.join(', ')}`,
-        severity: 'warn',
+        severity: deriveSeverityForKinds(['empty-value'], 'warn'),
         category: 'translation',
         priority: 40,
       });
@@ -268,7 +280,7 @@ function buildSuggestedCommands(
         label: 'Export for translation',
         command: 'i18nsmith translate --export missing-translations.csv',
         reason: `${sync.emptyValueViolations.length} empty value(s) in ${emptyLocales.join(', ')} — export to CSV for manual translation`,
-        severity: 'warn',
+        severity: deriveSeverityForKinds(['empty-value'], 'warn'),
         category: 'translation',
         priority: 40,
       });
