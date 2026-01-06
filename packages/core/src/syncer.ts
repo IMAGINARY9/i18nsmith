@@ -115,6 +115,9 @@ export interface SuspiciousKeyWarning {
     column: number;
   };
   reason: SuspiciousKeyReason | string;
+  // Optional: if the suspicious key is used with a static fallback in code,
+  // capture it so previews/UX can explain what value would be used after renaming.
+  fallbackLiteral?: string;
 }
 
 interface TargetReferenceFilter {
@@ -291,12 +294,32 @@ export class Syncer {
       const analysis = this.analyzeSuspiciousKey(key);
       if (analysis.suspicious) {
         const refs = scopedReferencesByKey.get(key) ?? [];
+        let fallbackLiteral = refs.find((ref) => typeof ref.fallbackLiteral === 'string')?.fallbackLiteral;
+        // If fallbackLiteral is missing (e.g. due to a stale cache entry), do a cheap
+        // text scan as best-effort recovery so previews can still be informative.
+        if (!fallbackLiteral && refs.length > 0) {
+          try {
+            const refPath = path.join(this.workspaceRoot, refs[0].filePath);
+            const txt = await fs.readFile(refPath, 'utf8');
+            const escapedKey = escapeRegExp(key);
+            const re = new RegExp(
+              String.raw`t\(\s*['\"]${escapedKey}['\"]\s*\)\s*(?:\|\||\?\?)\s*['\"]([^'\"]+)['\"]`
+            );
+            const m = txt.match(re);
+            if (m && m[1]) {
+              fallbackLiteral = m[1];
+            }
+          } catch {
+            // ignore
+          }
+        }
         for (const ref of refs) {
           suspiciousKeys.push({
             key,
             filePath: ref.filePath,
             position: ref.position,
             reason: analysis.reason ?? 'unknown',
+            fallbackLiteral: fallbackLiteral && fallbackLiteral.trim().length ? fallbackLiteral : undefined,
           });
         }
       }
@@ -516,6 +539,19 @@ export class Syncer {
     );
     const missingKeysToApply = filterSelection(autoApplyCandidates, selectedMissingKeys);
 
+    // Ensure fallback literals are ready for display even when we are not writing.
+    // This improves preview/report quality and allows UIs to explain *why* a value
+    // would be chosen without actually mutating locale files.
+    for (const record of missingKeys) {
+      if (!record.fallbackLiteral) {
+        const refs = referencesByKey.get(record.key) ?? [];
+        const fallbackLiteral = refs.find((ref) => typeof ref.fallbackLiteral === 'string')?.fallbackLiteral;
+        if (fallbackLiteral && fallbackLiteral.trim().length) {
+          record.fallbackLiteral = fallbackLiteral;
+        }
+      }
+    }
+
     // Pre-calculate unused keys for value recovery if localeData is available
     const unusedKeysForRecovery: string[] = [];
     if (localeData) {
@@ -544,16 +580,13 @@ export class Syncer {
 
         // Prefer a literal UI fallback from code when present.
         // Example: `t('form.email') || 'Email'` → seed source value as 'Email'.
-        const references = referencesByKey.get(record.key) ?? [];
-        const fallbackLiteral = references.find((ref) => typeof ref.fallbackLiteral === 'string')
-          ?.fallbackLiteral;
-        if (fallbackLiteral && fallbackLiteral.trim().length) {
-          defaultValue = fallbackLiteral;
-          record.recoveredValue = fallbackLiteral;
+        if (record.fallbackLiteral && record.fallbackLiteral.trim().length) {
+          defaultValue = record.fallbackLiteral;
+          record.recoveredValue = record.fallbackLiteral;
         }
 
         // Try to recover value from unused keys
-        if (!fallbackLiteral && localeData && unusedKeysForRecovery.length > 0) {
+        if (!record.fallbackLiteral && localeData && unusedKeysForRecovery.length > 0) {
           const recovered = this.recoverValueFromUnused(record.key, unusedKeysForRecovery, localeData);
           if (recovered) {
             defaultValue = recovered;

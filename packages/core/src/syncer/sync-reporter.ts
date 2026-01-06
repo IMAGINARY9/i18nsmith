@@ -36,6 +36,9 @@ export interface SuspiciousKeyWarning {
     column: number;
   };
   reason: string;
+  // Optional: if the suspicious key is used with a static fallback in code,
+  // capture it so previews/UX can explain what value would be used after renaming.
+  fallbackLiteral?: string;
 }
 
 /**
@@ -71,6 +74,14 @@ export function buildActionableItems(input: BuildActionableItemsInput): Actionab
   if (input.suspiciousKeys.length > 0) {
     const suspiciousSeverity = input.suspiciousKeyPolicy === 'error' ? 'error' : 'warn';
     const skipWrite = input.suspiciousKeyPolicy !== 'allow';
+
+    const fallbackLiterals = Array.from(
+      new Set(
+        input.suspiciousKeys
+          .map((k) => (typeof k.fallbackLiteral === 'string' ? k.fallbackLiteral.trim() : ''))
+          .filter(Boolean)
+      )
+    );
     
     items.push({
       kind: 'suspicious-keys',
@@ -82,6 +93,7 @@ export function buildActionableItems(input: BuildActionableItemsInput): Actionab
         count: input.suspiciousKeys.length,
         policy: input.suspiciousKeyPolicy,
         keys: input.suspiciousKeys.map((k) => k.key),
+        fallbackLiterals,
       },
     });
   }

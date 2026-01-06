@@ -533,6 +533,86 @@ export class Transformer {
     };
   }
 
+  /**
+   * Option A guardrail (docs/extraction-edge-cases.md):
+   * reject JSX expressions that look like pluralization/concatenation logic.
+   *
+   * We skip these because they typically require manual i18n logic
+   * (plural rules, ICU messages, or separate keys) and naive replacement would
+   * produce awkward seed values like "item(s)".
+   */
+  private getUnsafeJsxExpressionReason(node: Node): string | undefined {
+    // Unwrap common wrappers so we can inspect the actual expression.
+    let current: Node = node;
+    while (
+      Node.isParenthesizedExpression(current) ||
+      Node.isAsExpression(current) ||
+      Node.isNonNullExpression(current) ||
+      Node.isTypeAssertion(current)
+    ) {
+      current = current.getExpression();
+    }
+
+    if (!Node.isJsxExpression(current)) {
+      return undefined;
+    }
+
+    const expr = current.getExpression();
+    if (!expr) {
+      return undefined;
+    }
+
+    // `{'item' + (count === 1 ? '' : 's')}` or `{count === 1 ? 'item' : 'items'}`
+    if (Node.isBinaryExpression(expr)) {
+      const operator = expr.getOperatorToken().getText();
+      if (operator === '+') {
+        // Most JSX string concatenation for pluralization ends up here.
+        if (this.containsConditionalOrLogical(expr.getLeft()) || this.containsConditionalOrLogical(expr.getRight())) {
+          return 'Pluralization/concatenation expression detected (manual review required)';
+        }
+      }
+    }
+
+    if (Node.isConditionalExpression(expr)) {
+      // Often used for plural selection: `count === 1 ? 'item' : 'items'`
+      return 'Conditional expression detected (pluralization/concat; manual review required)';
+    }
+
+    // Template strings are okay when they are simple interpolation, but if they
+    // embed conditionals/logicals, it's likely pluralization.
+    if (Node.isTemplateExpression(expr) || Node.isNoSubstitutionTemplateLiteral(expr)) {
+      if (this.containsConditionalOrLogical(expr)) {
+        return 'Template expression with logic detected (manual review required)';
+      }
+    }
+
+    return undefined;
+  }
+
+  private containsConditionalOrLogical(node: Node): boolean {
+    if (Node.isConditionalExpression(node)) {
+      return true;
+    }
+    if (Node.isBinaryExpression(node)) {
+      const op = node.getOperatorToken().getText();
+      if (op === '||' || op === '&&' || op === '??') {
+        return true;
+      }
+    }
+    return node.forEachDescendant((d) => {
+      if (Node.isConditionalExpression(d)) {
+        return true;
+      }
+      if (Node.isBinaryExpression(d)) {
+        const op = d.getOperatorToken().getText();
+        if (op === '||' || op === '&&' || op === '??') {
+          return true;
+        }
+      }
+      return undefined;
+    }) === true;
+  }
+
   private applyCandidate(candidate: InternalCandidate): boolean {
     const node = candidate.raw.node;
     const keyCall = `t('${candidate.suggestedKey}')`;
@@ -570,6 +650,14 @@ export class Transformer {
     if (candidate.kind === 'jsx-expression') {
       if (!Node.isJsxExpression(node)) {
         throw new Error('Candidate node mismatch for jsx-expression');
+      }
+
+      // Guardrail (Option A): skip pluralization/concat expressions.
+      const unsafeReason = this.getUnsafeJsxExpressionReason(node);
+      if (unsafeReason) {
+        candidate.status = 'skipped';
+        candidate.reason = unsafeReason;
+        return false;
       }
 
       // Guardrail: if this expression is used as a JSX attribute initializer,
