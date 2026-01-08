@@ -8,6 +8,10 @@ All notable changes to this extension will be documented in this file.
 ### Fix
 - Prepare release 0.3.3: minor fixes and packaging updates.
 
+## [0.3.4] - 2026-01-08
+### Patch
+- Prepare release 0.3.4: minor fixes and packaging/CI guidance updates.
+
 
 ## [0.3.2] - 2025-12-20
 ### Fix
