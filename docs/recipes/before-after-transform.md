@@ -51,7 +51,99 @@ After:
 {isAdmin ? t('nav.admin_panel') : t('nav.dashboard')}
 ```
 
-## 6. Skipped Non-Translatable
+## 6. Vue SFC Template Interpolation
+Before:
+```vue
+<template>
+  <div>
+    <h1>{{ title }}</h1>
+    <p>{{ message }}</p>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      title: 'Welcome to Vue.js',
+      message: 'This is a test component'
+    }
+  }
+}
+</script>
+```
+After:
+```vue
+<template>
+  <div>
+    <h1>{{ $t('welcome_to_vue_js') }}</h1>
+    <p>{{ $t('this_is_a_test_component') }}</p>
+  </div>
+</template>
+
+<script>
+import { useI18n } from 'vue-i18n';
+
+export default {
+  setup() {
+    const { t } = useI18n();
+    return { t };
+  },
+  data() {
+    return {
+      title: this.t('welcome_to_vue_js'),
+      message: this.t('this_is_a_test_component')
+    }
+  }
+}
+</script>
+```
+
+## 7. Vue SFC Attribute Binding
+Before:
+```vue
+<template>
+  <input v-model="name" placeholder="Enter your name" />
+  <button @click="submit">{{ buttonText }}</button>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      name: '',
+      buttonText: 'Submit Form'
+    }
+  }
+}
+</script>
+```
+After:
+```vue
+<template>
+  <input v-model="name" :placeholder="$t('enter_your_name')" />
+  <button @click="submit">{{ $t('submit_form') }}</button>
+</template>
+
+<script>
+import { useI18n } from 'vue-i18n';
+
+export default {
+  setup() {
+    const { t } = useI18n();
+    return { t };
+  },
+  data() {
+    return {
+      name: '',
+      buttonText: this.t('submit_form')
+    }
+  }
+}
+</script>
+```
+
+## 8. Skipped Non-Translatable
 - `className`, `data-testid`, raw numbers, and emoji-only strings ignored.
 
 ## Key Generation Modes

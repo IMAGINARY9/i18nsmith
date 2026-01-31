@@ -456,7 +456,7 @@ Use these recipes to copy/paste minimal setups rather than reverse-engineering l
 | React + react-i18next | `react-i18next` | ReactWriter | Stable | Full transform + provider injection |
 | Next.js + next-intl | `next-intl` | ReactWriter (shared) | Beta | Import reuse & provider detection; verify placeholders |
 | React + lingui | `lingui` | ReactWriter (extended) | Planned | Key/message extraction alignment needed |
-| Vue + vue-i18n | `vue-i18n` | VueWriter | Planned | Writer abstraction in roadmap (Phase 4 follow-up) |
+| Vue + vue-i18n | `vue-i18n` | VueWriter | Stable | Full transform + provider injection for Vue SFC files |
 | Svelte (svelte-i18n) | `svelte-i18n` | NoopWriter (initial) | Experimental | Transform disabled until Writer implemented |
 | Custom zero-deps context | `custom` | ReactWriter / NoopWriter | Stable | Generated via scaffold-adapter; no external deps |
 | Mock pseudo-localization | `mock` | NoopWriter | Stable | For layout & overflow stress testing |
