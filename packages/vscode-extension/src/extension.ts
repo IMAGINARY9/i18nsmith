@@ -20,7 +20,7 @@ import { ConfigurationController } from "./controllers/configuration-controller"
 import { SyncController } from "./controllers/sync-controller";
 import { TransformController } from "./controllers/transform-controller";
 import { ExtractionController } from "./controllers/extraction-controller";
-import { CliService } from "./services/cli-service";
+import { FrameworkDetectionService } from "./services/framework-detection-service";
 import { SuspiciousKeyWarning } from "@i18nsmith/core";
 import {
   buildQuickActionModel,
@@ -424,6 +424,50 @@ export function activate(context: vscode.ExtensionContext) {
       "i18nsmith.renameSuspiciousKeysInFile",
       async (target?: vscode.Uri) => {
         await syncController.renameSuspiciousKeysInFile(target);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "i18nsmith.convertVueAttribute",
+      async (uri: vscode.Uri, line: number, attrName: string, attrValue: string) => {
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        const lineText = document.lineAt(line).text;
+        
+        // Generate a key for the attribute value
+        const key = attrValue.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        
+        // Replace the attribute
+        const newLineText = lineText.replace(
+          new RegExp(`${attrName}="${attrValue}"`),
+          `:${attrName}="$t('${key}')"`
+        );
+        
+        const range = new vscode.Range(line, 0, line, lineText.length);
+        await editor.edit(editBuilder => {
+          editBuilder.replace(range, newLineText);
+        });
+      }
+    ),
+    vscode.commands.registerCommand(
+      "i18nsmith.importVueUseI18n",
+      async (uri: vscode.Uri) => {
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        const text = document.getText();
+        
+        // Find the script setup tag
+        const scriptMatch = text.match(/(<script setup[^>]*>)/);
+        if (!scriptMatch) return;
+        
+        const scriptTag = scriptMatch[1];
+        const scriptStart = text.indexOf(scriptTag) + scriptTag.length;
+        
+        // Insert the import at the beginning of script setup
+        const importStatement = "\nimport { useI18n } from 'vue-i18n'\n\nconst { t } = useI18n()\n";
+        
+        await editor.edit(editBuilder => {
+          editBuilder.insert(new vscode.Position(document.positionAt(scriptStart).line + 1, 0), importStatement);
+        });
       }
     )
     // vscode.commands.registerCommand('i18nsmith.applySuspiciousRenamePlan', async () => {

@@ -116,6 +116,12 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
       actions.push(extractAction);
     }
 
+    // Vue-specific code actions
+    if (document.languageId === 'vue') {
+      const vueActions = this.createVueSpecificActions(document, range);
+      actions.push(...vueActions);
+    }
+
     return actions;
   }
 
@@ -325,6 +331,110 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     return null;
+  }
+
+  /**
+   * Create Vue-specific code actions
+   */
+  private createVueSpecificActions(
+    document: vscode.TextDocument,
+    range: vscode.Range | vscode.Selection
+  ): vscode.CodeAction[] {
+    const actions: vscode.CodeAction[] = [];
+
+    // Check if we're in a Vue template and can convert attributes
+    const templateAttributeAction = this.createVueTemplateAttributeAction(document, range);
+    if (templateAttributeAction) {
+      actions.push(templateAttributeAction);
+    }
+
+    // Check if we need to import useI18n in script setup
+    const importUseI18nAction = this.createVueImportUseI18nAction(document);
+    if (importUseI18nAction) {
+      actions.push(importUseI18nAction);
+    }
+
+    return actions;
+  }
+
+  /**
+   * Convert Vue template attributes like placeholder="text" to :placeholder="$t('key')"
+   */
+  private createVueTemplateAttributeAction(
+    document: vscode.TextDocument,
+    range: vscode.Range | vscode.Selection
+  ): vscode.CodeAction | null {
+    const line = document.lineAt(range.start.line);
+    const text = line.text;
+
+    // Check if we're on a Vue template attribute with a string value
+    const attributeMatch = text.match(/(\w+)="([^"]+)"/);
+    if (!attributeMatch) {
+      return null;
+    }
+
+    const [, attrName, attrValue] = attributeMatch;
+
+    // Skip if already using : or $t
+    if (text.includes(':') || text.includes('$t')) {
+      return null;
+    }
+
+    // Skip very short values
+    if (attrValue.length < 2) {
+      return null;
+    }
+
+    const action = new vscode.CodeAction(
+      `Convert to dynamic attribute with i18n: :${attrName}="$t('...')"`,
+      vscode.CodeActionKind.RefactorRewrite
+    );
+
+    action.command = {
+      command: "i18nsmith.convertVueAttribute",
+      title: "Convert Vue Attribute to i18n",
+      arguments: [document.uri, range.start.line, attrName, attrValue],
+    };
+
+    return action;
+  }
+
+  /**
+   * Add useI18n import to Vue script setup
+   */
+  private createVueImportUseI18nAction(
+    document: vscode.TextDocument
+  ): vscode.CodeAction | null {
+    const text = document.getText();
+
+    // Check if it's a Vue SFC with script setup
+    if (!text.includes('<script setup') && !text.includes("<script setup")) {
+      return null;
+    }
+
+    // Check if useI18n is already imported
+    if (text.includes('useI18n') || text.includes('vue-i18n')) {
+      return null;
+    }
+
+    // Check if there are any $t() calls in template that would need useI18n
+    const templateMatch = text.match(/<template[^>]*>([\s\S]*?)<\/template>/);
+    if (!templateMatch || !templateMatch[1].includes('$t(')) {
+      return null;
+    }
+
+    const action = new vscode.CodeAction(
+      "Import useI18n from vue-i18n",
+      vscode.CodeActionKind.QuickFix
+    );
+
+    action.command = {
+      command: "i18nsmith.importVueUseI18n",
+      title: "Import useI18n",
+      arguments: [document.uri],
+    };
+
+    return action;
   }
 }
 

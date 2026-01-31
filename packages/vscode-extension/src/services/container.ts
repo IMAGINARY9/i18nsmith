@@ -11,7 +11,7 @@ import { PreviewPlanService } from "../preview-flow";
 import { CliService } from "./cli-service";
 import { DiffPreviewService } from "./diff-preview";
 import { ConfigurationService } from "./configuration-service";
-import { OutputChannelService } from "./output-channel-service";
+import { FrameworkDetectionService } from "./framework-detection-service";
 
 export class ServiceContainer implements vscode.Disposable {
   // Set to true when a preview UI (diff/plan) was shown to the user.
@@ -34,6 +34,7 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly cliService: CliService;
   public readonly diffPreviewService: DiffPreviewService;
   public readonly configurationService: ConfigurationService;
+  public readonly frameworkDetectionService: FrameworkDetectionService;
 
   constructor(context: vscode.ExtensionContext) {
     this.outputChannelService = new OutputChannelService(context);
@@ -79,6 +80,7 @@ export class ServiceContainer implements vscode.Disposable {
     this.previewPlanService = new PreviewPlanService();
     context.subscriptions.push(this.previewPlanService);
     this.diffPreviewService = new DiffPreviewService(this.diffPeekProvider);
+    this.frameworkDetectionService = new FrameworkDetectionService();
   }
 
   public logVerbose(message: string) {
