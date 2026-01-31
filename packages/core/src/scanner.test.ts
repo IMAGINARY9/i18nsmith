@@ -9,7 +9,7 @@ describe('Scanner', () => {
   it('should scan JSX text and attributes', () => {
     const project = new Project();
     const sourceFile = project.createSourceFile(
-      'test.tsx',
+      '/test/test.tsx',
       `
       import React from 'react';
       function App() {
@@ -34,7 +34,7 @@ describe('Scanner', () => {
 
     const scanner = new Scanner(config, { workspaceRoot: '/test', project });
 
-    const summary = scanner.scan();
+    const summary = scanner.scan({ targets: ['test.tsx'] });
 
     expect(summary.filesScanned).toBe(1);
     expect(summary.filesExamined).toHaveLength(1);
