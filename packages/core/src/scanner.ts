@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 import {
   Node,
   Project,
@@ -12,6 +13,7 @@ import fg from "fast-glob";
 import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE, I18nConfig } from "./config.js";
 import { createScannerProject } from "./project-factory.js";
 import { TypescriptParser } from "./parsers/TypescriptParser.js";
+import { VueParser } from "./parsers/VueParser.js";
 import type { FileParser } from "./parsers/FileParser.js";
 
 export type CandidateKind =
@@ -134,7 +136,12 @@ export class Scanner {
     this.usesExternalProject = Boolean(options.project);
     this.parsers = [
       new TypescriptParser(config, this.workspaceRoot),
+      new VueParser(config, this.workspaceRoot),
     ];
+  }
+
+  private readFileContent(filePath: string): string {
+    return fs.readFileSync(filePath, 'utf-8');
   }
 
   public scan(): ScanSummary;
@@ -172,7 +179,8 @@ export class Scanner {
       }
 
       try {
-        const fileCandidates = parser.parse(filePath, '', this.project); // Pass the project for ts-morph based parsing
+        const content = this.readFileContent(filePath);
+        const fileCandidates = parser.parse(filePath, content, this.project); // Pass the project for ts-morph based parsing
         candidates.push(...fileCandidates);
         filesExamined.push(this.getRelativePath(filePath));
         filesScanned += 1;
