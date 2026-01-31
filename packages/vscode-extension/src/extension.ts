@@ -397,113 +397,18 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("i18nsmith.showOutput", () => {
       services.smartScanner.showOutput();
-    }),
-    vscode.commands.registerCommand("i18nsmith.transformFile", async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        await transformController.runTransform({
-          targets: [editor.document.uri.fsPath],
-        });
-      } else {
-        vscode.window.showWarningMessage("Open a file to transform.");
-      }
-    }),
-    vscode.commands.registerCommand(
-      "i18nsmith.exportMissingTranslations",
-      async () => {
-        await syncController.exportMissingTranslations();
-      }
-    ),
-    vscode.commands.registerCommand(
-      "i18nsmith.whitelistDynamicKeys",
-      async () => {
-        await configController.whitelistDynamicKeys();
-      }
-    ),
-    vscode.commands.registerCommand(
-      "i18nsmith.renameSuspiciousKeysInFile",
-      async (target?: vscode.Uri) => {
-        await syncController.renameSuspiciousKeysInFile(target);
-      }
-    ),
-    vscode.commands.registerCommand(
-      "i18nsmith.convertVueAttribute",
-      async (uri: vscode.Uri, line: number, attrName: string, attrValue: string) => {
-        const document = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(document);
-        const lineText = document.lineAt(line).text;
-        
-        // Generate a key for the attribute value
-        const key = attrValue.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        
-        // Replace the attribute
-        const newLineText = lineText.replace(
-          new RegExp(`${attrName}="${attrValue}"`),
-          `:${attrName}="$t('${key}')"`
-        );
-        
-        const range = new vscode.Range(line, 0, line, lineText.length);
-        await editor.edit(editBuilder => {
-          editBuilder.replace(range, newLineText);
-        });
-      }
-    ),
-    vscode.commands.registerCommand(
-      "i18nsmith.importVueUseI18n",
-      async (uri: vscode.Uri) => {
-        const document = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(document);
-        const text = document.getText();
-        
-        // Find the script setup tag
-        const scriptMatch = text.match(/(<script setup[^>]*>)/);
-        if (!scriptMatch) return;
-        
-        const scriptTag = scriptMatch[1];
-        const scriptStart = text.indexOf(scriptTag) + scriptTag.length;
-        
-        // Insert the import at the beginning of script setup
-        const importStatement = "\nimport { useI18n } from 'vue-i18n'\n\nconst { t } = useI18n()\n";
-        
-        await editor.edit(editBuilder => {
-          editBuilder.insert(new vscode.Position(document.positionAt(scriptStart).line + 1, 0), importStatement);
-        });
-      }
-    )
-    // vscode.commands.registerCommand('i18nsmith.applySuspiciousRenamePlan', async () => {
-    //   await applyStoredSuspiciousRenamePlan();
-    // }),
-    // vscode.commands.registerCommand('i18nsmith.showSuspiciousRenamePreview', async () => {
-    //   await revealSuspiciousRenamePreview();
-    // }),
-  );
-
-  console.log("[i18nsmith] Commands registered successfully");
-
-  quickActionSelectionState = getQuickActionSelectionState();
-  context.subscriptions.push(
-    reportWatcher.onDidRefresh(() => refreshQuickActionsModel()),
-    vscode.window.onDidChangeTextEditorSelection(() => {
-      const nextSelectionState = getQuickActionSelectionState();
-      if (nextSelectionState === quickActionSelectionState) {
-        return;
-      }
-      quickActionSelectionState = nextSelectionState;
-      refreshQuickActionsModel({ silent: true });
     })
   );
 
-  refreshQuickActionsModel({ silent: true });
-
-  // Initial load of diagnostics from existing report
-  reportWatcher.refresh();
-
-  // Run background scan on activation
-  smartScanner.runActivationScan();
+  // Trigger an initial refresh of the report on startup so diagnostics appear immediately
+  // if a report file already exists.
+  void services.reportWatcher.refresh().catch((err) => {
+    console.error("Initial report refresh failed:", err);
+  });
 }
 
 export function deactivate() {
-  console.log("i18nsmith extension deactivated");
+  // Clean up
 }
 
 /**

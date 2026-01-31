@@ -247,17 +247,30 @@ export class SmartScanner implements vscode.Disposable {
    * Detect if we're inside the i18nsmith monorepo and return the local CLI path
    */
   private detectLocalMonorepo(): string | null {
+    // First try via extension path (works for installed extension in monorepo)
     const extensionPath = vscode.extensions.getExtension('ArturLavrov.i18nsmith-vscode')?.extensionPath;
-    if (!extensionPath) {
-      return null;
+    if (extensionPath) {
+      // If running in the monorepo, the extension is at packages/vscode-extension
+      // and the CLI is at packages/cli/dist/index.js
+      const possibleCliPath = path.join(extensionPath, '..', 'cli', 'dist', 'index.js');
+      if (fs.existsSync(possibleCliPath)) {
+        this.log(`[Scanner] Detected local monorepo CLI at ${possibleCliPath}`);
+        return possibleCliPath;
+      }
     }
 
-    // If running in the monorepo, the extension is at packages/vscode-extension
-    // and the CLI is at packages/cli/dist/index.js
-    const possibleCliPath = path.join(extensionPath, '..', '..', 'cli', 'dist', 'index.js');
-    if (fs.existsSync(possibleCliPath)) {
-      this.log(`[Scanner] Detected local monorepo CLI at ${possibleCliPath}`);
-      return possibleCliPath;
+    // During development, try from the workspace root if it's the monorepo
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const monorepoCliPath = path.join(workspaceFolder.uri.fsPath, 'packages', 'cli', 'dist', 'index.js');
+      if (fs.existsSync(monorepoCliPath)) {
+        // Verify this is the i18nsmith monorepo by checking for workspace config
+        const pnpmWorkspace = path.join(workspaceFolder.uri.fsPath, 'pnpm-workspace.yaml');
+        if (fs.existsSync(pnpmWorkspace)) {
+          this.log(`[Scanner] Detected development monorepo CLI at ${monorepoCliPath}`);
+          return monorepoCliPath;
+        }
+      }
     }
 
     return null;

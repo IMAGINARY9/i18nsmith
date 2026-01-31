@@ -1,5 +1,6 @@
 import path from "path";
 import { parse } from "vue-eslint-parser";
+import type { Project } from "ts-morph";
 import { I18nConfig } from "../config.js";
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from "../scanner.js";
 import type { FileParser } from "./FileParser.js";
@@ -8,6 +9,97 @@ const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
 const HTML_ENTITY_PATTERN = /^&[a-z][a-z0-9-]*;$/i;
 const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
+
+/**
+ * Attributes that typically contain translatable text
+ */
+const TRANSLATABLE_ATTRIBUTES = new Set([
+  'alt',
+  'aria-label',
+  'aria-placeholder',
+  'aria-description',
+  'aria-valuetext',
+  'helperText',
+  'helper-text',
+  'label',
+  'placeholder',
+  'title',
+  'tooltip',
+  'message',
+  'error-message',
+  'errorMessage',
+  'success-message',
+  'successMessage',
+  'description',
+  'hint',
+  'caption',
+  'msg',  // Common Vue prop for messages
+]);
+
+/**
+ * Attributes that should never be considered for translation
+ */
+const NON_TRANSLATABLE_ATTRIBUTES = new Set([
+  'class',
+  'id',
+  'name',
+  'type',
+  'for',
+  'ref',
+  'key',
+  'href',
+  'src',
+  'style',
+  'width',
+  'height',
+  'data-testid',
+  'data-test',
+  'data-cy',
+  'role',
+  'tabindex',
+  'target',
+  'rel',
+  'method',
+  'action',
+  'encoding',
+  'enctype',
+  'autocomplete',
+  'autofocus',
+  'disabled',
+  'readonly',
+  'required',
+  'checked',
+  'selected',
+  'multiple',
+  'accept',
+  'pattern',
+  'min',
+  'max',
+  'step',
+  'maxlength',
+  'minlength',
+  'cols',
+  'rows',
+  'size',
+  'value',  // value is tricky - often not translatable in forms
+  'is',
+  'v-if',
+  'v-else',
+  'v-else-if',
+  'v-for',
+  'v-show',
+  'v-model',
+  'v-bind',
+  'v-on',
+  'v-slot',
+  'slot',
+  'xmlns',
+  'viewBox',
+  'd',  // SVG path
+  'fill',
+  'stroke',
+  'transform',
+]);
 
 export class VueParser implements FileParser {
   private config: I18nConfig;
@@ -36,7 +128,7 @@ export class VueParser implements FileParser {
     return path.extname(filePath).toLowerCase() === '.vue';
   }
 
-  parse(filePath: string, content: string): ScanCandidate[] {
+  parse(filePath: string, content: string, _project?: Project): ScanCandidate[] {
     const candidates: ScanCandidate[] = [];
     this.activeSkipLog = [];
 
@@ -88,9 +180,12 @@ export class VueParser implements FileParser {
         break;
 
       case 'VAttribute':
-        // Attribute values
+        // Attribute values - only extract from translatable attributes
         if (node.value && node.value.type === 'VLiteral' && node.value.value) {
-          this.addCandidate('jsx-attribute', node.value.value, node.value.loc, filePath, candidates);
+          const attrName = this.getAttributeName(node);
+          if (this.isTranslatableAttribute(attrName)) {
+            this.addCandidate('jsx-attribute', node.value.value, node.value.loc, filePath, candidates);
+          }
         }
         break;
 
@@ -115,6 +210,59 @@ export class VueParser implements FileParser {
         this.walkTemplateNode(attr, content, filePath, candidates);
       }
     }
+  }
+
+  /**
+   * Get the attribute name from a VAttribute node
+   */
+  private getAttributeName(node: any): string {
+    if (node.key) {
+      // Regular attribute: key.name
+      if (node.key.name) {
+        return node.key.name;
+      }
+      // Directive: v-bind:name or :name
+      if (node.key.argument && node.key.argument.name) {
+        return node.key.argument.name;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Check if an attribute typically contains translatable text
+   */
+  private isTranslatableAttribute(attrName: string): boolean {
+    if (!attrName) return false;
+    
+    const normalizedName = attrName.toLowerCase();
+    
+    // Explicitly non-translatable attributes
+    if (NON_TRANSLATABLE_ATTRIBUTES.has(normalizedName)) {
+      return false;
+    }
+    
+    // Explicitly translatable attributes
+    if (TRANSLATABLE_ATTRIBUTES.has(normalizedName)) {
+      return true;
+    }
+    
+    // Heuristics for unknown attributes:
+    // - Attributes ending with common translatable suffixes
+    if (
+      normalizedName.endsWith('label') ||
+      normalizedName.endsWith('text') ||
+      normalizedName.endsWith('title') ||
+      normalizedName.endsWith('message') ||
+      normalizedName.endsWith('description') ||
+      normalizedName.endsWith('hint') ||
+      normalizedName.endsWith('placeholder')
+    ) {
+      return true;
+    }
+    
+    // Default: don't extract unknown attributes to avoid false positives
+    return false;
   }
 
   private extractFromScript(component: any, content: string, filePath: string, candidates: ScanCandidate[]) {
