@@ -105,6 +105,9 @@ export class DiagnosticsManager implements vscode.Disposable {
       ...(report.sync?.actionableItems || []),
     ];
 
+    console.log(`[i18nsmith] Processing ${allItems.length} actionable items from report`);
+    console.log(`[i18nsmith] Workspace root: ${workspaceRoot}`);
+
     // Group items by file
     const byFile = new Map<string, vscode.Diagnostic[]>();
 
@@ -137,6 +140,8 @@ export class DiagnosticsManager implements vscode.Disposable {
         byFile.get(filePath)!.push(diagnostic);
       }
     }
+
+    console.log(`[i18nsmith] Setting diagnostics for ${byFile.size} files`);
 
     // Also add workspace-level diagnostics for items without file paths
     const workspaceDiagnostics: vscode.Diagnostic[] = [];

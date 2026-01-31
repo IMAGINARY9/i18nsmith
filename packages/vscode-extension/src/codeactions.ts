@@ -37,6 +37,23 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     let suspiciousRefactorActions = 0;
 
     for (const diagnostic of diagnostics) {
+      // Check if this is a hardcoded text issue
+      if (diagnostic.code === "hardcoded-text") {
+        const extractAction = this.createExtractHardcodedTextAction(
+          document,
+          diagnostic
+        );
+        if (extractAction) {
+          actions.push(extractAction);
+        }
+
+        // Also offer to run transform command
+        const transformAction = this.createRunTransformAction(diagnostic);
+        actions.push(transformAction);
+
+        continue;
+      }
+
       // Check if this is a missing key issue
       if (
         diagnostic.code === "missing-key" ||
@@ -284,6 +301,58 @@ export class I18nCodeActionProvider implements vscode.CodeActionProvider {
     action.command = {
       command: "i18nsmith.check",
       title: "Run Health Check",
+    };
+
+    return action;
+  }
+
+  /**
+   * Create action to extract hardcoded text as a translation key
+   */
+  private createExtractHardcodedTextAction(
+    document: vscode.TextDocument,
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction | null {
+    // Extract the text from the diagnostic message
+    const match = diagnostic.message.match(/Hardcoded text "([^"]+)"/);
+    if (!match) {
+      return null;
+    }
+
+    const text = match[1];
+    const truncatedText = text.length > 30 ? `${text.slice(0, 27)}...` : text;
+
+    const action = new vscode.CodeAction(
+      `Extract "${truncatedText}" to translation key`,
+      vscode.CodeActionKind.QuickFix
+    );
+
+    action.diagnostics = [diagnostic];
+    action.isPreferred = true;
+    action.command = {
+      command: "i18nsmith.extractKey",
+      title: "Extract Translation Key",
+      arguments: [document.uri, diagnostic.range, text],
+    };
+
+    return action;
+  }
+
+  /**
+   * Create action to run transform command
+   */
+  private createRunTransformAction(
+    diagnostic: vscode.Diagnostic
+  ): vscode.CodeAction {
+    const action = new vscode.CodeAction(
+      "Run i18nsmith transform (extract all)",
+      vscode.CodeActionKind.QuickFix
+    );
+
+    action.diagnostics = [diagnostic];
+    action.command = {
+      command: "i18nsmith.transformFile",
+      title: "Transform File",
     };
 
     return action;

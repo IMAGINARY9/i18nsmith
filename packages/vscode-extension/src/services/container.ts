@@ -12,6 +12,7 @@ import { CliService } from "./cli-service";
 import { DiffPreviewService } from "./diff-preview";
 import { ConfigurationService } from "./configuration-service";
 import { FrameworkDetectionService } from "./framework-detection-service";
+import { OutputChannelService } from "./output-channel-service";
 
 export class ServiceContainer implements vscode.Disposable {
   // Set to true when a preview UI (diff/plan) was shown to the user.
