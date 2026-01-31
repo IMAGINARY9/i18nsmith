@@ -1,0 +1,633 @@
+# i18nsmith Auto Config Generation - Implementation Spec
+# Version: 1.0.0
+# Status: Proposed
+
+metadata:
+  title: "Auto Config Generation"
+  author: "i18nsmith Team"
+  created: "2026-02-01"
+  priority: high
+  estimated_effort: "2-3 weeks"
+
+# ============================================================================
+# DETECTION RULES
+# ============================================================================
+
+detection:
+  # Framework Detection from package.json
+  frameworks:
+    nuxt:
+      priority: 1  # Check first (includes vue)
+      packages:
+        required:
+          - nuxt
+        optional:
+          - "@nuxt/core"
+          - "@nuxt/kit"
+      i18n_packages:
+        - "@nuxtjs/i18n"
+        - "vue-i18n"
+      default_adapter: "vue-i18n"
+      default_hook: "useI18n"
+      include_patterns:
+        - "**/*.vue"
+        - "pages/**/*.{ts,js}"
+        - "components/**/*.{ts,js}"
+        - "composables/**/*.{ts,js}"
+      exclude_patterns:
+        - ".nuxt/**"
+        - ".output/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "locales"
+        - "i18n/locales"
+        - "lang"
+
+    next:
+      priority: 2  # Check before react
+      packages:
+        required:
+          - next
+      i18n_packages:
+        - "next-intl"
+        - "next-i18next"
+        - "react-i18next"
+      default_adapter: "react-i18next"
+      default_hook: "useTranslation"
+      # App Router detection
+      app_router_signals:
+        - "app/layout.tsx"
+        - "app/layout.ts"
+        - "app/page.tsx"
+      pages_router_signals:
+        - "pages/_app.tsx"
+        - "pages/_app.js"
+        - "pages/index.tsx"
+      include_patterns:
+        app_router:
+          - "app/**/*.{ts,tsx}"
+          - "components/**/*.{ts,tsx}"
+        pages_router:
+          - "pages/**/*.{ts,tsx}"
+          - "components/**/*.{ts,tsx}"
+          - "src/**/*.{ts,tsx}"
+      exclude_patterns:
+        - ".next/**"
+        - "out/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "messages"
+        - "public/locales"
+        - "locales"
+
+    vue:
+      priority: 3
+      packages:
+        required:
+          - vue
+      i18n_packages:
+        - "vue-i18n"
+        - "@intlify/vue-i18n"
+      default_adapter: "vue-i18n"
+      default_hook: "useI18n"
+      include_patterns:
+        - "src/**/*.vue"
+        - "src/**/*.{ts,js}"
+      exclude_patterns:
+        - "dist/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "src/locales"
+        - "src/i18n"
+        - "locales"
+
+    react:
+      priority: 4
+      packages:
+        required:
+          - react
+      i18n_packages:
+        - "react-i18next"
+        - "@lingui/react"
+        - "react-intl"
+        - "formatjs"
+      default_adapter: "react-i18next"
+      default_hook: "useTranslation"
+      include_patterns:
+        - "src/**/*.{ts,tsx,js,jsx}"
+      exclude_patterns:
+        - "build/**"
+        - "dist/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "src/locales"
+        - "public/locales"
+        - "locales"
+
+    svelte:
+      priority: 5
+      packages:
+        required:
+          - svelte
+        optional:
+          - "@sveltejs/kit"
+      i18n_packages:
+        - "svelte-i18n"
+        - "sveltekit-i18n"
+      default_adapter: "svelte-i18n"
+      default_hook: "t"
+      include_patterns:
+        - "src/**/*.svelte"
+        - "src/**/*.{ts,js}"
+      exclude_patterns:
+        - ".svelte-kit/**"
+        - "build/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "src/lib/locales"
+        - "src/locales"
+        - "locales"
+
+    angular:
+      priority: 6
+      packages:
+        required:
+          - "@angular/core"
+      i18n_packages:
+        - "@ngx-translate/core"
+        - "@angular/localize"
+      default_adapter: "@ngx-translate/core"
+      default_hook: "translate"
+      include_patterns:
+        - "src/**/*.ts"
+        - "src/**/*.html"
+      exclude_patterns:
+        - "dist/**"
+        - "node_modules/**"
+      locales_candidates:
+        - "src/assets/i18n"
+        - "src/i18n"
+        - "i18n"
+
+  # File extension detection
+  file_extensions:
+    typescript:
+      extensions: [".ts", ".tsx"]
+      indicator_files:
+        - "tsconfig.json"
+    javascript:
+      extensions: [".js", ".jsx"]
+    vue_sfc:
+      extensions: [".vue"]
+    svelte:
+      extensions: [".svelte"]
+    angular_template:
+      extensions: [".html"]
+      context: "angular"  # Only count as translatable in Angular projects
+
+  # Locale file detection patterns
+  locale_patterns:
+    flat_json:
+      pattern: "^([a-z]{2,3}(?:[-_][A-Z]{2})?)\\.json$"
+      example: "en.json, en-US.json, pt-BR.json"
+    nested_directory:
+      pattern: "^[a-z]{2,3}(?:[-_][A-Z]{2})?$"
+      example: "en/, en-US/, pt-BR/"
+      contains: "*.json or translation.json"
+    namespaced:
+      pattern: "^([a-z]{2,3}(?:[-_][A-Z]{2})?)/([a-z-]+)\\.json$"
+      example: "en/common.json, en/home.json"
+
+  # Common source directories
+  source_directories:
+    primary:
+      - src
+      - app
+      - pages
+      - components
+      - lib
+    secondary:
+      - features
+      - modules
+      - views
+      - screens
+      - layouts
+    monorepo:
+      - packages/*/src
+      - apps/*/src
+      - libs/*/src
+
+  # Common exclude patterns
+  exclude_patterns:
+    always:
+      - "node_modules/**"
+      - "**/node_modules/**"
+    build:
+      - "dist/**"
+      - "build/**"
+      - "out/**"
+      - "coverage/**"
+      - ".cache/**"
+    tests:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "__tests__/**"
+      - "__mocks__/**"
+      - "**/__tests__/**"
+      - "cypress/**"
+      - "e2e/**"
+    config:
+      - "*.config.*"
+      - "**/*.config.*"
+    storybook:
+      - ".storybook/**"
+      - "**/*.stories.*"
+
+# ============================================================================
+# CONFIDENCE SCORING
+# ============================================================================
+
+confidence:
+  framework:
+    has_main_package: 0.5
+    has_i18n_package: 0.3
+    has_expected_files: 0.2
+  
+  locales:
+    found_locale_dir: 0.4
+    found_locale_files: 0.3
+    multiple_locales: 0.2
+    valid_json: 0.1
+
+  file_patterns:
+    found_source_dirs: 0.4
+    found_expected_extensions: 0.3
+    reasonable_file_count: 0.3
+
+  thresholds:
+    high: 0.8      # Auto-apply detected config
+    medium: 0.5    # Show detected config, ask for confirmation
+    low: 0.3       # Show suggestions, require manual setup
+
+# ============================================================================
+# CONFIGURATION TEMPLATES
+# ============================================================================
+
+templates:
+  react:
+    name: "React with react-i18next"
+    description: "Standard React app using react-i18next"
+    tags: ["react", "hooks", "spa"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "src/locales"
+      include:
+        - "src/**/*.{ts,tsx,js,jsx}"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+      translationAdapter:
+        module: "react-i18next"
+        hookName: "useTranslation"
+      keyGeneration:
+        namespace: "translation"
+        shortHashLen: 6
+
+  next-app:
+    name: "Next.js App Router"
+    description: "Next.js 13+ with App Router"
+    tags: ["next", "react", "app-router", "ssr"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "messages"
+      include:
+        - "app/**/*.{ts,tsx}"
+        - "components/**/*.{ts,tsx}"
+      exclude:
+        - ".next/**"
+        - "**/*.test.*"
+      translationAdapter:
+        module: "next-intl"
+        hookName: "useTranslations"
+      keyGeneration:
+        namespace: "common"
+        shortHashLen: 6
+
+  next-pages:
+    name: "Next.js Pages Router"
+    description: "Next.js with Pages Router and react-i18next"
+    tags: ["next", "react", "pages-router"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "public/locales"
+      include:
+        - "pages/**/*.{ts,tsx}"
+        - "components/**/*.{ts,tsx}"
+        - "src/**/*.{ts,tsx}"
+      exclude:
+        - ".next/**"
+        - "**/*.test.*"
+      translationAdapter:
+        module: "react-i18next"
+        hookName: "useTranslation"
+
+  vue3:
+    name: "Vue 3 with vue-i18n"
+    description: "Vue 3 SFC application with Composition API"
+    tags: ["vue", "vue3", "composition-api", "sfc"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "src/locales"
+      include:
+        - "src/**/*.vue"
+        - "src/**/*.{ts,js}"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+      translationAdapter:
+        module: "vue-i18n"
+        hookName: "useI18n"
+      keyGeneration:
+        namespace: "common"
+        shortHashLen: 6
+
+  nuxt3:
+    name: "Nuxt 3"
+    description: "Nuxt 3 with @nuxtjs/i18n module"
+    tags: ["nuxt", "vue", "ssr", "auto-imports"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "locales"
+      include:
+        - "**/*.vue"
+        - "composables/**/*.ts"
+        - "pages/**/*.ts"
+        - "components/**/*.ts"
+      exclude:
+        - ".nuxt/**"
+        - ".output/**"
+        - "**/*.test.*"
+      translationAdapter:
+        module: "vue-i18n"
+        hookName: "useI18n"
+
+  svelte:
+    name: "Svelte with svelte-i18n"
+    description: "Svelte/SvelteKit application"
+    tags: ["svelte", "sveltekit", "stores"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "src/lib/locales"
+      include:
+        - "src/**/*.svelte"
+        - "src/**/*.{ts,js}"
+      exclude:
+        - ".svelte-kit/**"
+        - "**/*.test.*"
+      translationAdapter:
+        module: "svelte-i18n"
+        hookName: "t"
+
+  minimal:
+    name: "Minimal Setup"
+    description: "Basic configuration for any JavaScript project"
+    tags: ["generic", "minimal"]
+    config:
+      sourceLanguage: "en"
+      targetLanguages: []
+      localesDir: "locales"
+      include:
+        - "**/*.{ts,tsx,js,jsx}"
+      exclude:
+        - "node_modules/**"
+        - "dist/**"
+        - "**/*.test.*"
+      translationAdapter:
+        module: "react-i18next"
+        hookName: "useTranslation"
+
+# ============================================================================
+# CLI COMMANDS
+# ============================================================================
+
+commands:
+  detect:
+    description: "Analyze project and show detected configuration"
+    options:
+      - name: "--json"
+        description: "Output as JSON"
+      - name: "--verbose"
+        description: "Show detailed detection process"
+    output:
+      human_readable:
+        - "Framework Detection"
+        - "i18n Library Detection"
+        - "Locale Files Detection"
+        - "Source Files Analysis"
+        - "Suggested Configuration"
+      json:
+        schema: "ProjectIntelligence"
+
+  init:
+    description: "Initialize i18nsmith configuration"
+    options:
+      existing:
+        - name: "--merge"
+          description: "Merge with existing locales/runtimes"
+        - name: "--yes, -y"
+          description: "Skip prompts, use detected values"
+      new:
+        - name: "--detect"
+          description: "Run detection only, don't create config"
+        - name: "--minimal"
+          description: "Skip optional prompts"
+        - name: "--template <name>"
+          description: "Use a preset template"
+        - name: "--list-templates"
+          description: "List available templates"
+        - name: "--force"
+          description: "Overwrite existing config"
+
+# ============================================================================
+# IMPLEMENTATION TASKS
+# ============================================================================
+
+implementation:
+  phase_1:
+    name: "Core Intelligence Service"
+    priority: high
+    tasks:
+      - id: "core-1"
+        title: "Create project-intelligence module structure"
+        package: "@i18nsmith/core"
+        files:
+          - "src/project-intelligence/index.ts"
+          - "src/project-intelligence/types.ts"
+          - "src/project-intelligence/framework-detector.ts"
+          - "src/project-intelligence/file-pattern-detector.ts"
+          - "src/project-intelligence/locale-detector.ts"
+          - "src/project-intelligence/confidence-scorer.ts"
+        status: todo
+
+      - id: "core-2"
+        title: "Implement FrameworkDetector"
+        description: "Detect framework from package.json and file structure"
+        depends_on: ["core-1"]
+        status: todo
+
+      - id: "core-3"
+        title: "Implement FilePatternDetector"
+        description: "Analyze project structure for optimal include/exclude patterns"
+        depends_on: ["core-1"]
+        status: todo
+
+      - id: "core-4"
+        title: "Enhance LocaleDetector"
+        description: "Extend existing inference.ts with more detection strategies"
+        depends_on: ["core-1"]
+        status: todo
+
+      - id: "core-5"
+        title: "Implement ConfidenceScorer"
+        description: "Calculate confidence scores for each detection"
+        depends_on: ["core-2", "core-3", "core-4"]
+        status: todo
+
+      - id: "core-6"
+        title: "Add unit tests"
+        depends_on: ["core-5"]
+        status: todo
+
+  phase_2:
+    name: "CLI Integration"
+    priority: high
+    depends_on: ["phase_1"]
+    tasks:
+      - id: "cli-1"
+        title: "Add detect command"
+        package: "i18nsmith"
+        files:
+          - "src/commands/detect.ts"
+        status: todo
+
+      - id: "cli-2"
+        title: "Refactor init command"
+        description: "Use ProjectIntelligenceService for smart defaults"
+        files:
+          - "src/commands/init.ts"
+        status: todo
+
+      - id: "cli-3"
+        title: "Add template support"
+        files:
+          - "src/templates/index.ts"
+          - "src/templates/templates.yaml"
+        status: todo
+
+      - id: "cli-4"
+        title: "Improve no-config error messages"
+        description: "Show helpful suggestions when config is missing"
+        status: todo
+
+      - id: "cli-5"
+        title: "Add CLI tests"
+        status: todo
+
+  phase_3:
+    name: "Templates & Documentation"
+    priority: medium
+    depends_on: ["phase_2"]
+    tasks:
+      - id: "docs-1"
+        title: "Create template documentation"
+        files:
+          - "docs/templates.md"
+          - "docs/recipes/quick-start.md"
+        status: todo
+
+      - id: "docs-2"
+        title: "Update init command documentation"
+        status: todo
+
+      - id: "docs-3"
+        title: "Create framework-specific guides"
+        status: todo
+
+  phase_4:
+    name: "VS Code Integration"
+    priority: medium
+    depends_on: ["phase_1"]
+    tasks:
+      - id: "vscode-1"
+        title: "Migrate framework detection to use core service"
+        package: "@i18nsmith/vscode-extension"
+        status: todo
+
+      - id: "vscode-2"
+        title: "Add Quick Setup command"
+        description: "One-click config generation from VS Code"
+        status: todo
+
+      - id: "vscode-3"
+        title: "Show detection status in UI"
+        status: todo
+
+# ============================================================================
+# TESTING SCENARIOS
+# ============================================================================
+
+test_scenarios:
+  - name: "Fresh React app (create-react-app)"
+    expected:
+      framework: "react"
+      adapter: "custom"
+      locales_dir: null
+      confidence: "low"
+
+  - name: "React app with react-i18next"
+    expected:
+      framework: "react"
+      adapter: "react-i18next"
+      confidence: "high"
+
+  - name: "Next.js App Router with next-intl"
+    expected:
+      framework: "next"
+      adapter: "next-intl"
+      features: ["app-router"]
+      confidence: "high"
+
+  - name: "Next.js Pages Router with react-i18next"
+    expected:
+      framework: "next"
+      adapter: "react-i18next"
+      features: ["pages-router"]
+      confidence: "high"
+
+  - name: "Vue 3 with vue-i18n"
+    expected:
+      framework: "vue"
+      adapter: "vue-i18n"
+      confidence: "high"
+
+  - name: "Nuxt 3 with @nuxtjs/i18n"
+    expected:
+      framework: "nuxt"
+      adapter: "vue-i18n"
+      confidence: "high"
+
+  - name: "Monorepo with multiple apps"
+    expected:
+      locales_dir: "packages/*/locales"
+      confidence: "medium"
+
+  - name: "No package.json"
+    expected:
+      framework: "unknown"
+      confidence: "low"
