@@ -60,7 +60,7 @@ Use environment variable indirection for API key names.
 |------|---------|--------|--------|
 | react-i18next | i18next | ReactWriter | Stable |
 | next-intl | intl | ReactWriter (shared) | Beta |
-| vue-i18n | i18n | VueWriter | Planned |
+| vue-i18n | i18n | VueWriter | Stable |
 | lingui | lingui | ReactWriter (extended) | Planned |
 | mock | pseudo | NoopWriter + MockTranslator | Stable |
 
