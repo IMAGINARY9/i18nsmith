@@ -119,13 +119,13 @@ export interface ExistingSetupDetection {
   providerPath?: string;
   
   /** i18n runtime packages found in dependencies */
-  runtimePackages: RuntimePackageInfo[];
+  runtimePackages: PIRuntimePackageInfo[];
   
   /** Existing translation usage in code */
   translationUsage: TranslationUsageInfo;
 }
 
-export interface RuntimePackageInfo {
+export interface PIRuntimePackageInfo {
   /** Package name */
   name: string;
   
@@ -157,7 +157,7 @@ export interface TranslationUsageInfo {
 // Locale Detection Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type LocaleFormat = 'flat' | 'nested' | 'namespaced' | 'auto';
+export type PILocaleFormat = 'flat' | 'nested' | 'namespaced' | 'auto';
 
 export interface LocaleDetection {
   /** Detected/suggested source language */
@@ -170,7 +170,7 @@ export interface LocaleDetection {
   localesDir: string;
   
   /** Locale file format */
-  format: LocaleFormat;
+  format: PILocaleFormat;
   
   /** Existing locale files found */
   existingFiles: LocaleFileInfo[];

@@ -3,7 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
-import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore } from '@i18nsmith/core';
+import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore, ProjectIntelligenceService, type ProjectIntelligence, type SuggestedConfig } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
 import { CliError, withErrorHandling } from '../utils/errors.js';
@@ -41,6 +41,7 @@ export function parseGlobList(value: string): string[] {
 interface InitCommandOptions {
   merge?: boolean;
   yes?: boolean;
+  template?: string;
 }
 
 interface InitAnswers {
@@ -66,8 +67,21 @@ interface InitAnswers {
 }
 
 /**
+ * Run project intelligence detection to gather smart defaults.
+ */
+async function detectProjectIntelligence(workspaceRoot: string): Promise<ProjectIntelligence | null> {
+  try {
+    const service = new ProjectIntelligenceService();
+    const result = await service.analyze({ workspaceRoot });
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run init in non-interactive mode with sensible defaults.
- * Auto-detects existing adapters and locales.
+ * Uses ProjectIntelligenceService for smart detection.
  */
 async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promise<void> {
   const workspaceRoot = process.cwd();
@@ -85,97 +99,152 @@ async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promis
     // Config doesn't exist, proceed
   }
 
-  // Create a minimal config for diagnostics
-  const minimalConfig: I18nConfig = {
-    version: 1 as const,
-    sourceLanguage: 'en',
-    targetLanguages: [],
-    localesDir: 'locales',
-    include: ['src/**/*.{ts,tsx,js,jsx}'],
-    exclude: ['node_modules/**'],
-    minTextLength: 1,
-    translation: { provider: 'manual' },
-    translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
-    keyGeneration: { namespace: 'common', shortHashLen: 6 },
-    seedTargetLocales: false,
-  };
+  console.log(chalk.blue('🔍 Detecting project configuration...'));
 
-  // Try to detect existing setup
-  let detectedAdapter: string | undefined;
-  let detectedLocales: string[] = [];
+  // Use ProjectIntelligenceService for detection
+  const intelligence = await detectProjectIntelligence(workspaceRoot);
 
-  try {
-    const report = await diagnoseWorkspace(minimalConfig, { workspaceRoot });
+  let suggestedConfig: SuggestedConfig;
+
+  if (intelligence) {
+    const { framework, locales, filePatterns, confidence } = intelligence;
     
-    // Detect adapter files
-    if (report.adapterFiles.length > 0) {
-      detectedAdapter = report.adapterFiles[0].path;
-      console.log(chalk.blue(`Detected adapter: ${detectedAdapter}`));
+    // Report detection results
+    if (framework.type !== 'unknown') {
+      console.log(chalk.green(`  ✓ Framework: ${framework.type}`));
+    }
+    if (framework.adapter) {
+      console.log(chalk.green(`  ✓ i18n Adapter: ${framework.adapter}`));
+    }
+    if (locales.existingFiles.length > 0) {
+      const langs = [locales.sourceLanguage, ...locales.targetLanguages].filter(Boolean);
+      console.log(chalk.green(`  ✓ Locales: ${langs.join(', ')}`));
+    }
+    if (filePatterns.sourceDirectories.length > 0) {
+      console.log(chalk.green(`  ✓ Source directories: ${filePatterns.sourceDirectories.slice(0, 3).join(', ')}${filePatterns.sourceDirectories.length > 3 ? '...' : ''}`));
     }
 
-    // Detect existing locales
-    const existingLocales = report.localeFiles.filter(
-      (entry) => !entry.missing && !entry.parseError
-    );
-    if (existingLocales.length > 0) {
-      detectedLocales = existingLocales.map((entry) => entry.locale);
-      console.log(chalk.blue(`Detected locales: ${detectedLocales.join(', ')}`));
-    }
-  } catch (error) {
-    console.log(chalk.dim(`Could not run diagnostics: ${(error as Error).message}`));
-  }
-
-  // Determine source and target languages from detected locales
-  let sourceLanguage = 'en';
-  let targetLanguages: string[] = [];
-  
-  if (detectedLocales.length > 0) {
-    // Use 'en' as source if present, otherwise first detected locale
-    if (detectedLocales.includes('en')) {
-      sourceLanguage = 'en';
-      targetLanguages = detectedLocales.filter((l) => l !== 'en');
+    // Use template if specified, otherwise use detected config
+    if (commandOptions.template) {
+      const service = new ProjectIntelligenceService();
+      suggestedConfig = service.applyTemplate(commandOptions.template, intelligence);
+      console.log(chalk.green(`  ✓ Template: ${commandOptions.template}`));
     } else {
-      sourceLanguage = detectedLocales[0];
-      targetLanguages = detectedLocales.slice(1);
+      suggestedConfig = intelligence.suggestedConfig;
+    }
+
+    // Report confidence
+    const confidencePercent = Math.round(intelligence.confidence.overall * 100);
+    const confidenceColor = intelligence.confidence.level === 'high' ? chalk.green : intelligence.confidence.level === 'medium' ? chalk.yellow : chalk.red;
+    console.log(confidenceColor(`  Detection confidence: ${confidencePercent}% (${intelligence.confidence.level})`));
+  } else {
+    // Fallback when detection fails
+    if (commandOptions.template) {
+      const service = new ProjectIntelligenceService();
+      // Create minimal intelligence for template application
+      const minimalIntelligence: ProjectIntelligence = {
+        framework: { 
+          type: 'unknown', 
+          adapter: 'react-i18next', 
+          hookName: 'useTranslation',
+          features: [],
+          confidence: 0,
+          evidence: []
+        },
+        locales: { 
+          sourceLanguage: 'en', 
+          targetLanguages: [], 
+          localesDir: 'locales', 
+          format: 'flat',
+          existingFiles: [],
+          existingKeyCount: 0,
+          confidence: 0
+        },
+        filePatterns: { 
+          include: ['**/*.{ts,tsx,js,jsx}'], 
+          exclude: ['node_modules/**', 'dist/**'],
+          sourceDirectories: [],
+          hasTypeScript: false,
+          hasJsx: false,
+          hasVue: false,
+          hasSvelte: false,
+          sourceFileCount: 0,
+          confidence: 0
+        },
+        existingSetup: {
+          hasExistingConfig: false,
+          hasExistingLocales: false,
+          hasI18nProvider: false,
+          runtimePackages: [],
+          translationUsage: {
+            hookName: 'useTranslation',
+            translationIdentifier: 't',
+            filesWithHooks: 0,
+            translationCalls: 0,
+            exampleFiles: []
+          }
+        },
+        confidence: { 
+          framework: 0,
+          filePatterns: 0,
+          existingSetup: 0,
+          locales: 0,
+          overall: 0, 
+          level: 'low'
+        },
+        warnings: [],
+        recommendations: [],
+        suggestedConfig: {
+          sourceLanguage: 'en',
+          targetLanguages: [],
+          localesDir: 'locales',
+          include: ['**/*.{ts,tsx,js,jsx}'],
+          exclude: ['node_modules/**', 'dist/**'],
+          translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+          keyGeneration: { namespace: 'common', shortHashLen: 6 },
+        },
+      };
+      suggestedConfig = service.applyTemplate(commandOptions.template, minimalIntelligence);
+      console.log(chalk.green(`  ✓ Template: ${commandOptions.template}`));
+    } else {
+      suggestedConfig = {
+        sourceLanguage: 'en',
+        targetLanguages: [],
+        localesDir: 'locales',
+        include: ['**/*.{ts,tsx,js,jsx}'],
+        exclude: ['node_modules/**', 'dist/**'],
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+        keyGeneration: { namespace: 'common', shortHashLen: 6 },
+      };
     }
   }
 
-  // Build the config
+  // Build config from suggested values
   const config: I18nConfig = {
     version: 1 as const,
-    sourceLanguage,
-    targetLanguages,
-    localesDir: 'locales',
-    include: [
-      'src/**/*.{ts,tsx,js,jsx}',
-      'app/**/*.{ts,tsx,js,jsx}',
-      'pages/**/*.{ts,tsx,js,jsx}',
-      'components/**/*.{ts,tsx,js,jsx}',
-    ],
-    exclude: ['node_modules/**', '**/*.test.*'],
+    sourceLanguage: suggestedConfig.sourceLanguage,
+    targetLanguages: suggestedConfig.targetLanguages,
+    localesDir: suggestedConfig.localesDir,
+    include: suggestedConfig.include,
+    exclude: suggestedConfig.exclude,
     minTextLength: 1,
     translation: { provider: 'manual' },
     translationAdapter: {
-      module: detectedAdapter ?? 'react-i18next',
-      hookName: 'useTranslation',
+      module: suggestedConfig.translationAdapter.module,
+      hookName: suggestedConfig.translationAdapter.hookName,
     },
-    keyGeneration: {
-      namespace: 'common',
-      shortHashLen: 6,
-    },
+    keyGeneration: suggestedConfig.keyGeneration,
     seedTargetLocales: false,
   };
 
   try {
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
     console.log(chalk.green(`\n✓ Configuration created at ${configPath}`));
-    console.log(chalk.dim('  Source language: ' + sourceLanguage));
-    if (targetLanguages.length > 0) {
-      console.log(chalk.dim('  Target languages: ' + targetLanguages.join(', ')));
+    console.log(chalk.dim('  Source language: ' + config.sourceLanguage));
+    if (config.targetLanguages.length > 0) {
+      console.log(chalk.dim('  Target languages: ' + config.targetLanguages.join(', ')));
     }
-    if (detectedAdapter) {
-      console.log(chalk.dim('  Adapter: ' + detectedAdapter));
-    }
+    console.log(chalk.dim('  Adapter: ' + (config.translationAdapter?.module ?? 'react-i18next')));
 
     // Ensure .gitignore has i18nsmith artifacts
     const gitignoreResult = await ensureGitignore(workspaceRoot);
@@ -196,6 +265,7 @@ export function registerInit(program: Command) {
     .description('Initialize i18nsmith configuration')
     .option('--merge', 'Merge with existing locales/runtimes when detected', false)
     .option('-y, --yes', 'Skip prompts and use defaults (non-interactive mode)', false)
+    .option('--template <template>', 'Use a preset template (react, next-app, next-pages, vue3, nuxt3, svelte, minimal)', undefined)
     .action(
       withErrorHandling(async (commandOptions: InitCommandOptions) => {
         console.log(chalk.blue('Initializing i18nsmith configuration...'));

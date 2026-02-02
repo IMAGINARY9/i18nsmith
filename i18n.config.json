@@ -1,16 +1,27 @@
 {
+  "version": 1,
   "sourceLanguage": "en",
-  "targetLanguages": ["es", "fr"],
-  "localesDir": "locales",
-  "include": ["**/*.{ts,tsx,js,jsx,vue}"],
-  "exclude": ["node_modules/**", ".next/**", "dist/**"],
-  "extraction": {
-    "minTextLength": 3,
-    "minLetterCount": 2,
-    "minLetterRatio": 0.5
+  "targetLanguages": [],
+  "localesDir": "packages/transformer/locales",
+  "include": [
+    "src/**/*.vue",
+    "src/**/*.{ts,js}"
+  ],
+  "exclude": [
+    "**/*.test.*",
+    "**/*.spec.*"
+  ],
+  "minTextLength": 1,
+  "translation": {
+    "provider": "manual"
   },
   "translationAdapter": {
-    "module": "@i18nsmith/translation",
-    "hookName": "t"
-  }
+    "module": "vue-i18n",
+    "hookName": "useI18n"
+  },
+  "keyGeneration": {
+    "namespace": "common",
+    "shortHashLen": 6
+  },
+  "seedTargetLocales": false
 }

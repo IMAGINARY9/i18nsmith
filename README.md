@@ -175,6 +175,63 @@ If `diagnose` detected existing locales or runtime files, rerun `i18nsmith init 
 - Prompt you to choose a merge strategy (`keep-source`, `overwrite`, or `interactive`) instead of blindly scaffolding.
 - Skip scaffolding if you decline, so your current adapter stays untouched. You can still force a scaffold with `--force` if you deliberately want to overwrite.
 
+## Auto-configuration
+
+i18nsmith can automatically detect your project setup and generate optimized configuration. This eliminates the friction of manual configuration for common frameworks and patterns.
+
+### Smart initialization
+
+Run `i18nsmith init -y` for non-interactive setup with automatic detection:
+
+```bash
+i18nsmith init -y
+```
+
+The command analyzes your project to detect:
+- **Framework**: React, Vue, Next.js, Nuxt, Svelte, Angular
+- **i18n Adapter**: react-i18next, vue-i18n, next-intl, svelte-i18n, etc.
+- **Locale files**: Existing translation files and languages
+- **Source patterns**: Optimal include/exclude patterns for your project structure
+
+### Project analysis
+
+Use `i18nsmith detect` to see what the auto-configuration system detects without creating files:
+
+```bash
+i18nsmith detect
+i18nsmith detect --json  # Machine-readable output
+i18nsmith detect --show-config  # Preview generated config
+```
+
+### Configuration templates
+
+For specific frameworks, use pre-configured templates:
+
+```bash
+# Next.js App Router
+i18nsmith init --template next-app -y
+
+# Vue 3 with Composition API
+i18nsmith init --template vue3 -y
+
+# React with react-i18next
+i18nsmith init --template react -y
+```
+
+Available templates: `react`, `next-app`, `next-pages`, `vue3`, `nuxt3`, `svelte`, `minimal`
+
+See [Configuration Templates](docs/recipes/configuration-templates.md) for details on each template.
+
+### Detection confidence
+
+The system provides confidence scores (high/medium/low) based on:
+- Package.json dependencies
+- Existing locale files
+- Project structure patterns
+- File extension analysis
+
+When confidence is low, you may need to customize the generated configuration.
+
 ## Adapter & runtime scaffolding
 
 `i18nsmith scaffold-adapter` offers two guided flows, and the `init` command exposes the same prompts so you can wire everything up in one pass. The CLI now auto-skips scaffolding when it detects an existing runtime (to avoid overwriting your provider); pass `--no-skip-if-detected` or `--force` if you really do want to regenerate the files.
