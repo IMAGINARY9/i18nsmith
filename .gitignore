@@ -38,3 +38,7 @@ tmp-transformer-*
 
 # Ignore packaged VSIX artifacts
 *.vsix
+
+# i18nsmith artifacts
+.i18nsmith/
+.i18nsmith-backup/

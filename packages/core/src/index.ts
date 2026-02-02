@@ -18,6 +18,9 @@ export * from './gitignore.js';
 export * from './parsers/FileParser.js';
 export * from './parsers/TypescriptParser.js';
 
+// Project Intelligence
+export * from './project-intelligence/index.js';
+
 // Internal API - Implementation details (not recommended for external use)
 export * from './reference-extractor.js';
 export * from './placeholders.js';

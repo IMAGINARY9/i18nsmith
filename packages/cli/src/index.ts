@@ -16,6 +16,7 @@ import { registerRename } from './commands/rename.js';
 import { registerInstallHooks } from './commands/install-hooks.js';
 import { registerConfig } from './commands/config.js';
 import { registerReview } from './commands/review.js';
+import { registerDetect } from './commands/detect.js';
 
 export const program = new Command();
 
@@ -40,6 +41,7 @@ registerRename(program);
 registerInstallHooks(program);
 registerConfig(program);
 registerReview(program);
+registerDetect(program);
 
 
 program.parse();

@@ -7,10 +7,14 @@
  * 
  * @example
  * ```typescript
- * import { ProjectIntelligenceService } from '@i18nsmith/core/project-intelligence';
+ * import { ProjectIntelligenceService, analyzeProject } from '@i18nsmith/core/project-intelligence';
  * 
+ * // Using the service
  * const service = new ProjectIntelligenceService();
  * const result = await service.analyze({ workspaceRoot: '/path/to/project' });
+ * 
+ * // Or use the standalone function
+ * const result = await analyzeProject('/path/to/project');
  * 
  * console.log(result.framework.type);        // 'next'
  * console.log(result.framework.adapter);      // 'react-i18next'
@@ -28,9 +32,9 @@ export type {
   DetectionEvidence,
   FilePatternDetection,
   ExistingSetupDetection,
-  RuntimePackageInfo,
+  PIRuntimePackageInfo,
   TranslationUsageInfo,
-  LocaleFormat,
+  PILocaleFormat,
   LocaleDetection,
   LocaleFileInfo,
   ConfidenceScores,
@@ -61,9 +65,17 @@ export {
   STORYBOOK_PATTERNS,
 } from './signatures.js';
 
-// TODO: Export service implementation once created
-// export { ProjectIntelligenceService } from './service.js';
-// export { FrameworkDetector } from './framework-detector.js';
-// export { FilePatternDetector } from './file-pattern-detector.js';
-// export { LocaleDetector } from './locale-detector.js';
-// export { ConfidenceScorer } from './confidence-scorer.js';
+// Framework Detector
+export { FrameworkDetector, detectFramework } from './framework-detector.js';
+
+// File Pattern Detector
+export { FilePatternDetector, detectFilePatterns } from './file-pattern-detector.js';
+
+// Locale Detector
+export { LocaleDetector, detectLocales } from './locale-detector.js';
+
+// Confidence Scorer
+export { ConfidenceScorer, calculateConfidence } from './confidence-scorer.js';
+
+// Main Service
+export { ProjectIntelligenceService, analyzeProject } from './service.js';
