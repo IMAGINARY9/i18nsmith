@@ -45,6 +45,9 @@ interface InitCommandOptions {
 }
 
 interface InitAnswers {
+  setupMode?: 'auto' | 'template' | 'manual';
+  template?: string;
+  confirmAuto?: boolean;
   sourceLanguage: string;
   targetLanguages: string;
   localesDir: string;
@@ -276,41 +279,83 @@ export function registerInit(program: Command) {
           return;
         }
 
+      const workspaceRoot = process.cwd();
+      let config: I18nConfig | undefined;
+
+      // Detect project intelligence early to use for suggestions
+      const intelligence = await detectProjectIntelligence(workspaceRoot);
+      const suggestedValues = intelligence?.suggestedConfig;
+
       const answers = await inquirer.prompt<InitAnswers>([
+        {
+          type: 'list',
+          name: 'setupMode',
+          message: 'How would you like to set up i18nsmith?',
+          choices: [
+            { name: 'Auto-detect (recommended) - Analyze your project and suggest optimal configuration', value: 'auto' },
+            { name: 'Use template - Choose from popular framework presets', value: 'template' },
+            { name: 'Manual setup - Configure everything manually', value: 'manual' },
+          ],
+          default: 'auto',
+        },
+        {
+          type: 'list',
+          name: 'template',
+          message: 'Which template matches your project?',
+          when: (answers) => answers.setupMode === 'template',
+          choices: [
+            { name: 'React with react-i18next', value: 'react' },
+            { name: 'Next.js App Router', value: 'next-app' },
+            { name: 'Next.js Pages Router', value: 'next-pages' },
+            { name: 'Vue 3 with vue-i18n', value: 'vue3' },
+            { name: 'Nuxt 3', value: 'nuxt3' },
+            { name: 'Svelte/SvelteKit', value: 'svelte' },
+            { name: 'Minimal setup', value: 'minimal' },
+          ],
+          default: 'react',
+        },
+
+        // Manual Configuration Questions with Smart Suggestions
         {
           type: 'input',
           name: 'sourceLanguage',
           message: 'What is the source language?',
-          default: 'en',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.sourceLanguage || 'en',
         },
         {
           type: 'input',
           name: 'targetLanguages',
           message: 'Which target languages do you need? (comma separated)',
-          default: 'fr',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.targetLanguages?.join(', ') || 'fr',
         },
         {
           type: 'input',
           name: 'localesDir',
           message: 'Where should locale files be stored?',
-          default: 'locales',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.localesDir || 'locales',
         },
         {
           type: 'input',
           name: 'include',
           message: 'Which files should be scanned? (comma separated glob patterns)',
-          default: 'src/**/*.{ts,tsx,js,jsx}, app/**/*.{ts,tsx,js,jsx}, pages/**/*.{ts,tsx,js,jsx}, components/**/*.{ts,tsx,js,jsx}',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.include?.join(', ') || 'src/**/*.{ts,tsx,js,jsx}, app/**/*.{ts,tsx,js,jsx}, pages/**/*.{ts,tsx,js,jsx}, components/**/*.{ts,tsx,js,jsx}',
         },
         {
           type: 'input',
           name: 'exclude',
           message: 'Which files should be excluded? (comma separated glob patterns)',
-          default: 'node_modules/**,**/*.test.*',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.exclude?.join(', ') || 'node_modules/**,**/*.test.*',
         },
         {
           type: 'input',
           name: 'minTextLength',
           message: 'Minimum length for translatable text?',
+          when: (answers) => answers.setupMode === 'manual',
           default: '1',
           validate: (input) => {
             const num = parseInt(input, 10);
@@ -321,6 +366,7 @@ export function registerInit(program: Command) {
           type: 'list',
           name: 'service',
           message: 'Which translation service do you want to use?',
+          when: (answers) => answers.setupMode === 'manual',
           choices: ['google', 'deepl', 'manual'],
           default: 'google',
         },
@@ -328,7 +374,7 @@ export function registerInit(program: Command) {
           type: 'input',
           name: 'translationSecretEnvVar',
           message: 'Name of the environment variable containing your translation API key',
-          when: (answers) => answers.service !== 'manual',
+          when: (answers) => answers.setupMode === 'manual' && answers.service !== 'manual',
           default: (answers: InitAnswers) =>
             answers.service === 'deepl' ? 'DEEPL_API_KEY' : 'GOOGLE_TRANSLATE_API_KEY',
         },
@@ -336,168 +382,217 @@ export function registerInit(program: Command) {
           type: 'list',
           name: 'adapterPreset',
           message: 'How should transformed components access translations?',
+          when: (answers) => answers.setupMode === 'manual',
           choices: [
             { name: 'react-i18next (default)', value: 'react-i18next' },
+            { name: 'vue-i18n', value: 'vue-i18n' },
+            { name: 'svelte-i18n', value: 'svelte-i18n' },
+            { name: 'next-intl', value: 'next-intl' },
             { name: 'Custom hook/module', value: 'custom' },
           ],
-          default: 'react-i18next',
+          default: suggestedValues?.translationAdapter?.module || 'react-i18next',
         },
         {
           type: 'input',
           name: 'customAdapterModule',
           message: 'Provide the module specifier for your translation hook (e.g. "@/contexts/translation-context")',
-          when: (answers) => answers.adapterPreset === 'custom',
+          when: (answers) => answers.setupMode === 'manual' && answers.adapterPreset === 'custom',
           validate: (input) => (input && input.trim().length > 0 ? true : 'Module specifier cannot be empty'),
         },
         {
           type: 'input',
           name: 'customAdapterHook',
           message: 'Name of the hook/function to import (default: useTranslation)',
-          when: (answers) => answers.adapterPreset === 'custom',
+          when: (answers) => answers.setupMode === 'manual' && answers.adapterPreset === 'custom',
           default: 'useTranslation',
-        },
-        {
-          type: 'confirm',
-          name: 'scaffoldAdapter',
-          message: 'Scaffold a lightweight translation context file?',
-          when: (answers) => answers.adapterPreset === 'custom',
-          default: true,
-        },
-        {
-          type: 'input',
-          name: 'scaffoldAdapterPath',
-          message: 'Path to scaffold the translation context file (relative to project root)',
-          when: (answers) => answers.scaffoldAdapter,
-          default: 'src/contexts/translation-context.tsx',
-        },
-        {
-          type: 'confirm',
-          name: 'scaffoldReactRuntime',
-          message: 'Scaffold i18next initializer and provider?',
-          when: (answers) => answers.adapterPreset === 'react-i18next',
-          default: true,
-        },
-        {
-          type: 'input',
-          name: 'reactI18nPath',
-          message: 'Path for i18next initializer (e.g. src/lib/i18n.ts)',
-          when: (answers) => answers.scaffoldReactRuntime,
-          default: 'src/lib/i18n.ts',
-        },
-        {
-          type: 'input',
-          name: 'reactProviderPath',
-          message: 'Path for I18nProvider component (e.g. src/components/i18n-provider.tsx)',
-          when: (answers) => answers.scaffoldReactRuntime,
-          default: 'src/components/i18n-provider.tsx',
         },
         {
           type: 'input',
           name: 'keyNamespace',
           message: 'Namespace prefix for generated keys',
-          default: 'common',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.keyGeneration?.namespace || 'common',
         },
         {
           type: 'input',
           name: 'shortHashLen',
           message: 'Length of short hash suffix for keys',
-          default: '6',
+          when: (answers) => answers.setupMode === 'manual',
+          default: suggestedValues?.keyGeneration?.shortHashLen?.toString() || '6',
           validate: (input) => {
             const num = parseInt(input, 10);
             return !isNaN(num) && num > 0 ? true : 'Please enter a positive number';
           },
         },
-        {
-          type: 'confirm',
-          name: 'seedTargetLocales',
-          message: 'Seed target locale files with empty values?',
-          default: false,
-        },
       ]);
 
-      const adapterModule =
-        answers.adapterPreset === 'custom'
-          ? answers.customAdapterModule?.trim()
-          : 'react-i18next';
-      const adapterHook =
-        answers.adapterPreset === 'custom'
-          ? (answers.customAdapterHook?.trim() || 'useTranslation')
-          : 'useTranslation';
 
-      const translationConfig: TranslationConfig =
-        answers.service === 'manual'
-          ? { provider: 'manual' }
-          : {
-              provider: answers.service,
-              secretEnvVar: answers.translationSecretEnvVar?.trim() || undefined,
-              concurrency: 5,
-            };
-
-      const config: I18nConfig = {
-        version: 1 as const,
-        sourceLanguage: answers.sourceLanguage,
-        targetLanguages: parseGlobList(answers.targetLanguages),
-        localesDir: answers.localesDir,
-        include: parseGlobList(answers.include),
-        exclude: parseGlobList(answers.exclude),
-        minTextLength: parseInt(answers.minTextLength, 10),
-        translation: translationConfig,
-        translationAdapter: {
-          module: adapterModule ?? 'react-i18next',
-          hookName: adapterHook,
-        },
-        keyGeneration: {
-          namespace: answers.keyNamespace,
-          shortHashLen: parseInt(answers.shortHashLen, 10),
-        },
-        seedTargetLocales: answers.seedTargetLocales,
-      };
-
-        const workspaceRoot = process.cwd();
-        const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
-        if (mergeDecision?.aborted) {
-          console.log(chalk.yellow('Aborting init to avoid overwriting existing i18n assets. Re-run with --merge to bypass.'));
+      if (answers.setupMode === 'auto') {
+        if (!intelligence) {
+          console.log(chalk.yellow('Could not analyze project. Please use Manual setup.'));
           return;
+        } else {
+          const { framework, locales, filePatterns, confidence } = intelligence;
+          
+          // Report detection results
+          if (framework.type !== 'unknown') {
+            console.log(chalk.green(`  ✓ Framework: ${framework.type}`));
+          }
+          if (framework.adapter) {
+            console.log(chalk.green(`  ✓ i18n Adapter: ${framework.adapter}`));
+          }
+          if (locales.existingFiles.length > 0) {
+            const langs = [locales.sourceLanguage, ...locales.targetLanguages].filter(Boolean);
+            console.log(chalk.green(`  ✓ Locales: ${langs.join(', ')}`));
+          }
+          
+          const confidencePercent = Math.round(confidence.overall * 100);
+          const confidenceColor = confidence.level === 'high' ? chalk.green : confidence.level === 'medium' ? chalk.yellow : chalk.red;
+          console.log(confidenceColor(`  Detection confidence: ${confidencePercent}% (${confidence.level})`));
+
+          // Create config from intelligence
+          config = {
+            version: 1 as const,
+            sourceLanguage: locales.sourceLanguage || 'en',
+            targetLanguages: locales.targetLanguages,
+            localesDir: locales.localesDir || 'locales',
+            include: filePatterns.include,
+            exclude: filePatterns.exclude,
+            minTextLength: 1,
+            translation: { provider: 'manual' },
+            translationAdapter: {
+              module: framework.adapter || 'react-i18next',
+              hookName: framework.hookName || 'useTranslation',
+            },
+            keyGeneration: {
+              namespace: 'common',
+              shortHashLen: 6,
+            },
+            seedTargetLocales: false,
+          };
+        }
+      }
+
+      if (answers.setupMode === 'template') {
+        // Use template
+        console.log(chalk.blue(`📋 Applying ${answers.template} template...`));
+        const service = new ProjectIntelligenceService();
+        // Uses pre-detected intelligence from outer scope
+        const suggestedConfig = service.applyTemplate(answers.template!, intelligence || {
+          framework: { type: 'unknown', adapter: 'react-i18next', hookName: 'useTranslation', features: [], confidence: 0, evidence: [] },
+          locales: { sourceLanguage: 'en', targetLanguages: [], localesDir: 'locales', format: 'flat', existingFiles: [], existingKeyCount: 0, confidence: 0 },
+          filePatterns: { include: ['**/*.{ts,tsx,js,jsx}'], exclude: ['node_modules/**', 'dist/**'], sourceDirectories: [], hasTypeScript: false, hasJsx: false, hasVue: false, hasSvelte: false, sourceFileCount: 0, confidence: 0 },
+          existingSetup: { hasExistingConfig: false, hasExistingLocales: false, hasI18nProvider: false, runtimePackages: [], translationUsage: { hookName: 'useTranslation', translationIdentifier: 't', filesWithHooks: 0, translationCalls: 0, exampleFiles: [] } },
+          confidence: { framework: 0, filePatterns: 0, existingSetup: 0, locales: 0, overall: 0, level: 'low' },
+          warnings: [],
+          recommendations: [],
+          suggestedConfig: {
+            sourceLanguage: 'en',
+            targetLanguages: [],
+            localesDir: 'locales',
+            include: ['**/*.{ts,tsx,js,jsx}'],
+            exclude: ['node_modules/**', 'dist/**'],
+            translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+            keyGeneration: { namespace: 'common', shortHashLen: 6 }
+          },
+        });
+
+        config = {
+          version: 1 as const,
+          ...suggestedConfig,
+          minTextLength: 1,
+          translation: { provider: 'manual' },
+          seedTargetLocales: false,
+        };
+      }
+
+      if (answers.setupMode === 'manual' || !config) {
+        // Manual setup - use the existing prompts
+        console.log(chalk.blue('🔧 Manual configuration...'));
+        
+        const adapterModule =
+          answers.adapterPreset === 'custom'
+            ? answers.customAdapterModule?.trim()
+            : 'react-i18next';
+        const adapterHook =
+          answers.adapterPreset === 'custom'
+            ? (answers.customAdapterHook?.trim() || 'useTranslation')
+            : 'useTranslation';
+
+        const translationConfig: TranslationConfig =
+          answers.service === 'manual'
+            ? { provider: 'manual' }
+            : {
+                provider: answers.service,
+                secretEnvVar: answers.translationSecretEnvVar?.trim() || undefined,
+                concurrency: 5,
+              };
+
+        config = {
+          version: 1 as const,
+          sourceLanguage: answers.sourceLanguage,
+          targetLanguages: parseGlobList(answers.targetLanguages),
+          localesDir: answers.localesDir,
+          include: parseGlobList(answers.include),
+          exclude: parseGlobList(answers.exclude),
+          minTextLength: parseInt(answers.minTextLength, 10),
+          translation: translationConfig,
+          translationAdapter: {
+            module: adapterModule ?? 'react-i18next',
+            hookName: adapterHook,
+          },
+          keyGeneration: {
+            namespace: answers.keyNamespace,
+            shortHashLen: parseInt(answers.shortHashLen, 10),
+          },
+          seedTargetLocales: answers.seedTargetLocales,
+        };
+      }
+
+      const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
+      if (mergeDecision?.aborted) {
+        console.log(chalk.yellow('Aborting init to avoid overwriting existing i18n assets. Re-run with --merge to bypass.'));
+        return;
+      }
+
+      const configPath = path.join(workspaceRoot, 'i18n.config.json');
+
+      try {
+        await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+        console.log(chalk.green(`\nConfiguration created at ${configPath}`));
+
+        // Ensure .gitignore has i18nsmith artifacts
+        const gitignoreResult = await ensureGitignore(workspaceRoot);
+        if (gitignoreResult.updated) {
+          console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
         }
 
-        const configPath = path.join(workspaceRoot, 'i18n.config.json');
-
-        try {
-          await fs.writeFile(configPath, JSON.stringify(config, null, 2));
-          console.log(chalk.green(`\nConfiguration created at ${configPath}`));
-
-          // Ensure .gitignore has i18nsmith artifacts
-          const gitignoreResult = await ensureGitignore(workspaceRoot);
-          if (gitignoreResult.updated) {
-            console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
+        if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
+          try {
+            await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
+              localesDir: answers.localesDir,
+            });
+            console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
+          } catch (error) {
+            console.warn(chalk.yellow(`Skipping adapter scaffold: ${(error as Error).message}`));
           }
+        }
 
-          if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
-            try {
-              await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
-                localesDir: answers.localesDir,
-              });
-              console.log(chalk.green(`Translation context scaffolded at ${answers.scaffoldAdapterPath}`));
-            } catch (error) {
-              console.warn(chalk.yellow(`Skipping adapter scaffold: ${(error as Error).message}`));
-            }
-          }
-
-          if (
-            answers.adapterPreset === 'react-i18next' &&
-            answers.scaffoldReactRuntime &&
-            answers.reactI18nPath &&
-            answers.reactProviderPath
-          ) {
-            try {
-              await scaffoldI18next(
-                answers.reactI18nPath,
-                answers.reactProviderPath,
-                answers.sourceLanguage,
-                answers.localesDir
-              );
-              console.log(chalk.green('react-i18next runtime scaffolded:'));
-              console.log(chalk.green(`  • ${answers.reactI18nPath}`));
+        if (
+          answers.adapterPreset === 'react-i18next' &&
+          answers.scaffoldReactRuntime &&
+          answers.reactI18nPath &&
+          answers.reactProviderPath
+        ) {
+          try {
+            await scaffoldI18next(
+              answers.reactI18nPath,
+              answers.reactProviderPath,
+              answers.sourceLanguage,
+              answers.localesDir
+            );
+            console.log(chalk.green('react-i18next runtime scaffolded:'));
+            console.log(chalk.green(`  • ${answers.reactI18nPath}`));
               console.log(chalk.green(`  • ${answers.reactProviderPath}`));
               console.log(chalk.blue('\nWrap your app with the provider (e.g. Next.js providers.tsx):'));
               console.log(

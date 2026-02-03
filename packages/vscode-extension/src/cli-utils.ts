@@ -61,9 +61,13 @@ function buildCommandLine(raw: string, cliPath?: string): string {
 
   const rest = raw.slice('i18nsmith'.length).trim();
   if (cliPath) {
-    return rest ? `node "${cliPath}" ${rest}` : `node "${cliPath}"`;
+    // Only prefix with node for javascript files
+    const needsNode = /\.(js|cjs|mjs)$/i.test(cliPath);
+    const cmd = needsNode ? `node "${cliPath}"` : `"${cliPath}"`;
+    return rest ? `${cmd} ${rest}` : cmd;
   }
-  return rest ? `npx i18nsmith@latest ${rest}` : 'npx i18nsmith@latest';
+  // Prefer local version if available, otherwise npx will fetch latest
+  return rest ? `npx i18nsmith ${rest}` : 'npx i18nsmith';
 }
 
 function sanitizeCliPath(value: string | undefined): string {

@@ -112,6 +112,10 @@
         "title": "i18nsmith: Export Missing Translations"
       },
       {
+        "command": "i18nsmith.init",
+        "title": "i18nsmith: Initialize Configuration (Auto-detect, Templates, Manual)"
+      },
+      {
         "command": "i18nsmith.applyPreviewPlan",
         "title": "i18nsmith: Apply Preview Plan"
       }
@@ -138,12 +142,12 @@
     "viewsWelcome": [
       {
         "view": "i18nsmith.quickActionsView",
-        "contents": "Run the health check to populate quick actions.\\n[Run Health Check](command:i18nsmith.check)",
+        "contents": "Run the health check to populate quick actions.\n[Run Health Check](command:i18nsmith.check)",
         "when": "i18nsmith.runtimeReady && !i18nsmith.quickActions.hasActions"
       },
       {
         "view": "i18nsmith.quickActionsView",
-        "contents": "Initialize the i18n runtime to unlock quick actions.\\n[Open Quick Actions](command:i18nsmith.actions)",
+        "contents": "Initialize the i18n runtime to unlock quick actions.\n[Open Quick Actions](command:i18nsmith.actions)",
         "when": "!i18nsmith.runtimeReady"
       }
     ],
@@ -187,7 +191,7 @@
         "i18nsmith.cliPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the i18nsmith CLI entry point (e.g., /path/to/i18nsmith/packages/cli/dist/index.js). Leave empty to use npx i18nsmith."
+          "description": "Path to the i18nsmith CLI entry point (e.g., /path/to/i18nsmith/packages/cli/dist/index.js). Leave empty to auto-detect local CLI or use npx i18nsmith."
         },
         "i18nsmith.reportPath": {
           "type": "string",
