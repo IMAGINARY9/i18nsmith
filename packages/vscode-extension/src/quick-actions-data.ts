@@ -3,6 +3,7 @@ import type { SuspiciousKeyWarning } from '@i18nsmith/core';
 import type { CheckReport } from './diagnostics';
 import { summarizeReportIssues } from './report-utils';
 import { parsePreviewableCommand, type PreviewableCommand } from './preview-intents';
+import type { ScanResult } from './scanner';
 
 export interface QuickActionDefinition {
   id: string;
@@ -28,6 +29,7 @@ export interface QuickActionSection {
 export interface QuickActionBuildRequest {
   report: CheckReport | null;
   hasSelection: boolean;
+  scanResult?: ScanResult | null;
 }
 
 export interface QuickActionMetadata {
@@ -86,6 +88,46 @@ const MAX_SUSPICIOUS_CHILDREN = 25;
 
 export function buildQuickActionModel(request: QuickActionBuildRequest): QuickActionBuildOutput {
   const report = request.report;
+  const scanResult = request.scanResult;
+
+  // Check if scan failed due to missing config
+  const hasConfigError = scanResult && !scanResult.success && 
+    scanResult.error?.includes('Config file not found');
+
+  if (hasConfigError) {
+    // Show only initialize config action when no config is found
+    return {
+      sections: [{
+        title: '⚙️ Setup Required',
+        actions: [
+          createQuickAction({
+            id: 'initialize-config',
+            icon: ICONS.scaffold,
+            title: 'Initialize i18n Configuration',
+            description: 'Set up i18nsmith with auto-detection, templates, or manual config.',
+            detail: 'Choose from auto-detection, popular framework templates (React, Vue, Next.js, etc.), or manual setup.',
+            command: 'i18nsmith.init',
+          })!,
+          createQuickAction({
+            id: 'open-output-channel',
+            icon: ICONS.terminal,
+            title: 'Show i18nsmith Output Channel',
+            description: 'Review CLI output and diagnostics.',
+            command: 'i18nsmith.showOutput',
+            longRunning: false,
+          })!
+        ]
+      }],
+      metadata: {
+        issueCount: 0,
+        suggestionsCount: 0,
+        driftStats: null,
+        runtimeReady: false,
+        suspiciousWarnings: [],
+      }
+    };
+  }
+
   const summary = summarizeReportIssues(report);
   const actionableItems = summary.items;
   const driftStats = getDriftStatistics(report);

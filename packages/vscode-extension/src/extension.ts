@@ -76,6 +76,7 @@ let cliService: CliService;
 let quickActionsProvider: QuickActionsProvider | null = null;
 let quickActionSelectionState = false;
 let configurationService: ConfigurationService | null = null;
+let lastScanResult: ScanResult | null = null;
 
 function logVerbose(message: string) {
   const config = vscode.workspace.getConfiguration("i18nsmith");
@@ -316,8 +317,14 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Connect scanner to diagnostics refresh
-  services.smartScanner.onScanComplete(() => {
+  services.smartScanner.onScanComplete((result) => {
+    lastScanResult = result;
     services.hoverProvider.clearCache();
+    if (!result.success) {
+      // Clear diagnostics when scan fails to avoid showing stale results
+      services.diagnosticsManager.clear();
+      refreshQuickActionsModel({ silent: true });
+    }
     services.reportWatcher.refresh();
   });
 
@@ -395,6 +402,9 @@ export function activate(context: vscode.ExtensionContext) {
         text
       );
     }),
+    vscode.commands.registerCommand("i18nsmith.init", async () => {
+      await cliService.runCliCommand('i18nsmith init', { interactive: true });
+    }),
     vscode.commands.registerCommand("i18nsmith.showOutput", () => {
       services.smartScanner.showOutput();
     })
@@ -428,6 +438,7 @@ function refreshQuickActionsModel(
   const model = buildQuickActionModel({
     report,
     hasSelection: getQuickActionSelectionState(),
+    scanResult: lastScanResult,
   });
 
   if (quickActionsProvider) {

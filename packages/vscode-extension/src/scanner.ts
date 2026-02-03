@@ -311,11 +311,22 @@ export class SmartScanner implements vscode.Disposable {
     }
 
     const reportPath = config.get<string>('reportPath', '.i18nsmith/check-report.json');
+    const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
     const commandParts = ['i18nsmith', 'check', '--json', '--report', quoteCliArg(reportPath)];
     const humanReadable = commandParts.join(' ').trim();
 
     this.log(`[Scanner] Running: ${humanReadable}`);
     this.log(`[Scanner] CWD: ${workspaceFolder.uri.fsPath}`);
+
+    // Delete any existing report file to avoid using stale data
+    try {
+      if (fs.existsSync(fullReportPath)) {
+        fs.unlinkSync(fullReportPath);
+        this.log(`[Scanner] Cleared existing report file`);
+      }
+    } catch (error) {
+      this.log(`[Scanner] Failed to clear existing report: ${error}`);
+    }
 
     const stderrChunks: string[] = [];
 
@@ -339,7 +350,6 @@ export class SmartScanner implements vscode.Disposable {
     const timestamp = new Date();
     const aggregatedStderr = stderrChunks.join('');
 
-    const fullReportPath = path.join(workspaceFolder.uri.fsPath, reportPath);
     let reportExists = false;
     let reportSummary: ReportMetrics | null = null;
 
