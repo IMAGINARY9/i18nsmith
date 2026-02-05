@@ -5,7 +5,7 @@ import { I18nConfig } from './config.js';
 import { DEFAULT_ADAPTER_MODULE } from './config/defaults.js';
 import { ActionableItem } from './actionable.js';
 
-const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
+const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx,vue}'];
 const DEFAULT_RUNTIME_DEPENDENCIES = [
   'react-i18next',
   'i18next',

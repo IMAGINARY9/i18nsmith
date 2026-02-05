@@ -3,7 +3,7 @@
     <h1>{{ title }}</h1>
     <p>{{ message }}</p>
     <button @click="handleClick">{{ buttonText }}</button>
-    <input v-model="inputValue" placeholder="Enter text" />
+    <input v-model="inputValue" :placeholder="$t('common.test.enter-text.f772d1')" />
   </div>
 </template>
 

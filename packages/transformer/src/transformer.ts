@@ -302,12 +302,41 @@ export class Transformer {
     emitProgress: () => void,
     skippedFiles: FileTransformRecord[],
     changedFiles: Set<string>,
-    write: boolean
+    write: boolean,
+    runOptions: TransformRunOptions,
+    sourceDiffs?: SourceFileDiffEntry[]
   ): Promise<void> {
     // Vue file processing - content-based transformation
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const { content: newContent, didMutate } = await (this.writers.find(w => w instanceof VueWriter) as VueWriter).transform(filePath, content, plans);
+      const originalContent = await fs.readFile(filePath, 'utf-8');
+      
+      // Create a copy of plans for transformation (VueWriter mutates status)
+      const { content: newContent, didMutate } = await (this.writers.find(w => w instanceof VueWriter) as VueWriter).transform(filePath, originalContent, plans);
+
+      // Generate source diffs if requested
+      if (runOptions.diff && didMutate && sourceDiffs) {
+        const relativePath = path.relative(this.workspaceRoot, filePath);
+        const { createPatch } = await import('diff');
+        const diff = createPatch(relativePath, originalContent, newContent);
+        
+        // Count the number of changes
+        const lines = diff.split('\n');
+        let changes = 0;
+        for (const line of lines) {
+          if ((line.startsWith('+') || line.startsWith('-')) && 
+              !line.startsWith('+++') && 
+              !line.startsWith('---')) {
+            changes++;
+          }
+        }
+
+        sourceDiffs.push({
+          path: filePath,
+          relativePath,
+          diff,
+          changes,
+        });
+      }
 
       if (didMutate && write) {
         await fs.writeFile(filePath, newContent, 'utf-8');
@@ -317,14 +346,42 @@ export class Transformer {
 
       for (const plan of plans) {
         progressState.processed += 1;
-        if (didMutate && write) {
-          plan.status = 'applied';
+        const wasExisting = plan.status === 'existing';
+
+        // The VueWriter.transform already sets status to 'applied' for each candidate it processes
+        // Check if this plan was successfully transformed
+        if (plan.status === 'applied') {
           progressState.applied += 1;
-        } else {
+          
+          // Update locale store with the new key
+          if (write && !wasExisting) {
+            const sourceValue =
+              (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
+              plan.text ??
+              generateValueFromKey(plan.suggestedKey);
+            await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);
+
+            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
+            if (shouldMigrate) {
+              const allTargetLocales = new Set(this.targetLocales);
+              const stored = await this.localeStore.getStoredLocales();
+              stored.forEach((l) => allTargetLocales.add(l));
+              allTargetLocales.delete(this.sourceLocale);
+              for (const locale of allTargetLocales) {
+                const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
+                await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
+              }
+            }
+          }
+        } else if (plan.status !== 'skipped') {
+          // If not applied and not already skipped, mark as skipped
           plan.status = 'skipped';
-          plan.reason = write ? 'No changes needed' : 'Dry run - no changes made';
+          plan.reason = 'Could not locate text in file';
+          progressState.skipped += 1;
+        } else {
           progressState.skipped += 1;
         }
+
         emitProgress();
       }
     } catch (error) {
@@ -457,7 +514,7 @@ export class Transformer {
         }
         // Handle Vue files (content-based)
         else if (writer instanceof VueWriter) {
-          await this.processVueFile(filePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write);
+          await this.processVueFile(filePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, runOptions, sourceDiffs);
         }
       }
     }

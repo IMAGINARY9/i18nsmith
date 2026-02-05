@@ -16,11 +16,12 @@ import { createDefaultProject } from './project-factory.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview, SourceFileDiffEntry } from './diff-utils.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
-import type {
-  TranslationReference,
-  DynamicKeyReason,
-  DynamicKeyWarning,
-  ReferenceCacheFile,
+import {
+  ReferenceExtractor,
+  type TranslationReference,
+  type DynamicKeyReason,
+  type DynamicKeyWarning,
+  type ReferenceCacheFile,
 } from './reference-extractor.js';
 import {
   type ReferenceCacheEntry,
@@ -175,6 +176,7 @@ export class Syncer {
   private readonly referenceCachePath: string;
   private readonly suspiciousKeyPolicy: SuspiciousKeyPolicy;
   private readonly keyValidator: KeyValidator;
+  private readonly extractor: ReferenceExtractor;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -192,6 +194,11 @@ export class Syncer {
       : DEFAULT_PLACEHOLDER_FORMATS;
     this.placeholderPatterns = buildPlaceholderPatterns(placeholderFormats);
     this.translationIdentifier = options.translationIdentifier ?? syncOptions.translationIdentifier ?? 't';
+    this.extractor = new ReferenceExtractor(config, {
+      workspaceRoot: this.workspaceRoot,
+      project: this.project,
+      translationIdentifier: this.translationIdentifier,
+    });
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
     this.defaultValidateInterpolations = syncOptions.validateInterpolations ?? false;
@@ -770,8 +777,15 @@ export class Syncer {
         fileWarnings = cachedEntry.dynamicKeyWarnings;
         nextCacheEntries[relativePath] = cachedEntry;
       } else {
-        const sourceFile = this.project.addSourceFileAtPath(absolutePath);
-        const extracted = this.extractReferencesFromFile(sourceFile);
+        let extracted: { references: TranslationReference[]; dynamicKeyWarnings: DynamicKeyWarning[] };
+        
+        if (absolutePath.endsWith('.vue')) {
+          extracted = await this.extractor.extractFromVueFile(absolutePath);
+        } else {
+          const sourceFile = this.project.addSourceFileAtPath(absolutePath);
+          extracted = this.extractor.extractFromFile(sourceFile);
+        }
+        
         fileReferences = extracted.references;
         fileWarnings = extracted.dynamicKeyWarnings;
         nextCacheEntries[relativePath] = {

@@ -8,6 +8,8 @@ import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 import { CliError, withErrorHandling } from '../utils/errors.js';
+import inquirer from 'inquirer';
+import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
 
 interface TransformOptions {
   config?: string;
@@ -224,6 +226,44 @@ export function registerTransform(program: Command) {
         if (projectRoot !== cwd) {
           console.log(chalk.gray(`Config found at ${path.relative(cwd, configPath)}`));
           console.log(chalk.gray(`Using project root: ${projectRoot}\n`));
+        }
+
+        // Proactively check if Vue files are targeted but the parser is missing
+        const includesVue = config.include?.some(pattern => pattern.includes('.vue')) ?? false;
+        let isVueParserAvailable = false;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          require.resolve('vue-eslint-parser', { paths: [projectRoot, __dirname] });
+          isVueParserAvailable = true;
+        } catch {
+          isVueParserAvailable = false;
+        }
+
+        if (includesVue && !isVueParserAvailable) {
+          console.log(chalk.yellow('⚠️  Vue files detected but "vue-eslint-parser" is not installed.'));
+          console.log(chalk.yellow('   Verification of Vue templates might be incomplete or fail.'));
+          
+          if (process.stdout.isTTY) {
+            const { install } = await inquirer.prompt<{ install: boolean }>([
+              {
+                type: 'confirm',
+                name: 'install',
+                message: 'Do you want to install "vue-eslint-parser" (dev dependency) now?',
+                default: true,
+              },
+            ]);
+
+            if (install) {
+              const pm = await detectPackageManager(projectRoot);
+              const cmd = pm === 'npm' ? 'npm install --save-dev vue-eslint-parser' : `${pm} add -D vue-eslint-parser`;
+              console.log(chalk.gray(`> ${cmd}`));
+              // We use installDependencies helper but need to pass dev flag args if not flexible
+              // The helper seems simple: const args = manager === 'npm' ? ['install', ...deps] : ['add', ...deps];
+              // So for dev we need to include -D in deps
+              await installDependencies(pm, ['-D', 'vue-eslint-parser'], projectRoot);
+              console.log(chalk.green('✔ Installed. Continuing...'));
+            }
+          }
         }
         
         const transformer = new Transformer(config, { workspaceRoot: projectRoot });

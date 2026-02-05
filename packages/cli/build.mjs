@@ -25,7 +25,7 @@ await esbuild.build({
   target: ['node18'],
   outfile: 'dist/index.cjs',
   // Produce a self-contained bundle for npx installs
-  external: [],
+  external: ['vue-eslint-parser', 'eslint', 'espree'],
   sourcemap: false,
   minify: false,
 });

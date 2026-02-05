@@ -31,5 +31,17 @@
     "prettier": "^3.0.0",
     "typescript": "^5.9.3",
     "vitest": "^0.34.0"
-  }
+  },
+  "dependencies": {
+    "semver": "7.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pnpm": {
+    "overrides": {
+      "semver": "7.6.0"
+    }
+  },
+  "packageManager": "pnpm@10.5.1"
 }

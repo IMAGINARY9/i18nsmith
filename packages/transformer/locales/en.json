@@ -1,4 +1,9 @@
 {
   "common.comp.hello-world.2a9928": "Hello World",
-  "common.page.hello-world.c8a25d": "Hello World"
+  "common.page.hello-world.c8a25d": "Hello World",
+  "common.test.click-me.00d77a": "Click me",
+  "common.test.enter-text.f772d1": "Enter text",
+  "common.test.testcomponent.b72afc": "TestComponent",
+  "common.test.this-is-a-test.dfbeab": "This is a test component",
+  "common.test.welcome-to-vue-js.793ae9": "Welcome to Vue.js"
 }
