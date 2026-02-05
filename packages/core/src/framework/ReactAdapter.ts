@@ -13,12 +13,7 @@ import { createScannerProject } from '../project-factory.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../scanner.js';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from './types.js';
-
-const LETTER_REGEX_GLOBAL = /\p{L}/gu;
-const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
-const HTML_ENTITY_PATTERN = /^&[a-z][a-z0-9-]*;$/i;
-const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
-const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig } from './utils/text-filters.js';
 
 /**
  * React Framework Adapter
@@ -49,10 +44,10 @@ export class ReactAdapter implements FrameworkAdapter {
   constructor(config: I18nConfig, workspaceRoot: string) {
     this.config = config;
     this.workspaceRoot = workspaceRoot;
-    this.allowPatterns = this.compilePatterns(
+    this.allowPatterns = compilePatterns(
       this.config.extraction?.allowPatterns
     );
-    this.denyPatterns = this.compilePatterns(
+    this.denyPatterns = compilePatterns(
       this.config.extraction?.denyPatterns
     );
     this.preserveNewlines = this.config.extraction?.preserveNewlines ?? false;
@@ -225,50 +220,20 @@ export class ReactAdapter implements FrameworkAdapter {
   }
 
   private shouldExtractText(text: string): boolean {
-    if (!text || text.length === 0) return false;
-
-    // Skip if matches deny patterns
-    if (this.denyPatterns.some(pattern => pattern.test(text))) {
-      return false;
-    }
-
-    // Allow if matches allow patterns
-    if (this.allowPatterns.length > 0 && !this.allowPatterns.some(pattern => pattern.test(text))) {
-      return false;
-    }
-
-    // Skip single characters
-    if (text.length === 1) return false;
-
-    // Skip HTML entities
-    if (HTML_ENTITY_PATTERN.test(text)) return false;
-
-    // Skip repeated symbols
-    if (REPEATED_SYMBOL_PATTERN.test(text)) return false;
-
-    // Skip hex colors
-    if (HEX_COLOR_PATTERN.test(text)) return false;
-
-    // Must contain at least one letter
-    if (!LETTER_REGEX_GLOBAL.test(text)) return false;
-
-    return true;
+    const config: TextFilterConfig = {
+      allowPatterns: this.allowPatterns,
+      denyPatterns: this.denyPatterns,
+      skipHexColors: true, // React often has color values that shouldn't be translated
+    };
+    return shouldExtractText(text, config).shouldExtract;
   }
 
   private generateKey(text: string): string {
-    // Simple key generation - in real implementation this would be more sophisticated
-    return text.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
+    return generateKey(text, 'snake');
   }
 
   private hashText(text: string): string {
-    // Simple hash for demonstration
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash).toString(36);
+    return hashText(text);
   }
 
   private findNodeByPosition(sourceFile: SourceFile, candidate: TransformCandidate): Node | null {

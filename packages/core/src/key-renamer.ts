@@ -564,8 +564,12 @@ export class KeyRenamer {
           return p.replace(/\.(ts|tsx|js|jsx)$/, '.vue');
         }
         if (p.includes('*.{')) {
-          // Add .vue to existing extensions if pattern supports multiple
-          return p.replace(/\.{([^}]+)}/, '.{$1,vue}');
+          // Replace extensions with just .vue
+          return p.replace(/\.{[^}]+}/, '.vue');
+        }
+        // For other patterns, add .vue extension
+        if (p.includes('*') && !p.includes('.vue')) {
+          return p.replace(/(\*\*\/\*+)(.*)$/, '$1.vue');
         }
         return p;
       });

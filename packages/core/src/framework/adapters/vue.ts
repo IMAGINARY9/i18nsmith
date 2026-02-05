@@ -3,6 +3,7 @@ import MagicString from 'magic-string';
 import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
+import { shouldExtractText, generateKey, hashText, compilePatterns, escapeRegExp, type TextFilterConfig } from '../utils/text-filters.js';
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
@@ -114,10 +115,10 @@ export class VueAdapter implements FrameworkAdapter {
   constructor(config: I18nConfig, workspaceRoot: string) {
     this.config = config;
     this.workspaceRoot = workspaceRoot;
-    this.allowPatterns = this.compilePatterns(
+    this.allowPatterns = compilePatterns(
       this.config.extraction?.allowPatterns
     );
-    this.denyPatterns = this.compilePatterns(
+    this.denyPatterns = compilePatterns(
       this.config.extraction?.denyPatterns
     );
     this.preserveNewlines = this.config.extraction?.preserveNewlines ?? false;
@@ -389,49 +390,20 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private shouldExtractText(text: string): boolean {
-    if (!text || text.length === 0) return false;
-
-    // Skip if matches deny patterns
-    if (this.denyPatterns.some(pattern => pattern.test(text))) {
-      return false;
-    }
-
-    // Allow if matches allow patterns
-    if (this.allowPatterns.length > 0 && !this.allowPatterns.some(pattern => pattern.test(text))) {
-      return false;
-    }
-
-    // Skip single characters
-    if (text.length === 1) return false;
-
-    // Skip HTML entities
-    if (HTML_ENTITY_PATTERN.test(text)) return false;
-
-    // Skip repeated symbols
-    if (REPEATED_SYMBOL_PATTERN.test(text)) return false;
-
-    // Skip if no letters
-    if (!LETTER_REGEX_GLOBAL.test(text)) return false;
-
-    return true;
+    const config: TextFilterConfig = {
+      allowPatterns: this.allowPatterns,
+      denyPatterns: this.denyPatterns,
+      skipHexColors: false, // Vue doesn't typically have hex colors in templates
+    };
+    return shouldExtractText(text, config).shouldExtract;
   }
 
   private generateKey(text: string): string {
-    // Simple key generation - could be enhanced
-    return text.toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .substring(0, 50);
+    return generateKey(text, 'snake', 50);
   }
 
   private hashText(text: string): string {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash).toString(36);
+    return hashText(text);
   }
 
   private escapeRegExp(string: string): string {
