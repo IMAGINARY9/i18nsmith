@@ -202,10 +202,7 @@ export class VueParser implements FileParser {
       // Extract candidates from script (if it exists)
       if (ast.body) {
         for (const node of ast.body) {
-          if (node.type === 'ExportDefaultDeclaration' && node.declaration.type === 'ObjectExpression') {
-            // Vue component object
-            this.extractFromScript(node.declaration, content, filePath, candidates);
-          }
+          this.extractFromScript(node, content, filePath, candidates);
         }
       }
     } catch (error) {
@@ -345,32 +342,23 @@ export class VueParser implements FileParser {
       this.addCandidate('call-expression', node.value, node.loc, filePath, candidates);
     }
 
-    // Data function handling moved to properties loop above
-
-    // Walk properties
-    if (node.properties) {
-      for (const prop of node.properties) {
-        
-        // Handle data() function specifically
-        if (prop.key && prop.key.name === 'data' && prop.value && prop.value.type === 'FunctionExpression') {
-          const dataFunction = prop.value;
-          if (dataFunction.body && dataFunction.body.body) {
-            for (const statement of dataFunction.body.body) {
-              if (statement.type === 'ReturnStatement' && statement.argument && statement.argument.type === 'ObjectExpression') {
-                this.walkScriptNode(statement.argument, content, filePath, candidates);
-              }
-            }
-          }
-        } else {
-          this.walkScriptNode(prop.value, content, filePath, candidates);
-        }
+    // Generic AST traversal for script nodes
+    for (const value of Object.values(node)) {
+      if (!value || value === node) {
+        continue;
       }
-    }
 
-    // Walk children
-    if (node.children) {
-      for (const child of node.children) {
-        this.walkScriptNode(child, content, filePath, candidates);
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (entry && typeof entry === 'object' && 'type' in entry) {
+            this.walkScriptNode(entry, content, filePath, candidates);
+          }
+        }
+        continue;
+      }
+
+      if (typeof value === 'object' && 'type' in value) {
+        this.walkScriptNode(value, content, filePath, candidates);
       }
     }
   }
@@ -382,21 +370,65 @@ export class VueParser implements FileParser {
 
     while ((match = templateRegex.exec(content)) !== null) {
       const templateContent = match[1];
-      const lines = templateContent.split('\n');
+      const templateStart = match.index + match[0].indexOf(templateContent);
+      const textBetweenTags = />[^<]+</g;
+      let textMatch;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line && !line.startsWith('<') && !line.startsWith('{') && line.length > 3) {
-          // Approximate position
-          const globalMatch = content.indexOf(line, match.index);
-          if (globalMatch !== -1) {
-            const position = this.getPositionFromIndex(content, globalMatch);
-            this.addCandidate('jsx-text', line, {
+      while ((textMatch = textBetweenTags.exec(templateContent)) !== null) {
+        const rawText = textMatch[0].slice(1, -1);
+        if (!rawText.trim()) {
+          continue;
+        }
+
+        const segmentRegex = /\{\{[\s\S]*?\}\}/g;
+        let segmentStart = 0;
+        let segmentMatch;
+
+        while ((segmentMatch = segmentRegex.exec(rawText)) !== null) {
+          const segment = rawText.slice(segmentStart, segmentMatch.index);
+          if (segment.trim()) {
+            const absoluteIndex = templateStart + textMatch.index + 1 + segmentStart;
+            const position = this.getPositionFromIndex(content, absoluteIndex);
+            this.addCandidate('jsx-text', segment, {
               start: position,
-              end: { line: position.line, column: position.column + line.length }
+              end: { line: position.line, column: position.column + segment.length }
             }, filePath, candidates);
           }
+          segmentStart = segmentMatch.index + segmentMatch[0].length;
         }
+
+        const tail = rawText.slice(segmentStart);
+        if (tail.trim()) {
+          const absoluteIndex = templateStart + textMatch.index + 1 + segmentStart;
+          const position = this.getPositionFromIndex(content, absoluteIndex);
+          this.addCandidate('jsx-text', tail, {
+            start: position,
+            end: { line: position.line, column: position.column + tail.length }
+          }, filePath, candidates);
+        }
+      }
+    }
+
+    // Fallback: extract string literals from script blocks
+    const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
+    let scriptMatch;
+    while ((scriptMatch = scriptRegex.exec(content)) !== null) {
+      const scriptContent = scriptMatch[1];
+      const scriptStart = scriptMatch.index + scriptMatch[0].indexOf(scriptContent);
+      const stringLiteralRegex = /(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+      let literalMatch;
+
+      while ((literalMatch = stringLiteralRegex.exec(scriptContent)) !== null) {
+        const value = literalMatch[2];
+        if (!value.trim()) {
+          continue;
+        }
+        const startIndex = scriptStart + literalMatch.index + 1;
+        const position = this.getPositionFromIndex(content, startIndex);
+        this.addCandidate('call-expression', value, {
+          start: position,
+          end: { line: position.line, column: position.column + value.length }
+        }, filePath, candidates);
       }
     }
 
@@ -488,7 +520,10 @@ export class VueParser implements FileParser {
       return true;
     }
 
-    if (text.length < (this.config.minTextLength ?? 1)) {
+    const minTextLength = (this.config.extraction as { minTextLength?: number } | undefined)?.minTextLength
+      ?? this.config.minTextLength
+      ?? 1;
+    if (text.length < minTextLength) {
       this.logSkip(text, 'below_min_length');
       return true;
     }
