@@ -514,7 +514,7 @@ describe('Transformer', () => {
     });
 
     const events: TransformProgress[] = [];
-    await transformer.run({
+    const summary = await transformer.run({
       write: true,
       onProgress: (progress) => events.push(progress),
     });
