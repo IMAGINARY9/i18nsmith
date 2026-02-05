@@ -27,6 +27,11 @@ export interface DetectedImport {
   isDefault: boolean;
 }
 
+export interface UseTranslationBindingOptions {
+  allowAncestorScope?: boolean;
+  allowExpressionBody?: boolean;
+}
+
 /**
  * Common translation hook names and their typical module sources.
  * Used to detect existing translation setups in the file.
@@ -152,26 +157,120 @@ export function ensureUseTranslationImport(sourceFile: SourceFile, adapter: Tran
 }
 
 export function ensureUseTranslationBinding(fn: FunctionLike, hookName: string) {
+  return ensureUseTranslationBindingInternal(fn, hookName, {
+    allowAncestorScope: true,
+    allowExpressionBody: false,
+  });
+}
+
+export function hasUseTranslationBinding(
+  fn: FunctionLike,
+  hookName: string,
+  includeAncestors = false
+): boolean {
+  let current: FunctionLike | undefined = fn;
+
+  while (current) {
+    const body = current.getBody();
+    if (body && Node.isBlock(body)) {
+      const existing = body.getStatements().some((statement) => {
+        return statement.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
+          return call.getExpression().getText() === hookName;
+        });
+      });
+
+      if (existing) {
+        return true;
+      }
+    } else if (body) {
+      const text = body.getText();
+      if (text.includes(`${hookName}(`)) {
+        return true;
+      }
+    }
+
+    if (!includeAncestors) {
+      return false;
+    }
+
+    const next = (current as Node).getFirstAncestor((ancestor) =>
+      Node.isFunctionDeclaration(ancestor) ||
+      Node.isMethodDeclaration(ancestor) ||
+      Node.isFunctionExpression(ancestor) ||
+      Node.isArrowFunction(ancestor)
+    ) as FunctionLike | undefined;
+    current = next;
+  }
+
+  return false;
+}
+
+export function ensureUseTranslationBindingWithOptions(
+  fn: FunctionLike,
+  hookName: string,
+  options: UseTranslationBindingOptions = {}
+): boolean {
+  return ensureUseTranslationBindingInternal(fn, hookName, options);
+}
+
+export function isComponentLikeFunction(fn: FunctionLike): boolean {
+  if (Node.isFunctionDeclaration(fn)) {
+    const name = fn.getName();
+    return Boolean(name && name[0] === name[0]?.toUpperCase());
+  }
+
+  if (Node.isArrowFunction(fn) || Node.isFunctionExpression(fn)) {
+    const parent = fn.getParent();
+    if (Node.isVariableDeclaration(parent)) {
+      const name = parent.getName();
+      return Boolean(name && name[0] === name[0]?.toUpperCase());
+    }
+    if (Node.isExportAssignment(parent)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function ensureUseTranslationBindingInternal(
+  fn: FunctionLike,
+  hookName: string,
+  options: UseTranslationBindingOptions
+): boolean {
   const body = fn.getBody();
   if (!body) {
-    return;
+    return false;
   }
 
-  if (!Node.isBlock(body)) {
-    return;
+  if (options.allowAncestorScope ?? true) {
+    if (hasUseTranslationBinding(fn, hookName, true)) {
+      return true;
+    }
   }
 
-  const existing = body.getStatements().some((statement) => {
-    return statement.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
-      return call.getExpression().getText() === hookName;
+  if (Node.isBlock(body)) {
+    const existing = body.getStatements().some((statement) => {
+      return statement.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
+        return call.getExpression().getText() === hookName;
+      });
     });
-  });
 
-  if (existing) {
-    return;
+    if (existing) {
+      return true;
+    }
+
+    body.insertStatements(0, `const { t } = ${hookName}();`);
+    return true;
   }
 
-  body.insertStatements(0, `const { t } = ${hookName}();`);
+  if (Node.isArrowFunction(fn) && (options.allowExpressionBody ?? false)) {
+    const expressionText = body.getText();
+    body.replaceWithText(`{ const { t } = ${hookName}(); return ${expressionText}; }`);
+    return true;
+  }
+
+  return false;
 }
 
 export function ensureClientDirective(sourceFile: SourceFile) {

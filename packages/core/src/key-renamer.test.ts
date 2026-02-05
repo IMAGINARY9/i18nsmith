@@ -243,4 +243,44 @@ export function I18nTest() {
     const content = await fs.readFile(path.join(tempDir, 'src', 'Whitespace.tsx'), 'utf8');
     expect(content).toContain("t('normalized-key')");
   });
+
+  it('renames keys inside Vue files and preserves quote style', async () => {
+    const vueConfig = {
+      ...baseConfig,
+      include: ['src/**/*.{ts,tsx,vue}'],
+    };
+
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'Widget.vue'),
+      `
+<template>
+  <div>{{ $t("old.key") }}</div>
+</template>
+
+<script>
+export default {
+  methods: {
+    label() {
+      return this.$t('old.key')
+    }
+  }
+}
+</script>
+`,
+      'utf8'
+    );
+
+    const renamer = new KeyRenamer(vueConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key', { write: true });
+
+    expect(summary.filesUpdated).toEqual(expect.arrayContaining(['src/App.tsx', 'src/Widget.vue']));
+
+    const vueContents = await fs.readFile(path.join(tempDir, 'src', 'Widget.vue'), 'utf8');
+    expect(vueContents).toContain('$t("new.key")');
+    expect(vueContents).toContain("this.$t('new.key')");
+
+    const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
+    expect(enContents).toHaveProperty('new.key');
+    expect(enContents).not.toHaveProperty('old.key');
+  });
 });

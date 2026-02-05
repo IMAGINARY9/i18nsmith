@@ -1,5 +1,5 @@
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { VueParser } from './parsers/VueParser';
 import type { I18nConfig } from './config/types.js';
 import { Project } from 'ts-morph';
@@ -272,6 +272,7 @@ const message = 'This should not be extracted'
             expect(texts).toContain('Save');
         });
     });
+
 
     describe('Comment and Invisible Content', () => {
         it('ignores HTML comments', () => {
