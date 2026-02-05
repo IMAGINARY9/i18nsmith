@@ -11,7 +11,7 @@
   "exclude": ["src/fixtures/**/*"],
   "references": [
     { "path": "../core" },
-    { "path": "../transformer" },
+    // { "path": "../transformer" }, // Temporarily excluded - old architecture to be replaced by framework adapters
     { "path": "../translation" }
   ]
 }
