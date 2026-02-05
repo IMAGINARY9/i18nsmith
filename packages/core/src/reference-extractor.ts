@@ -109,9 +109,14 @@ export class ReferenceExtractor {
     this.workspaceRoot = options.workspaceRoot;
     this.project = options.project ?? createDefaultProject();
     this.cacheDir = options.cacheDir ?? path.join(this.workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
+    const adapterHook = config.translationAdapter?.hookName?.trim();
+    const inferredIdentifier = adapterHook && !adapterHook.startsWith('use')
+      ? adapterHook
+      : undefined;
     this.translationIdentifier =
       options.translationIdentifier ??
       config.sync?.translationIdentifier ??
+      inferredIdentifier ??
       't';
     this.referenceCachePath = path.join(this.cacheDir, 'references.json');
   }

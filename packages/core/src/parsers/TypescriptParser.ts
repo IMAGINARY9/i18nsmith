@@ -52,7 +52,7 @@ export class TypescriptParser implements FileParser {
     filePath: string,
     content: string,
     project?: Project,
-    options: { scanCalls?: boolean } = {}
+    options: { scanCalls?: boolean; recordDetailed?: import('./FileParser.js').ParserNodeRecorder } = {}
   ): ScanCandidate[] {
     const scannerProject = project ?? createScannerProject();
 
@@ -77,11 +77,12 @@ export class TypescriptParser implements FileParser {
   const skipped: SkippedCandidate[] = [];
   this.activeSkipLog = skipped;
 
-    const record = (candidate: ScanCandidate) => {
+    const record = (candidate: ScanCandidate, node: Node, file: SourceFile) => {
       candidates.push(candidate);
+      options.recordDetailed?.(candidate, node, file);
     };
 
-  this.scanSourceFile(sourceFile, options.scanCalls ?? false, record);
+    this.scanSourceFile(sourceFile, options.scanCalls ?? false, record);
 
     if (shouldForget) {
       sourceFile.forget();
@@ -101,7 +102,7 @@ export class TypescriptParser implements FileParser {
   private scanSourceFile(
     file: SourceFile,
     scanCalls: boolean,
-    record: (candidate: ScanCandidate) => void
+    record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
     file.forEachDescendant((node) => {
       if (Node.isJsxText(node)) {
@@ -128,7 +129,7 @@ export class TypescriptParser implements FileParser {
   private captureJsxText(
     node: JsxText,
     file: SourceFile,
-    record: (candidate: ScanCandidate) => void
+    record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
     const directive = this.getExtractionDirective(node);
     if (directive === "skip") {
@@ -142,22 +143,21 @@ export class TypescriptParser implements FileParser {
       return;
     }
 
-    record(
-      this.createCandidate({
+    const candidate = this.createCandidate({
         node,
         file,
         kind: "jsx-text",
         text,
         context: this.getJsxContext(node),
         forced,
-      })
-    );
+      });
+    record(candidate, node, file);
   }
 
   private captureJsxAttribute(
     node: JsxAttribute,
     file: SourceFile,
-    record: (candidate: ScanCandidate) => void
+    record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
     const attributeName = node.getNameNode().getText();
     if (!DEFAULT_TRANSLATABLE_ATTRIBUTES.has(attributeName)) {
@@ -195,22 +195,21 @@ export class TypescriptParser implements FileParser {
       return;
     }
 
-    record(
-      this.createCandidate({
+    const candidate = this.createCandidate({
         node,
         file,
         kind: "jsx-attribute",
         text,
         context: `${attributeName} attribute`,
         forced,
-      })
-    );
+      });
+    record(candidate, node, file);
   }
 
   private captureJsxExpression(
     node: JsxExpression,
     file: SourceFile,
-    record: (candidate: ScanCandidate) => void
+    record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
     const parent = node.getParent();
     if (Node.isJsxAttribute(parent)) {
@@ -238,22 +237,21 @@ export class TypescriptParser implements FileParser {
       return;
     }
 
-    record(
-      this.createCandidate({
+    const candidate = this.createCandidate({
         node,
         file,
         kind: "jsx-expression",
         text,
         context: this.getJsxContext(node),
         forced,
-      })
-    );
+      });
+    record(candidate, node, file);
   }
 
   private captureCallExpression(
     node: Node,
     file: SourceFile,
-    record: (candidate: ScanCandidate) => void
+    record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
     if (!Node.isCallExpression(node)) return;
 
@@ -289,16 +287,15 @@ export class TypescriptParser implements FileParser {
       return;
     }
 
-    record(
-      this.createCandidate({
+    const candidate = this.createCandidate({
         node,
         file,
         kind: "call-expression",
         text,
         context: "t() call",
         forced,
-      })
-    );
+      });
+    record(candidate, node, file);
   }
 
   private extractLiteralText(node: Node | undefined): string | undefined {
