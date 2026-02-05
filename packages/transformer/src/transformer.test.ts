@@ -16,7 +16,7 @@ afterEach(async () => {
   }
 });
 
-describe('Transformer', () => {
+describe.sequential('Transformer', () => {
   it('transforms JSX text nodes and updates locale files', async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-'));
     const srcDir = path.join(tempDir, 'src');
@@ -253,10 +253,10 @@ describe('Transformer', () => {
       write: true,
     });
 
-    await transformer.run({ write: true });
+    const summary = await transformer.run({ write: true });
 
     const updatedFile = await fs.readFile(filePath, 'utf8');
-    expect(updatedFile).toContain("@/contexts/translation-context");
+    expect(updatedFile).toMatch(/from ['"]@\/contexts\/translation-context['"]/);
     expect(updatedFile).not.toContain('react-i18next');
   });
 
@@ -291,8 +291,58 @@ describe('Transformer', () => {
     await transformer.run({ write: true });
 
     const updatedFile = await fs.readFile(filePath, 'utf8');
-    expect(updatedFile).toContain('from "react-i18next"');
+  expect(updatedFile).toMatch(/from ['"]react-i18next['"]/);
     expect(updatedFile).not.toContain('../');
+  });
+
+  it('transforms Vue files and generates diffs', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-vue-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'App.vue');
+    const initial = `
+<template>
+  <div>
+    <h1>Hello Vue</h1>
+    <input placeholder="Enter name" />
+  </div>
+</template>
+
+<script setup>
+const title = 'Vue Title'
+</script>
+`;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.vue'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const diffSummary = await transformer.run({ write: false, diff: true });
+    const vueDiff = diffSummary.sourceDiffs?.find((entry) => entry.relativePath === 'src/App.vue');
+    expect(vueDiff).toBeDefined();
+    expect(vueDiff?.changes).toBeGreaterThan(0);
+
+    const summary = await transformer.run({ write: true });
+    expect(summary.candidates.length).toBeGreaterThanOrEqual(3);
+    expect(summary.filesChanged).toContain('src/App.vue');
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+  expect(updatedFile).toMatch(/\{\{ \$t\(("|')/);
+  expect(updatedFile).toMatch(/:placeholder="\$t\(("|')/);
+  expect(updatedFile).toMatch(/const title = \$t\(("|')/);
   });
 
   it('migrates text-as-key call expressions and preserves existing locale values', async () => {
@@ -525,6 +575,170 @@ describe('Transformer', () => {
     expect(finalEvent.percent).toBe(100);
     expect(finalEvent.applied).toBe(3);
     expect(finalEvent.remaining).toBe(0);
+  });
+
+  it('skips style jsx blocks and keeps animation CSS intact', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-style-jsx-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Styled.tsx');
+    const initial = `
+      export const Styled = () => (
+        <div>
+          <p>Hello world</p>
+          <style jsx>{\`
+            @keyframes fadeInUp { from { opacity: 0; } to { opacity: 1; } }
+          \`}</style>
+        </div>
+      );
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const summary = await transformer.run({ write: true });
+    const styleCandidate = summary.candidates.find((candidate) => candidate.text.includes('fadeInUp'));
+    expect(styleCandidate).toBeUndefined();
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toContain('@keyframes fadeInUp');
+  expect(updatedFile).toMatch(/\{t\(("|')/);
+    expect(updatedFile).toContain('<style jsx>');
+  });
+
+  it('avoids inserting nested useTranslation hooks in helper functions', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-nested-hook-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Nested.tsx');
+    const initial = `
+      import { useTranslation } from 'react-i18next';
+
+      export function Nested() {
+        const { t } = useTranslation();
+
+        const renderStatus = () => {
+          return <p>Loading status</p>;
+        };
+
+        return <div>{renderStatus()}</div>;
+      }
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    await transformer.run({ write: true });
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    const hookCount = updatedFile.match(/useTranslation\(\)/g)?.length ?? 0;
+    expect(hookCount).toBe(1);
+  expect(updatedFile).toMatch(/\{t\(("|')/);
+  });
+
+  it('skips inline loading callbacks without component scope', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-inline-loading-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Lazy.tsx');
+    const initial = `
+      import dynamic from 'next/dynamic';
+
+      const Lazy = dynamic(() => import('./Widget'), {
+        loading: () => <p>Loading map</p>,
+      });
+
+      export default Lazy;
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const summary = await transformer.run({ write: true });
+    const loadingCandidate = summary.candidates.find((candidate) => candidate.text === 'Loading map');
+    expect(loadingCandidate?.status).toBe('skipped');
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toContain('Loading map');
+    expect(updatedFile).not.toContain('useTranslation');
+  });
+
+  it('skips hex color placeholder attributes', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'transformer-hex-placeholder-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+    const filePath = path.join(srcDir, 'Color.tsx');
+    const initial = `
+      export function Color() {
+        return <input placeholder="#f59e0b" />;
+      }
+    `;
+    await fs.writeFile(filePath, initial, 'utf8');
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir, 'locales'),
+      include: ['src/**/*.tsx'],
+    } as I18nConfig;
+
+    const project = new Project({ skipAddingFilesFromTsConfig: true });
+    project.addSourceFileAtPath(filePath);
+
+    const transformer = new Transformer(config, {
+      workspaceRoot: tempDir,
+      project,
+      write: true,
+    });
+
+    const summary = await transformer.run({ write: true });
+    const hexCandidate = summary.candidates.find((candidate) => candidate.text === '#f59e0b');
+    expect(hexCandidate).toBeUndefined();
+
+    const updatedFile = await fs.readFile(filePath, 'utf8');
+    expect(updatedFile).toContain('placeholder="#f59e0b"');
   });
 
   it('converges after repeated write passes when no new literals are introduced', async () => {

@@ -332,11 +332,24 @@ export class VueParser implements FileParser {
   private extractFromScript(component: any, content: string, filePath: string, candidates: ScanCandidate[]) {
     // Extract from computed properties, methods, etc.
     // This is a simplified implementation - could be enhanced
-    this.walkScriptNode(component, content, filePath, candidates);
+    this.walkScriptNode(component, content, filePath, candidates, new WeakSet());
   }
 
-  private walkScriptNode(node: any, content: string, filePath: string, candidates: ScanCandidate[]) {
+  private walkScriptNode(
+    node: any,
+    content: string,
+    filePath: string,
+    candidates: ScanCandidate[],
+    visited: WeakSet<object>
+  ) {
     if (!node) return;
+
+    if (typeof node === 'object') {
+      if (visited.has(node)) {
+        return;
+      }
+      visited.add(node);
+    }
 
     if (node.type === 'Literal' && typeof node.value === 'string' && node.value.trim()) {
       this.addCandidate('call-expression', node.value, node.loc, filePath, candidates);
@@ -351,14 +364,14 @@ export class VueParser implements FileParser {
       if (Array.isArray(value)) {
         for (const entry of value) {
           if (entry && typeof entry === 'object' && 'type' in entry) {
-            this.walkScriptNode(entry, content, filePath, candidates);
+            this.walkScriptNode(entry, content, filePath, candidates, visited);
           }
         }
         continue;
       }
 
       if (typeof value === 'object' && 'type' in value) {
-        this.walkScriptNode(value, content, filePath, candidates);
+        this.walkScriptNode(value, content, filePath, candidates, visited);
       }
     }
   }

@@ -18,6 +18,7 @@ const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
 const HTML_ENTITY_PATTERN = /^&[a-z][a-z0-9-]*;$/i;
 const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 export class TypescriptParser implements FileParser {
   private config: I18nConfig;
@@ -211,6 +212,10 @@ export class TypescriptParser implements FileParser {
     file: SourceFile,
     record: (candidate: ScanCandidate, node: Node, file: SourceFile) => void
   ) {
+    if (this.isStyleJsxExpression(node)) {
+      return;
+    }
+
     const parent = node.getParent();
     if (Node.isJsxAttribute(parent)) {
       const attributeName = parent.getNameNode().getText();
@@ -481,6 +486,10 @@ export class TypescriptParser implements FileParser {
       return { include: true };
     }
 
+    if (HEX_COLOR_PATTERN.test(text)) {
+      return { include: false, reason: "non_sentence" };
+    }
+
     const letters = text.match(LETTER_REGEX_GLOBAL) || [];
     const letterCount = letters.length;
     const totalLength = text.length || 1;
@@ -725,6 +734,29 @@ export class TypescriptParser implements FileParser {
 
     const tagNameNode = openingElement.getTagNameNode();
     return tagNameNode ? `<${tagNameNode.getText()}>` : undefined;
+  }
+
+  private isStyleJsxExpression(node: JsxExpression): boolean {
+    const jsxAncestor = node.getFirstAncestor((ancestor) =>
+      Node.isJsxElement(ancestor) || Node.isJsxSelfClosingElement(ancestor)
+    );
+
+    if (!jsxAncestor) {
+      return false;
+    }
+
+    const openingElement = Node.isJsxElement(jsxAncestor)
+      ? jsxAncestor.getOpeningElement()
+      : jsxAncestor;
+
+    const tagName = openingElement.getTagNameNode().getText().toLowerCase();
+    if (tagName !== 'style') {
+      return false;
+    }
+
+    return openingElement.getAttributes().some((attribute: Node) => {
+      return Node.isJsxAttribute(attribute) && attribute.getNameNode().getText() === 'jsx';
+    });
   }
 
   private getRelativePath(filePath: string): string {

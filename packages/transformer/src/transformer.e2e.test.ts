@@ -22,7 +22,7 @@ afterEach(async () => {
   }
 });
 
-describe('Transformer end-to-end', () => {
+describe.sequential('Transformer end-to-end', () => {
   it('applies translations across files and locales', async () => {
     const greetingPath = path.join(workspace, 'src', 'components', 'Greeting.tsx');
     const homePath = path.join(workspace, 'src', 'pages', 'Home.tsx');

@@ -23,9 +23,12 @@ import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '@i18nsmith/core';
 import {
   detectExistingTranslationImport,
   ensureClientDirective,
-  ensureUseTranslationBinding,
+  ensureUseTranslationBindingWithOptions,
   ensureUseTranslationImport,
   findNearestFunctionScope,
+  hasUseTranslationBinding,
+  isComponentLikeFunction,
+  type FunctionLike,
 } from './react-adapter.js';
 import { formatFileWithPrettier } from './formatting.js';
 import { ReactWriter } from './writers/ReactWriter.js';
@@ -185,17 +188,6 @@ export class Transformer {
         const internalCandidate: InternalCandidate = { ...plan, raw: rawCandidate };
 
         try {
-          if (write || generateDiffs) {
-            const relativeModulePath = this.getRelativeModulePath(
-              adapterForFile.module,
-              plan.filePath
-            );
-            ensureUseTranslationImport(sourceFile, {
-              moduleSpecifier: relativeModulePath,
-              namedImport: adapterForFile.hookName,
-            });
-          }
-
           const scope = findNearestFunctionScope(internalCandidate.raw.node);
           if (!scope) {
             plan.status = 'skipped';
@@ -207,11 +199,62 @@ export class Transformer {
             continue;
           }
 
+          const componentScope = internalCandidate.raw.node.getFirstAncestor((ancestor) => {
+            if (
+              Node.isFunctionDeclaration(ancestor) ||
+              Node.isMethodDeclaration(ancestor) ||
+              Node.isFunctionExpression(ancestor) ||
+              Node.isArrowFunction(ancestor)
+            ) {
+              return isComponentLikeFunction(ancestor as FunctionLike);
+            }
+            return false;
+          }) as FunctionLike | undefined;
+
+          const injectionScope = componentScope ?? scope;
+          const allowExpressionBody = isComponentLikeFunction(injectionScope);
+          const hasBinding = hasUseTranslationBinding(injectionScope, adapterForFile.hookName, true);
+          const scopeBody = injectionScope.getBody();
+          const canInsert = Boolean(scopeBody && Node.isBlock(scopeBody)) ||
+            (Node.isArrowFunction(injectionScope) && allowExpressionBody);
+          const canInject = hasBinding || canInsert;
+
+          if (!componentScope && !canInject) {
+            plan.status = 'skipped';
+            plan.reason = 'No React component scope available for useTranslation';
+            skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
+            progressState.skipped += 1;
+            skipCounted = true;
+            emitProgress();
+            continue;
+          }
+
+          if (!canInject) {
+            plan.status = 'skipped';
+            plan.reason = 'Cannot safely inject useTranslation into non-component scope';
+            skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
+            progressState.skipped += 1;
+            skipCounted = true;
+            emitProgress();
+            continue;
+          }
+
           if (write || generateDiffs) {
-            ensureUseTranslationBinding(scope, adapterForFile.hookName);
-            ensureClientDirective(sourceFile);
             didMutate = (this.writers.find(w => w instanceof ReactWriter) as ReactWriter).applyCandidate(internalCandidate);
             if (didMutate) {
+              const relativeModulePath = this.getRelativeModulePath(
+                adapterForFile.module,
+                plan.filePath
+              );
+              ensureUseTranslationImport(sourceFile, {
+                moduleSpecifier: relativeModulePath,
+                namedImport: adapterForFile.hookName,
+              });
+              ensureUseTranslationBindingWithOptions(injectionScope, adapterForFile.hookName, {
+                allowAncestorScope: true,
+                allowExpressionBody: allowExpressionBody,
+              });
+              ensureClientDirective(sourceFile);
               if (write) {
                 plan.status = 'applied';
                 progressState.applied += 1;
@@ -341,7 +384,7 @@ export class Transformer {
       if (didMutate && write) {
         await fs.writeFile(filePath, newContent, 'utf-8');
         await formatFileWithPrettier(filePath);
-        changedFiles.add(filePath);
+        changedFiles.add(path.relative(this.workspaceRoot, filePath));
       }
 
       for (const plan of plans) {
