@@ -315,12 +315,24 @@ export function formatSyncSummaryAsMarkdown(summary: SyncSummary, title: string 
 }
 
 export function formatTransformSummaryAsMarkdown(summary: TransformSummary, title: string = 'Transform Preview'): string {
+  const summaryWithStats = summary as TransformSummary & {
+    candidateStats?: {
+      total: number;
+      pending: number;
+      existing: number;
+      duplicate: number;
+      applied: number;
+      skipped: number;
+    };
+  };
   const lines: string[] = [];
   lines.push(`# ${title}`);
   lines.push('');
 
   const filesChanged = summary.filesChanged.length;
-  const candidates = summary.candidates.filter(c => c.status === 'applied' || c.status === 'pending').length;
+  const candidates = summaryWithStats.candidateStats
+    ? summaryWithStats.candidateStats.applied + summaryWithStats.candidateStats.pending
+    : summary.candidates.filter(c => c.status === 'applied' || c.status === 'pending').length;
 
   lines.push(`## Summary: ${filesChanged} file${filesChanged === 1 ? '' : 's'} changed, ${candidates} candidate${candidates === 1 ? '' : 's'}`);
   lines.push('');

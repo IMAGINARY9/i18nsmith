@@ -70,7 +70,8 @@ function printTransformSummary(summary: TransformSummary) {
 
   console.table(preview);
 
-  const pending = summary.candidates.filter((candidate) => candidate.status === 'pending').length;
+  const pending = summary.candidateStats?.pending
+    ?? summary.candidates.filter((candidate) => candidate.status === 'pending').length;
   if (pending > 0) {
     console.log(
       chalk.yellow(
@@ -98,6 +99,13 @@ function printTransformSummary(summary: TransformSummary) {
   if (summary.skippedFiles.length) {
     console.log(chalk.yellow('Skipped items:'));
     summary.skippedFiles.forEach((item) => console.log(`  • ${item.filePath}: ${item.reason}`));
+  }
+
+  if (summary.skippedReasons && Object.keys(summary.skippedReasons).length) {
+    console.log(chalk.yellow('Skipped reasons:'));
+    Object.entries(summary.skippedReasons)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([reason, count]) => console.log(`  • ${reason}: ${count}`));
   }
 }
 

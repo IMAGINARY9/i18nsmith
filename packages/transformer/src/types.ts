@@ -25,6 +25,15 @@ export interface TransformSummary {
   filesScanned: number;
   filesChanged: string[];
   candidates: TransformCandidate[];
+  candidateStats: {
+    total: number;
+    pending: number;
+    existing: number;
+    duplicate: number;
+    applied: number;
+    skipped: number;
+  };
+  skippedReasons?: Record<string, number>;
   localeStats: LocaleFileStats[];
   diffs: LocaleDiffEntry[];
   sourceDiffs?: SourceFileDiffEntry[];
