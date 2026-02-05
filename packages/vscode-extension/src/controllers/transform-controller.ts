@@ -132,6 +132,17 @@ export class TransformController extends PreviewApplyController implements vscod
   }
 
   private handleNoCandidates(preview: TransformSummary, options: TransformRunOptions) {
+    const previewWithStats = preview as TransformSummary & {
+      candidateStats?: {
+        total: number;
+        pending: number;
+        existing: number;
+        duplicate: number;
+        applied: number;
+        skipped: number;
+      };
+      skippedReasons?: Record<string, number>;
+    };
     let message = options.targets?.length === 1
       ? 'No transformable strings found in the selected target.'
       : 'No transformable strings found.';
@@ -145,7 +156,20 @@ export class TransformController extends PreviewApplyController implements vscod
       const skipped = preview.skippedFiles[0];
       message += `\n\nReason: ${skipped.reason}`;
     } else if (preview.candidates.length > 0) {
-      message += '\n\nAll candidates were filtered out (already translated, duplicates, or too short).';
+      const stats = previewWithStats.candidateStats;
+      if (stats) {
+        message += `\n\nCandidates: ${stats.total} total. Pending ${stats.pending}, existing ${stats.existing}, duplicate ${stats.duplicate}, skipped ${stats.skipped}.`;
+      } else {
+        message += '\n\nAll candidates were filtered out (already translated, duplicates, or too short).';
+      }
+      if (previewWithStats.skippedReasons && Object.keys(previewWithStats.skippedReasons).length) {
+        const topReasons = Object.entries(previewWithStats.skippedReasons)
+          .sort((a, b) => (b[1] as number) - (a[1] as number))
+          .slice(0, 3)
+          .map(([reason, count]) => `${reason} (${count})`)
+          .join(', ');
+        message += `\nTop skipped reasons: ${topReasons}`;
+      }
     }
     vscode.window.showWarningMessage(message);
   }

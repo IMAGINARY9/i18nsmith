@@ -525,10 +525,37 @@ export class Transformer {
       ? await this.generateDiffs(originalLocaleData)
       : [];
 
+    const candidateStats = preparedCandidates.reduce(
+      (acc, candidate) => {
+        acc.total += 1;
+        acc[candidate.status] += 1;
+        return acc;
+      },
+      {
+        total: 0,
+        pending: 0,
+        existing: 0,
+        duplicate: 0,
+        applied: 0,
+        skipped: 0,
+      }
+    );
+
+    const skippedReasons = preparedCandidates.reduce<Record<string, number>>((acc, candidate) => {
+      if (candidate.status !== 'skipped') {
+        return acc;
+      }
+      const reason = candidate.reason ?? 'unknown';
+      acc[reason] = (acc[reason] ?? 0) + 1;
+      return acc;
+    }, {});
+
     return {
       filesScanned: scanSummary.filesScanned,
       filesChanged: Array.from(changedFiles),
       candidates: preparedCandidates,
+      candidateStats,
+      skippedReasons: Object.keys(skippedReasons).length ? skippedReasons : undefined,
       localeStats,
       diffs,
       sourceDiffs,
