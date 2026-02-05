@@ -1,0 +1,572 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# i18nsmith — Framework Support Implementation Plan
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reference: docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md
+# ═══════════════════════════════════════════════════════════════════════════════
+
+meta:
+  title: "Multi-Framework Adapter Architecture"
+  version: 1
+  created: "2026-02-05"
+  supersedes:
+    - docs/VUE_PARSER_RECOMMENDATIONS.md
+  architecture_doc: docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md
+  estimated_effort: "3-5 days"
+  risk: "medium — incremental migration, each phase is independently shippable"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 — Define Interfaces & Extract React Adapter
+# ═══════════════════════════════════════════════════════════════════════════════
+# Goal: Introduce the FrameworkAdapter interface and AdapterRegistry.
+#        Extract existing React logic into a ReactAdapter that implements it.
+#        No behavior change — tests must stay green.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_1:
+  name: "Interfaces & React Adapter Extraction"
+  estimated_effort: "1 day"
+  blocking: false  # each phase ships independently
+
+  tasks:
+
+    # ── 1.1  Create the FrameworkAdapter interface ──────────────────────────
+
+    - id: "1.1"
+      title: "Create FrameworkAdapter interface & supporting types"
+      files:
+        create:
+          - path: "packages/core/src/framework/types.ts"
+            description: |
+              Define:
+                - AdapterCapabilities { scan, mutate, diff }
+                - AdapterDependencyCheck { name, installHint, available }
+                - MutationEdit { start, end, replacement }
+                - MutationResult { didMutate, content, edits }
+                - AdapterScanOptions { scanCalls, config, workspaceRoot }
+                - AdapterMutateOptions { config, workspaceRoot, translationAdapter, allowFallback }
+                - FrameworkAdapter interface (id, name, capabilities, extensions,
+                  checkDependencies, scan, mutate)
+              Keep it JSON-serialisable — no AST node references in public types.
+
+          - path: "packages/core/src/framework/index.ts"
+            description: "Barrel export for framework/ module"
+
+        modify: []
+
+      tests: "N/A — pure types, compiled by tsc"
+      acceptance:
+        - "tsc builds without errors"
+        - "Types are exported from @i18nsmith/core"
+
+    # ── 1.2  Create the AdapterRegistry ─────────────────────────────────────
+
+    - id: "1.2"
+      title: "Create AdapterRegistry"
+      depends_on: ["1.1"]
+      files:
+        create:
+          - path: "packages/core/src/framework/registry.ts"
+            description: |
+              AdapterRegistry class:
+                - register(adapter): void
+                - getById(id): FrameworkAdapter | undefined
+                - getForFile(filePath): FrameworkAdapter | undefined
+                  (match by extension, first-match wins)
+                - getAll(): FrameworkAdapter[]
+                - preflightCheck(): Map<string, AdapterDependencyCheck[]>
+              Simple Map-based. No dynamic loading — adapters are registered
+              at startup by the CLI / extension / test setup.
+
+          - path: "packages/core/src/framework/registry.test.ts"
+            description: "Unit tests for AdapterRegistry"
+
+        modify:
+          - path: "packages/core/src/framework/index.ts"
+            action: "Add registry export"
+
+          - path: "packages/core/src/index.ts"
+            action: "Add `export * from './framework/index.js'`"
+
+      tests:
+        - "registry.test.ts — register, lookup by id, lookup by file extension, preflight check"
+      acceptance:
+        - "All existing tests still pass (no behavior change)"
+        - "Registry tests pass"
+
+    # ── 1.3  Extract ReactAdapter from existing code ────────────────────────
+
+    - id: "1.3"
+      title: "Create ReactAdapter implementing FrameworkAdapter"
+      depends_on: ["1.1", "1.2"]
+      files:
+        create:
+          - path: "packages/core/src/framework/adapters/react.ts"
+            description: |
+              class ReactAdapter implements FrameworkAdapter:
+                id: 'react'
+                name: 'React / TSX'
+                capabilities: { scan: true, mutate: true, diff: true }
+                extensions: ['.tsx', '.jsx', '.ts', '.js']
+
+                checkDependencies():
+                  - ts-morph is a hard dep, always available → [{ name:'ts-morph', available:true }]
+
+                scan(filePath, content, options):
+                  - Instantiate TypescriptParser(config, workspaceRoot) internally
+                  - Call parser.parse(filePath, content) → ScanCandidate[]
+                  - Return candidates (strip ts-morph Node refs from public result)
+
+                mutate(filePath, content, candidates, options):
+                  - Create ts-morph Project + SourceFile from content
+                  - Re-scan with collectNodes to get ReactNodeCandidate[]
+                  - Apply each candidate (reuse logic from ReactWriter.applyCandidate)
+                  - Insert imports/hooks (reuse react-adapter.ts logic)
+                  - Return MutationResult { didMutate, content, edits }
+
+              Internal type ReactNodeCandidate extends ScanCandidate (not exported).
+
+          - path: "packages/core/src/framework/adapters/react.test.ts"
+            description: |
+              Test scan() and mutate() with the same fixtures currently used by
+              TypescriptParser.test and transformer.test.ts React cases.
+
+        modify:
+          - path: "packages/core/src/framework/index.ts"
+            action: "Export ReactAdapter"
+
+      notes: |
+        At this point ReactAdapter exists alongside the old TypescriptParser
+        and ReactWriter.  Nothing is deleted yet — both paths coexist.
+        The old code path is still used by Scanner and Transformer.
+        The new ReactAdapter is tested independently.
+
+      tests:
+        - "react.test.ts — scan produces correct candidates for .tsx files"
+        - "react.test.ts — mutate replaces text with t('key'), inserts imports"
+        - "react.test.ts — mutate handles edge cases (hex, style-jsx, nested hooks)"
+      acceptance:
+        - "ReactAdapter tests pass"
+        - "All existing tests still pass (no behavior change)"
+
+    # ── 1.4  Optional config field ──────────────────────────────────────────
+
+    - id: "1.4"
+      title: "Add optional `frameworks` field to I18nConfig"
+      depends_on: []
+      files:
+        modify:
+          - path: "packages/core/src/config/types.ts"
+            action: |
+              Add to I18nConfig:
+                frameworks?: string[];
+              Add JSDoc explaining auto-detection when omitted.
+
+          - path: "packages/core/src/config/normalizer.ts"
+            action: "Normalize frameworks field (ensureOptionalArray of strings)"
+
+          - path: "packages/core/src/config/validator.ts"
+            action: "Validate framework ids (warn on unknown ids)"
+
+      tests:
+        - "Existing config tests stay green"
+        - "Add test: normalizeConfig with frameworks: ['react','vue']"
+      acceptance:
+        - "Config loads with or without frameworks field"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Extract Vue Adapter
+# ═══════════════════════════════════════════════════════════════════════════════
+# Goal: Create VueAdapter, encapsulate VueParser + VueWriter logic.
+#        Move vue-eslint-parser dependency handling inside the adapter.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_2:
+  name: "Vue Adapter Extraction"
+  estimated_effort: "1 day"
+  depends_on: ["phase_1"]
+
+  tasks:
+
+    - id: "2.1"
+      title: "Create VueAdapter implementing FrameworkAdapter"
+      depends_on: ["1.1", "1.2"]
+      files:
+        create:
+          - path: "packages/core/src/framework/adapters/vue.ts"
+            description: |
+              class VueAdapter implements FrameworkAdapter:
+                id: 'vue'
+                name: 'Vue SFC'
+                capabilities: { scan: true, mutate: true, diff: true }
+                extensions: ['.vue']
+
+                checkDependencies():
+                  - Try to require vue-eslint-parser at runtime
+                  - Return [{ name:'vue-eslint-parser', available, installHint:'pnpm add -D vue-eslint-parser' }]
+
+                scan(filePath, content, options):
+                  - If parser available → full AST scan (reuse VueParser walk logic)
+                  - If parser missing AND scan-only → use fallback extractor, tag results as best-effort
+                  - If parser missing AND mutate context → throw with actionable message
+
+                mutate(filePath, content, candidates, options):
+                  - Require parser presence (fail-fast if missing and !allowFallback)
+                  - Use MagicString for template edits (reuse VueWriter logic)
+                  - For <script lang="ts"> blocks, optionally use ts-morph for
+                    precise script mutations
+                  - Return MutationResult
+
+          - path: "packages/core/src/framework/adapters/vue.test.ts"
+            description: |
+              Tests for scan and mutate. Test both parser-present and parser-missing
+              scenarios.  Test fail-fast behavior for mutate when parser missing.
+
+        modify:
+          - path: "packages/core/src/framework/index.ts"
+            action: "Export VueAdapter"
+
+      tests:
+        - "vue.test.ts — scan produces correct candidates for .vue files"
+        - "vue.test.ts — mutate replaces template text with {{ $t('key') }}"
+        - "vue.test.ts — mutate fails with actionable error when parser missing"
+        - "vue.test.ts — scan with fallback when parser missing produces candidates tagged 'best-effort'"
+      acceptance:
+        - "VueAdapter tests pass"
+        - "All existing tests still pass"
+
+    - id: "2.2"
+      title: "Extract shared parsing utilities"
+      depends_on: ["2.1"]
+      files:
+        create:
+          - path: "packages/core/src/framework/utils/text-filters.ts"
+            description: |
+              Extract shared heuristics used by both React and Vue adapters:
+                - isTranslatableText(text, config)  (letter count, ratio, patterns)
+                - isHexColor(text)
+                - isHtmlEntity(text)
+                - isRepeatedSymbol(text)
+                - shouldSkipText(text, config) → SkipReason | null
+              Currently duplicated between TypescriptParser and VueParser.
+
+        modify:
+          - path: "packages/core/src/framework/adapters/react.ts"
+            action: "Import shared filters from utils/text-filters.ts"
+          - path: "packages/core/src/framework/adapters/vue.ts"
+            action: "Import shared filters from utils/text-filters.ts"
+
+      tests:
+        - "text-filters.test.ts — unit tests for each filter function"
+      acceptance:
+        - "No duplication of filtering heuristics between adapters"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 3 — Wire Registry into Scanner & Transformer
+# ═══════════════════════════════════════════════════════════════════════════════
+# Goal: Scanner and Transformer use AdapterRegistry instead of hardcoded
+#        parsers/writers. This is the switch-over point.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_3:
+  name: "Registry Integration"
+  estimated_effort: "1 day"
+  depends_on: ["phase_2"]
+
+  tasks:
+
+    - id: "3.1"
+      title: "Refactor Scanner to use AdapterRegistry"
+      files:
+        modify:
+          - path: "packages/core/src/scanner.ts"
+            action: |
+              - Constructor accepts AdapterRegistry (required).
+              - Remove hardcoded TypescriptParser + VueParser instantiation.
+              - scan() loop: use registry.getForFile(filePath) → adapter.scan().
+              - Remove ScannerNodeCandidate from public API (move to internal).
+              - For backward compat, add factory: Scanner.create(config, options)
+                that auto-registers adapters based on config.frameworks or all.
+
+      tests:
+        - "scanner.test.ts — update to provide registry with ReactAdapter"
+        - "scanner.test.ts — verify scan delegates to correct adapter per extension"
+      acceptance:
+        - "All scanner tests pass with new constructor"
+        - "Scanner no longer imports TypescriptParser or VueParser directly"
+
+    - id: "3.2"
+      title: "Refactor Transformer to use AdapterRegistry"
+      files:
+        modify:
+          - path: "packages/transformer/src/transformer.ts"
+            action: |
+              - Constructor accepts AdapterRegistry.
+              - Replace processReactFile / processVueFile with single generic loop:
+                  for each (file, plans):
+                    adapter = registry.getForFile(file)
+                    preflight check → adapter.checkDependencies()
+                    result = adapter.mutate(file, content, plans, options)
+                    locale upserts (shared, not per-framework)
+              - Delete processReactFile() method (~120 lines).
+              - Delete processVueFile() method (~80 lines).
+              - Delete applyCandidate() method (moved to ReactAdapter).
+              - Delete getUnsafeJsxExpressionReason() (moved to ReactAdapter).
+              - Delete containsConditionalOrLogical() (moved to ReactAdapter).
+              - Remove writers array, ReactWriter/VueWriter imports.
+
+          - path: "packages/transformer/src/types.ts"
+            action: |
+              Remove ScannerNodeCandidate import if unused.
+              TransformCandidate remains as-is.
+
+      tests:
+        - "transformer.test.ts — all existing tests pass with registry-based transformer"
+        - "transformer.e2e.test.ts — end-to-end still works"
+      acceptance:
+        - "No instanceof ReactWriter / VueWriter checks in transformer.ts"
+        - "processReactFile and processVueFile fully removed"
+        - "All tests green"
+
+    - id: "3.3"
+      title: "Add preflight check to CLI commands"
+      files:
+        modify:
+          - path: "packages/cli/src/commands/"
+            action: |
+              Before write operations (transform --write, rename --write):
+                const issues = registry.preflightCheck();
+                if (issues with missing deps for required adapters) {
+                  print actionable error with install hints;
+                  exit(1) unless --allow-fallback;
+                }
+
+      tests:
+        - "CLI integration test: transform --write on .vue without parser → error message"
+        - "CLI integration test: transform --write --allow-fallback → scan-only proceeds"
+      acceptance:
+        - "Clear, non-noisy error when adapter deps missing for write ops"
+
+    - id: "3.4"
+      title: "Refactor KeyRenamer to use AdapterRegistry"
+      files:
+        modify:
+          - path: "packages/core/src/key-renamer.ts"
+            action: |
+              - Remove the inline getVueEslintParser() loader.
+              - Accept AdapterRegistry in constructor.
+              - For Vue file renames: delegate to VueAdapter.mutate() or
+                use adapter.scan() + MagicString approach.
+              - Fail-fast if adapter deps missing for .vue renames.
+
+      tests:
+        - "key-renamer.test.ts — existing rename tests pass"
+        - "key-renamer.test.ts — .vue rename with missing parser → actionable error"
+      acceptance:
+        - "No lazy eval('require') in key-renamer.ts"
+        - "KeyRenamer doesn't import vue-eslint-parser directly"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 4 — Clean Up & CI
+# ═══════════════════════════════════════════════════════════════════════════════
+# Goal: Remove dead code, update docs, add CI matrix.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_4:
+  name: "Clean Up & CI"
+  estimated_effort: "0.5 day"
+  depends_on: ["phase_3"]
+
+  tasks:
+
+    - id: "4.1"
+      title: "Delete superseded files"
+      files:
+        delete:
+          - "packages/core/src/parsers/FileParser.ts"
+          - "packages/core/src/parsers/TypescriptParser.ts"
+          - "packages/core/src/parsers/VueParser.ts"
+          - "packages/transformer/src/react-adapter.ts"
+          - "packages/transformer/src/writers/ReactWriter.ts"
+          - "packages/transformer/src/writers/VueWriter.ts"
+          - "packages/transformer/src/writers/VueWriter.test.ts"
+          - "packages/transformer/src/writers/Writer.ts"
+
+        modify:
+          - path: "packages/core/src/index.ts"
+            action: "Remove FileParser/TypescriptParser exports. Ensure framework/ exports are present."
+
+          - path: "packages/transformer/src/index.ts"
+            action: "Remove ReactWriter/VueWriter/Writer exports if present"
+
+      tests:
+        - "Full test suite: pnpm test → all green"
+      acceptance:
+        - "No import of deleted files anywhere in the codebase"
+        - "grep for 'FileParser|TypescriptParser|VueParser|ReactWriter|VueWriter' → zero matches (except docs/tests)"
+
+    - id: "4.2"
+      title: "Update documentation"
+      files:
+        modify:
+          - path: "docs/VUE_PARSER_RECOMMENDATIONS.md"
+            action: |
+              Replace content with:
+              "This document is superseded by docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md"
+
+          - path: "ARCHITECTURE.md"
+            action: "Add section on FrameworkAdapter pattern and link to architecture doc"
+
+          - path: "CONTRIBUTING.md"
+            action: |
+              Add section: 'Adding a new framework adapter'
+              1. Create packages/core/src/framework/adapters/<framework>.ts
+              2. Implement FrameworkAdapter interface
+              3. Add adapter tests
+              4. Register in CLI/extension setup
+              5. Add CI matrix entry
+
+          - path: "README.md"
+            action: "Update supported frameworks list, note adapter architecture"
+
+      tests: "N/A"
+      acceptance:
+        - "Docs are consistent with new architecture"
+
+    - id: "4.3"
+      title: "Add CI matrix for framework adapters"
+      files:
+        modify:
+          - path: ".github/workflows/"
+            action: |
+              Add matrix strategy:
+                framework: [react, vue]
+              Vue job: pnpm add -Dw vue-eslint-parser before running tests.
+              React job: default (ts-morph always available).
+
+              Future: add svelte, angular entries as adapters are implemented.
+
+      tests:
+        - "CI pipeline runs both React and Vue adapter test suites"
+      acceptance:
+        - "CI green for both matrix entries"
+
+    - id: "4.4"
+      title: "Update package.json dependency declarations"
+      files:
+        modify:
+          - path: "packages/core/package.json"
+            action: |
+              Move vue-eslint-parser from optionalDependencies to peerDependencies
+              with peerDependenciesMeta: { "vue-eslint-parser": { optional: true } }.
+              This is the correct npm/pnpm way to declare: "you need this if
+              you use Vue, but it's not required for React-only users".
+
+          - path: "packages/transformer/package.json"
+            action: |
+              Remove vue-eslint-parser from optionalDependencies (the transformer
+              no longer imports it directly — the VueAdapter in core handles it).
+
+      tests:
+        - "pnpm install works without vue-eslint-parser in a React-only project"
+        - "pnpm install with vue-eslint-parser works for Vue projects"
+      acceptance:
+        - "No optionalDependencies for vue-eslint-parser (use peerDeps + optional meta)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 5 (Future) — New Framework Adapters
+# ═══════════════════════════════════════════════════════════════════════════════
+# Not blocking — implemented on-demand as frameworks are requested.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+phase_5:
+  name: "Future Framework Adapters (on-demand)"
+  estimated_effort: "0.5-1 day per adapter"
+  depends_on: ["phase_4"]
+
+  tasks:
+
+    - id: "5.1"
+      title: "Svelte Adapter"
+      files:
+        create:
+          - "packages/core/src/framework/adapters/svelte.ts"
+          - "packages/core/src/framework/adapters/svelte.test.ts"
+        modify:
+          - "packages/core/package.json → add svelte/compiler as optional peerDep"
+      notes: |
+        Dependencies: svelte/compiler
+        scan(): Parse .svelte, walk template + script
+        mutate(): MagicString for template, ts-morph for TS script blocks
+
+    - id: "5.2"
+      title: "Angular Adapter"
+      files:
+        create:
+          - "packages/core/src/framework/adapters/angular.ts"
+          - "packages/core/src/framework/adapters/angular.test.ts"
+      notes: |
+        Dependencies: @angular/compiler
+        scan(): Parse .component.html templates + .component.ts
+        mutate(): Template string replacement + TypeScript mutation
+
+    - id: "5.3"
+      title: "Solid Adapter"
+      files:
+        create:
+          - "packages/core/src/framework/adapters/solid.ts"
+          - "packages/core/src/framework/adapters/solid.test.ts"
+      notes: |
+        Dependencies: ts-morph (same as React — JSX-based)
+        Can likely extend/reuse ReactAdapter internals with different
+        import patterns (solid-js vs react-i18next).
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUMMARY — Files Created / Modified / Deleted
+# ═══════════════════════════════════════════════════════════════════════════════
+
+summary:
+  files_created:
+    - packages/core/src/framework/types.ts
+    - packages/core/src/framework/index.ts
+    - packages/core/src/framework/registry.ts
+    - packages/core/src/framework/registry.test.ts
+    - packages/core/src/framework/adapters/react.ts
+    - packages/core/src/framework/adapters/react.test.ts
+    - packages/core/src/framework/adapters/vue.ts
+    - packages/core/src/framework/adapters/vue.test.ts
+    - packages/core/src/framework/utils/text-filters.ts
+    - packages/core/src/framework/utils/text-filters.test.ts
+    - docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md
+
+  files_modified:
+    - packages/core/src/index.ts
+    - packages/core/src/scanner.ts
+    - packages/core/src/key-renamer.ts
+    - packages/core/src/config/types.ts
+    - packages/core/src/config/normalizer.ts
+    - packages/core/src/config/validator.ts
+    - packages/core/package.json
+    - packages/transformer/src/transformer.ts
+    - packages/transformer/src/types.ts
+    - packages/transformer/package.json
+    - packages/cli/src/commands/ (multiple)
+    - ARCHITECTURE.md
+    - CONTRIBUTING.md
+    - README.md
+    - docs/VUE_PARSER_RECOMMENDATIONS.md (replaced with redirect)
+
+  files_deleted:
+    - packages/core/src/parsers/FileParser.ts
+    - packages/core/src/parsers/TypescriptParser.ts
+    - packages/core/src/parsers/VueParser.ts
+    - packages/transformer/src/react-adapter.ts
+    - packages/transformer/src/writers/ReactWriter.ts
+    - packages/transformer/src/writers/VueWriter.ts
+    - packages/transformer/src/writers/VueWriter.test.ts
+    - packages/transformer/src/writers/Writer.ts
+
+  net_effect: |
+    ~8 files deleted, ~11 files created, ~14 files modified.
+    Net code stays similar or slightly reduces as duplicated logic
+    (text filters, locale upserts) is consolidated.
+    The architecture becomes open/closed for new frameworks.
