@@ -167,6 +167,15 @@ export class Scanner {
       needsReview: [],
       skipped: [],
     };
+    const recordDetailed: CandidateRecorder | undefined = collectNodes
+      ? (candidate, node, file) => {
+          detailedCandidates.push({
+            ...candidate,
+            node,
+            sourceFile: file,
+          });
+        }
+      : undefined;
 
     const filePaths = targetFiles?.length
       ? targetFiles
@@ -183,6 +192,7 @@ export class Scanner {
         const content = projectFile ? projectFile.getFullText() : this.readFileContent(filePath);
         const fileCandidates = parser.parse(filePath, content, this.project, {
           scanCalls: options?.scanCalls,
+          recordDetailed,
         }); // Pass the project for ts-morph based parsing
         candidates.push(...fileCandidates);
         if (typeof parser.getSkippedCandidates === 'function') {

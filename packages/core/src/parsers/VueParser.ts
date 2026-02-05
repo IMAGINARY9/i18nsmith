@@ -168,7 +168,7 @@ export class VueParser implements FileParser {
     filePath: string,
     content: string,
     _project?: Project,
-    _options: { scanCalls?: boolean } = {}
+    _options: { scanCalls?: boolean; recordDetailed?: import('./FileParser.js').ParserNodeRecorder } = {}
   ): ScanCandidate[] {
     const candidates: ScanCandidate[] = [];
     this.activeSkipLog = [];
