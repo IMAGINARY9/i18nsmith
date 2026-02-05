@@ -378,6 +378,12 @@ export function activate(context: vscode.ExtensionContext) {
         await syncController.renameAllSuspiciousKeys();
       }
     ),
+    vscode.commands.registerCommand(
+      "i18nsmith.renameSuspiciousKeysInFile",
+      async () => {
+        await syncController.renameSuspiciousKeysInFile();
+      }
+    ),
     // vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
     //   await insertIgnoreComment(uri, line, 'suspicious-key');
     // }),
@@ -404,6 +410,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("i18nsmith.init", async () => {
       await cliService.runCliCommand('i18nsmith init', { interactive: true });
+    }),
+    vscode.commands.registerCommand("i18nsmith.transformFile", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage("No active editor found");
+        return;
+      }
+      const filePath = editor.document.uri.fsPath;
+      await transformController.runTransform({ targets: [filePath] });
     }),
     vscode.commands.registerCommand("i18nsmith.showOutput", () => {
       services.smartScanner.showOutput();

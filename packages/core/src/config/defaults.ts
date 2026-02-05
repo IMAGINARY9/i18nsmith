@@ -9,10 +9,10 @@ import type { PlaceholderFormat } from './types.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_INCLUDE = [
-  'src/**/*.{ts,tsx,js,jsx}',
-  'app/**/*.{ts,tsx,js,jsx}',
-  'pages/**/*.{ts,tsx,js,jsx}',
-  'components/**/*.{ts,tsx,js,jsx}',
+  'src/**/*.{ts,tsx,js,jsx,vue}',
+  'app/**/*.{ts,tsx,js,jsx,vue}',
+  'pages/**/*.{ts,tsx,js,jsx,vue}',
+  'components/**/*.{ts,tsx,js,jsx,vue}',
 ];
 
 export const DEFAULT_EXCLUDE = ['node_modules/**', '.next/**', 'dist/**'];

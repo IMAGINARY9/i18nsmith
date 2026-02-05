@@ -18,7 +18,10 @@
   "dependencies": {
     "diff": "^8.0.2",
     "fast-glob": "^3.3.3",
-    "ts-morph": "^21.0.0",
+    "magic-string": "^0.30.21",
+    "ts-morph": "^21.0.0"
+  },
+  "optionalDependencies": {
     "vue-eslint-parser": "^10.2.0"
   }
 }

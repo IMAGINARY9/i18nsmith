@@ -1,5 +1,21 @@
 import path from "path";
-import { parse } from "vue-eslint-parser";
+
+// Runtime loader for the optional `vue-eslint-parser`.
+// We use `eval('require')` to avoid static bundlers hoisting or resolving the
+// dependency at build time — we only attempt to require it at runtime when
+// actually needed, and we handle the case where it isn't installed.
+let _cachedVueParser: any | undefined;
+function getVueEslintParser(): any | null {
+  if (_cachedVueParser !== undefined) return _cachedVueParser;
+  try {
+    // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+    _cachedVueParser = eval('require')('vue-eslint-parser');
+    return _cachedVueParser;
+  } catch {
+    _cachedVueParser = null;
+    return null;
+  }
+}
 import type { Project } from "ts-morph";
 import { I18nConfig } from "../config.js";
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from "../scanner.js";
@@ -133,8 +149,16 @@ export class VueParser implements FileParser {
     this.activeSkipLog = [];
 
     try {
-      // Parse Vue SFC using vue-eslint-parser
-      const ast = parse(content, {
+      const vueEslintParser = getVueEslintParser();
+      if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
+        // Fallback: no parser available - use a minimal text-based extraction
+        // so the extension still works when the optional dependency isn't
+        // installed in the runtime environment.
+        this.extractFromContent(content, filePath, candidates);
+        return candidates;
+      }
+
+      const ast = vueEslintParser.parse(content, {
         sourceType: 'module',
         ecmaVersion: 2020,
         sourceFile: filePath,
@@ -184,7 +208,18 @@ export class VueParser implements FileParser {
         if (node.value && node.value.type === 'VLiteral' && node.value.value) {
           const attrName = this.getAttributeName(node);
           if (this.isTranslatableAttribute(attrName)) {
-            this.addCandidate('jsx-attribute', node.value.value, node.value.loc, filePath, candidates);
+            // For attributes, adjust the position to point to the text content, not the quotes
+            const adjustedLoc = {
+              start: {
+                line: node.value.loc.start.line,
+                column: node.value.loc.start.column + 1, // Skip opening quote
+              },
+              end: {
+                line: node.value.loc.end.line,
+                column: node.value.loc.end.column - 1, // Skip closing quote
+              }
+            };
+            this.addCandidate('jsx-attribute', node.value.value, adjustedLoc, filePath, candidates);
           }
         }
         break;
@@ -332,6 +367,27 @@ export class VueParser implements FileParser {
         }
       }
     }
+
+    // Fallback: extract i18n calls using regex (e.g. $t('key'), t('key'))
+    // Supports: $t('key'), t('key'), i18n.t('key'), this.$t('key')
+    const i18nCallRegex = /(?:(?:\$t|t|i18n\.t|this\.\$t)\s*\(\s*)(['"`])(.*?)\1(?:\s*\))/g;
+    let callMatch;
+    while ((callMatch = i18nCallRegex.exec(content)) !== null) {
+        const fullMatch = callMatch[0];
+        const quote = callMatch[1];
+        const key = callMatch[2];
+        const startIndex = callMatch.index + fullMatch.indexOf(quote) + 1; // Start of the key string
+        
+        const position = this.getPositionFromIndex(content, startIndex);
+        
+        // We use a simplified location for fallback
+        const loc = {
+            start: position,
+            end: { line: position.line, column: position.column + key.length }
+        };
+
+        this.addCandidate('call-expression', key, loc, filePath, candidates);
+    }
   }
 
   private addCandidate(kind: CandidateKind, text: string, loc: any, filePath: string, candidates: ScanCandidate[]) {
@@ -455,8 +511,8 @@ export class VueParser implements FileParser {
   private getPositionFromIndex(content: string, index: number): { line: number; column: number } {
     const lines = content.substring(0, index).split('\n');
     return {
-      line: lines.length,
-      column: lines[lines.length - 1].length + 1,
+      line: lines.length,  // 1-based line (ESTree standard)
+      column: lines[lines.length - 1].length,  // 0-based column (ESTree standard, matching vue-eslint-parser)
     };
   }
 }

@@ -89,11 +89,26 @@ export function generateRenameProposals(
     // Generate proposed key using KeyGenerator for consistent hashing
     let proposedKey: string;
     try {
-      const generated = keyGenerator.generate(warning.key, {
-        filePath: warning.filePath,
-        kind: 'call-expression', // Assume call expression for suspicious keys
-      });
-      proposedKey = generated.key;
+      // Check if filePath is a locale file (which shouldn't be used for key generation)
+      const isLocaleFile = warning.filePath.includes('/locales/') || 
+                           warning.filePath.includes('\\locales\\') ||
+                           /\.(json|yaml|yml)$/.test(warning.filePath);
+      
+      if (isLocaleFile) {
+        // For locale file entries without source references, use simple normalization
+        // to preserve the original key structure rather than generating a new namespace
+        proposedKey = normalizeToKey(warning.key, {
+          defaultNamespace: options.defaultNamespace,
+          namingConvention: options.namingConvention,
+          maxWords: options.maxWords,
+        });
+      } else {
+        const generated = keyGenerator.generate(warning.key, {
+          filePath: warning.filePath,
+          kind: 'call-expression', // Assume call expression for suspicious keys
+        });
+        proposedKey = generated.key;
+      }
     } catch (e) {
       // Fallback to simple normalization if generator fails
       proposedKey = normalizeToKey(warning.key, {

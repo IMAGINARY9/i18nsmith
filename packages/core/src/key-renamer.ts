@@ -1,10 +1,27 @@
 import path from 'path';
+import fs from 'fs/promises';
+import fg from 'fast-glob';
 import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig, DEFAULT_INCLUDE } from './config.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
 import { createUnifiedDiff, SourceFileDiffEntry, LocaleDiffEntry, buildLocaleDiffs } from './diff-utils.js';
 import { createDefaultProject } from './project-factory.js';
+import MagicString from 'magic-string';
+
+// Lazy loader for optional vue-eslint-parser
+let _cachedVueParser: any | undefined;
+function getVueEslintParser(): any | null {
+  if (_cachedVueParser !== undefined) return _cachedVueParser;
+  try {
+    // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+    _cachedVueParser = eval('require')('vue-eslint-parser');
+    return _cachedVueParser;
+  } catch {
+    _cachedVueParser = null;
+    return null;
+  }
+}
 
 export interface KeyRenamerOptions {
   workspaceRoot?: string;
@@ -154,6 +171,10 @@ export class KeyRenamer {
     const files = this.loadFiles();
     const filesToSave = new Map<string, SourceFile>();
     const mappingBySource = new Map<string, KeyRenameMapping>();
+    
+    // Vue file tracking
+    const vueFilesToProcess = this.findVueFiles();
+    const vueFilesToSave = new Map<string, { original: string; modified: string }>();
 
     // Store original content for diff generation
     const originalContents = new Map<string, string>();
@@ -177,7 +198,7 @@ export class KeyRenamer {
     const occurrencesByKey = new Map<string, number>();
     const filesToModify = new Set<SourceFile>();
 
-    // First pass: identify files to modify and count occurrences
+    // First pass: identify files to modify and count occurrences (ts-morph files)
     for (const file of files) {
       let hasMatch = false;
       file.forEachDescendant((node) => {
@@ -217,6 +238,12 @@ export class KeyRenamer {
       }
     }
 
+    // First pass for Vue files: count occurrences (without applying changes yet)
+    for (const vueFilePath of vueFilesToProcess) {
+      // Only count occurrences, don't apply changes yet
+      await this.processVueFile(vueFilePath, mappingBySource, occurrencesByKey, false);
+    }
+
     // Second pass: apply modifications (only if writing or generating diffs)
     if (write || generateDiffs) {
       for (const file of filesToModify) {
@@ -246,14 +273,31 @@ export class KeyRenamer {
 
         filesToSave.set(file.getFilePath(), file);
       }
+
+      // Process Vue files
+      for (const vueFilePath of vueFilesToProcess) {
+        const result = await this.processVueFile(vueFilePath, mappingBySource, occurrencesByKey, true);
+        if (result.hasMatches && result.original !== result.modified) {
+          vueFilesToSave.set(vueFilePath, result);
+        }
+      }
     }
 
     // Generate diffs before saving
     const diffs: SourceFileDiffEntry[] = [];
     if (generateDiffs) {
+      // Diffs for ts-morph files
       for (const [filePath, file] of filesToSave) {
         const original = originalContents.get(filePath) ?? '';
         const modified = file.getFullText();
+        const diff = createUnifiedDiff(filePath, original, modified, this.workspaceRoot);
+        if (diff) {
+          diffs.push(diff);
+        }
+      }
+      
+      // Diffs for Vue files
+      for (const [filePath, { original, modified }] of vueFilesToSave) {
         const diff = createUnifiedDiff(filePath, original, modified, this.workspaceRoot);
         if (diff) {
           diffs.push(diff);
@@ -307,7 +351,13 @@ export class KeyRenamer {
     }
 
     if (write) {
+      // Save ts-morph files
       await Promise.all(Array.from(filesToSave.values()).map((file) => file.save()));
+      
+      // Save Vue files
+      for (const [filePath, { modified }] of vueFilesToSave) {
+        await fs.writeFile(filePath, modified, 'utf-8');
+      }
     }
 
     const localeStats = write ? await this.localeStore.flush() : [];
@@ -333,9 +383,15 @@ export class KeyRenamer {
     const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
     const actionableItems = this.buildActionableItems(mappingSummaries, allowConflicts);
 
+    // Combine ts-morph and Vue files for the result
+    const allUpdatedFiles = [
+      ...Array.from(filesToSave.keys()),
+      ...Array.from(vueFilesToSave.keys()),
+    ];
+
     return {
-      filesScanned: files.length,
-      filesUpdated: Array.from(filesToSave.keys()).map((filePath) => this.getRelativePath(filePath)),
+      filesScanned: files.length + vueFilesToProcess.length,
+      filesUpdated: allUpdatedFiles.map((filePath) => this.getRelativePath(filePath)),
       occurrences: totalOccurrences,
       localeStats,
       mappingSummaries,
@@ -492,5 +548,190 @@ export class KeyRenamer {
         : path.join(this.workspaceRoot, rawPattern);
       return isNegated ? `!${absolute}` : absolute;
     });
+  }
+
+  /**
+   * Find Vue files in the workspace that match the include patterns.
+   */
+  private findVueFiles(): string[] {
+    const patterns = this.getGlobPatterns();
+    const vuePatterns = patterns
+      .filter(p => !p.startsWith('!'))
+      .map(p => {
+        // Convert generic patterns to Vue-specific ones
+        if (p.endsWith('.ts') || p.endsWith('.tsx') || p.endsWith('.js') || p.endsWith('.jsx')) {
+          return p.replace(/\.(ts|tsx|js|jsx)$/, '.vue');
+        }
+        if (p.includes('*.{')) {
+          // Add .vue to existing extensions if pattern supports multiple
+          return p.replace(/\.{([^}]+)}/, '.{$1,vue}');
+        }
+        return p;
+      });
+    
+    // Also add explicit Vue patterns
+    const includePatterns = [...new Set([
+      ...vuePatterns,
+      '**/*.vue',
+    ])];
+    
+    const excludePatterns = patterns
+      .filter(p => p.startsWith('!'))
+      .map(p => p.slice(1));
+    
+    try {
+      const resolvedInclude = includePatterns.map(p => 
+        path.isAbsolute(p) ? p : path.join(this.workspaceRoot, p)
+      );
+      const resolvedExclude = excludePatterns.map(p =>
+        path.isAbsolute(p) ? p : path.join(this.workspaceRoot, p)
+      );
+      
+      return fg.sync(resolvedInclude, {
+        ignore: [...resolvedExclude, '**/node_modules/**'],
+        absolute: true,
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Count and apply key renames in a Vue file using vue-eslint-parser.
+   */
+  private async processVueFile(
+    filePath: string,
+    mappingBySource: Map<string, KeyRenameMapping>,
+    occurrencesByKey: Map<string, number>,
+    applyChanges: boolean
+  ): Promise<{ hasMatches: boolean; original: string; modified: string }> {
+    const vueParser = getVueEslintParser();
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    if (!vueParser || typeof vueParser.parse !== 'function') {
+      // Parser not available, skip Vue files
+      return { hasMatches: false, original: content, modified: content };
+    }
+
+    try {
+      const ast = vueParser.parse(content, { sourceType: 'module', ecmaVersion: 2020 });
+      const magicString = new MagicString(content);
+      let hasMatches = false;
+
+      // Collect all translation call positions and their new keys
+      const replacements: Array<{ start: number; end: number; newKey: string }> = [];
+
+      const visit = (node: any) => {
+        if (!node) return;
+
+        if (node.type === 'CallExpression' && this.isEstreeTranslationCall(node)) {
+          const args = node.arguments;
+          if (args && args.length > 0) {
+            const arg = args[0];
+            let key: string | undefined;
+            let argStart: number | undefined;
+            let argEnd: number | undefined;
+
+            if (arg.type === 'Literal' && typeof arg.value === 'string') {
+              key = arg.value;
+              // Position is the whole literal including quotes
+              argStart = arg.range?.[0] ?? arg.start;
+              argEnd = arg.range?.[1] ?? arg.end;
+            } else if (arg.type === 'TemplateLiteral' && arg.quasis.length === 1 && arg.expressions.length === 0) {
+              key = arg.quasis[0].value.raw;
+              argStart = arg.range?.[0] ?? arg.start;
+              argEnd = arg.range?.[1] ?? arg.end;
+            }
+
+            if (key && argStart !== undefined && argEnd !== undefined) {
+              let mapping = mappingBySource.get(key);
+              if (!mapping) {
+                const normalized = key.replace(/\s+/g, ' ').trim();
+                mapping = mappingBySource.get(normalized);
+              }
+
+              if (mapping) {
+                occurrencesByKey.set(mapping.from, (occurrencesByKey.get(mapping.from) ?? 0) + 1);
+                hasMatches = true;
+
+                if (applyChanges) {
+                  replacements.push({
+                    start: argStart,
+                    end: argEnd,
+                    newKey: mapping.to,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Recursively visit
+        for (const key in node) {
+          if (key === 'parent') continue;
+          const child = node[key];
+          if (Array.isArray(child)) {
+            child.forEach(c => visit(c));
+          } else if (typeof child === 'object' && child !== null && typeof child.type === 'string') {
+            visit(child);
+          }
+        }
+      };
+
+      visit(ast.templateBody);
+      visit(ast.body);
+
+      // Apply replacements in reverse order to maintain correct positions
+      if (applyChanges && replacements.length > 0) {
+        replacements.sort((a, b) => b.start - a.start);
+        for (const { start, end, newKey } of replacements) {
+          // Determine the quote style from the original
+          const original = content.substring(start, end);
+          let replacement: string;
+          if (original.startsWith("'")) {
+            replacement = `'${newKey}'`;
+          } else if (original.startsWith('"')) {
+            replacement = `"${newKey}"`;
+          } else if (original.startsWith('`')) {
+            replacement = `\`${newKey}\``;
+          } else {
+            replacement = `'${newKey}'`;
+          }
+          magicString.overwrite(start, end, replacement);
+        }
+      }
+
+      return {
+        hasMatches,
+        original: content,
+        modified: replacements.length > 0 ? magicString.toString() : content,
+      };
+    } catch (e) {
+      console.warn(`Failed to parse Vue file ${filePath}:`, e);
+      return { hasMatches: false, original: content, modified: content };
+    }
+  }
+
+  /**
+   * Check if an ESTree node is a translation call.
+   */
+  private isEstreeTranslationCall(node: any): boolean {
+    if (node.type !== 'CallExpression') return false;
+    const callee = node.callee;
+
+    // t('...') or $t('...')
+    if (callee.type === 'Identifier' && (callee.name === this.translationIdentifier || callee.name === '$t')) {
+      return true;
+    }
+
+    // this.$t('...') or i18n.t('...')
+    if (callee.type === 'MemberExpression') {
+      const prop = callee.property;
+      if (prop.type === 'Identifier' && (prop.name === 't' || prop.name === '$t')) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

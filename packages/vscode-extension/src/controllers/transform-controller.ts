@@ -1,11 +1,15 @@
-import * as vscode from 'vscode';
+import * as path from 'path';
 import * as fs from 'fs';
+import * as vscode from 'vscode';
 import { ServiceContainer } from '../services/container';
 import { TransformSummary, TransformCandidate } from '@i18nsmith/transformer';
 import { quoteCliArg } from '../command-helpers';
 import { PreviewApplyController } from './preview-apply-controller';
+import { checkAndPromptForVueParser } from '../utils/vue-parser-check';
 
 const fsp = fs.promises;
+
+
 
 export interface TransformRunOptions {
   targets?: string[];
@@ -30,7 +34,11 @@ export class TransformController extends PreviewApplyController implements vscod
       return;
     }
 
-  const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
+    if (!await checkAndPromptForVueParser(workspaceFolder, options.targets)) {
+      return;
+    }
+
+    const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
   // preserve any extra CLI flags parsed from a previewable command (e.g. target globs)
   const args = options.extraArgs && options.extraArgs.length ? [...baseArgs, ...options.extraArgs] : baseArgs;
     const label = options.label ?? (options.targets?.length === 1 ? options.targets[0] : 'workspace');

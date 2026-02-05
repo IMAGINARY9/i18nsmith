@@ -9,6 +9,8 @@ import * as path from 'path';
 import { quoteCliArg } from '../command-helpers';
 import { buildSuspiciousKeySuggestion } from '../suspicious-key-helpers';
 import { PreviewApplyController } from './preview-apply-controller';
+import { checkAndPromptForVueParser } from '../utils/vue-parser-check';
+
 
 type PlaceholderIssueSummary = {
   key: string;
@@ -46,6 +48,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    if (!await checkAndPromptForVueParser(workspaceFolder, options.targets)) {
       return;
     }
 
@@ -171,6 +177,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder found');
+      return;
+    }
+
+    if (!await checkAndPromptForVueParser(workspaceFolder, options.targets)) {
       return;
     }
 
@@ -518,6 +528,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       return;
     }
 
+    if (!await checkAndPromptForVueParser(workspaceFolder)) {
+      return;
+    }
+
     // Use preview flow
     const previewResult = await vscode.window.withProgress(
       {
@@ -575,6 +589,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     });
 
     if (!newKey || newKey === warning.key) {
+      return;
+    }
+
+    if (!await checkAndPromptForVueParser(workspaceFolder)) {
       return;
     }
 
@@ -647,6 +665,10 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
 
     if (this.lastSyncSuspiciousWarnings.length === 0) {
       vscode.window.showInformationMessage('No suspicious keys found to rename. Run a sync first.');
+      return;
+    }
+
+    if (!await checkAndPromptForVueParser(workspaceFolder)) {
       return;
     }
 

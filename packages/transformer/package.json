@@ -18,7 +18,9 @@
   "dependencies": {
     "@i18nsmith/core": "workspace:*",
     "magic-string": "^0.30.21",
-    "ts-morph": "^21.0.0",
+    "ts-morph": "^21.0.0"
+  },
+  "optionalDependencies": {
     "vue-eslint-parser": "^9.4.2"
   }
 }

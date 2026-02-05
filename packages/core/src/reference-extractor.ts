@@ -12,6 +12,22 @@ import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { createDefaultProject } from './project-factory.js';
 
+// Lazy runtime loader for the optional `vue-eslint-parser`. We intentionally
+// use `eval('require')` to prevent bundlers from statically hoisting the
+// require call. The loader caches the result so we only try once.
+let _cachedVueParserRef: any | undefined;
+function getVueEslintParser(): any | null {
+  if (_cachedVueParserRef !== undefined) return _cachedVueParserRef;
+  try {
+    // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+    _cachedVueParserRef = eval('require')('vue-eslint-parser');
+    return _cachedVueParserRef;
+  } catch {
+    _cachedVueParserRef = null;
+    return null;
+  }
+}
+
 export interface TranslationReference {
   key: string;
   /**
@@ -303,10 +319,17 @@ export class ReferenceExtractor {
         fileWarnings = cachedEntry.dynamicKeyWarnings;
         nextCacheEntries[relativePath] = cachedEntry;
       } else {
-        const sourceFile = this.project.addSourceFileAtPath(absolutePath);
-        const extracted = this.extractFromFile(sourceFile);
-        fileReferences = extracted.references;
-        fileWarnings = extracted.dynamicKeyWarnings;
+        if (absolutePath.toLowerCase().endsWith('.vue')) {
+          const extracted = await this.extractFromVueFile(absolutePath);
+          fileReferences = extracted.references;
+          fileWarnings = extracted.dynamicKeyWarnings;
+        } else {
+          const sourceFile = this.project.addSourceFileAtPath(absolutePath);
+          const extracted = this.extractFromFile(sourceFile);
+          fileReferences = extracted.references;
+          fileWarnings = extracted.dynamicKeyWarnings;
+        }
+
         nextCacheEntries[relativePath] = {
           fingerprint,
           references: fileReferences,
@@ -459,5 +482,145 @@ export class ReferenceExtractor {
       followSymbolicLinks: true,
     })) as string[];
     return files.sort((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * Extract references from a single Vue file.
+   */
+  public async extractFromVueFile(filePath: string): Promise<{
+    references: TranslationReference[];
+    dynamicKeyWarnings: DynamicKeyWarning[];
+  }> {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const references: TranslationReference[] = [];
+    const dynamicKeyWarnings: DynamicKeyWarning[] = [];
+
+    const vueEslintParser = getVueEslintParser();
+    if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
+      // vue-eslint-parser not available, skip Vue AST parsing and return empty
+      // results. We avoid throwing so the extension can activate in runtime
+      // environments where the optional parser isn't installed.
+      return { references, dynamicKeyWarnings };
+    }
+
+    try {
+      const ast = vueEslintParser.parse(content, { sourceType: 'module', ecmaVersion: 2020 });
+      
+      const visit = (node: any) => {
+        if (!node) return;
+        // console.log('Visiting:', node.type);
+
+        // Check for CallExpression
+        if (node.type === 'CallExpression') {
+          // Check callee: t('key'), $t('key'), this.$t('key'), i18n.t('key')
+          const isTranslationCall = this.isEstreeTranslationCall(node);
+          if (isTranslationCall) {
+            const analysis = this.extractKeyFromEstreeNode(node);
+            if (analysis) {
+               if (analysis.kind === 'literal') {
+                 references.push(this.createEstreeReference(filePath, node, analysis.key));
+               } else {
+                 dynamicKeyWarnings.push(this.createEstreeDynamicWarning(filePath, node, analysis.reason, content));
+               }
+            }
+          }
+        }
+        
+        // Check for VDirective (v-t)
+        if (node.type === 'VAttribute' && node.directive && node.key?.name?.name === 't') {
+             // v-t="'key'" -> value is VExpressionContainer -> expression is Literal
+             if (node.value && node.value.type === 'VExpressionContainer' && node.value.expression) {
+                 const expr = node.value.expression;
+                 if (expr.type === 'Literal' && typeof expr.value === 'string') {
+                     references.push(this.createEstreeReference(filePath, node.value, expr.value));
+                 } else {
+                     // Dynamic v-t
+                     dynamicKeyWarnings.push(this.createEstreeDynamicWarning(filePath, node.value, 'expression', content));
+                 }
+             }
+        }
+
+        // Recursively visit properties
+        for (const key in node) {
+            if (key === 'parent') continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+                child.forEach(c => visit(c));
+            } else if (typeof child === 'object' && child !== null && typeof child.type === 'string') {
+                visit(child);
+            }
+        }
+      };
+
+      visit(ast.templateBody);
+      visit(ast.body); // Script (Program)
+    } catch (e) {
+      console.warn(`Failed to parse Vue file ${filePath}:`, e);
+    }
+
+    return { references, dynamicKeyWarnings };
+  }
+
+  private isEstreeTranslationCall(node: any): boolean {
+      if (node.type !== 'CallExpression') return false;
+      const callee = node.callee;
+      
+      // t('...')
+      if (callee.type === 'Identifier' && (callee.name === this.translationIdentifier || callee.name === '$t')) return true;
+      
+      // this.$t('...')
+      if (callee.type === 'MemberExpression') {
+          const prop = callee.property;
+          
+          if (prop.type === 'Identifier' && (prop.name === 't' || prop.name === '$t')) {
+              // this.$t or i18n.t
+               return true;
+          }
+      }
+      return false;
+  }
+
+  private extractKeyFromEstreeNode(node: any): { kind: 'literal'; key: string } | { kind: 'dynamic'; reason: DynamicKeyReason } | undefined {
+      const args = node.arguments;
+      if (!args || args.length === 0) return undefined;
+      const arg = args[0];
+
+      if (arg.type === 'Literal' && typeof arg.value === 'string') {
+          return { kind: 'literal', key: arg.value };
+      }
+      if (arg.type === 'TemplateLiteral') {
+          if (arg.quasis.length === 1 && arg.expressions.length === 0) {
+              return { kind: 'literal', key: arg.quasis[0].value.raw };
+          }
+          return { kind: 'dynamic', reason: 'template' };
+      }
+      if (arg.type === 'BinaryExpression') {
+          return { kind: 'dynamic', reason: 'binary' };
+      }
+      return { kind: 'dynamic', reason: 'expression' };
+  }
+
+  private createEstreeReference(filePath: string, node: any, key: string): TranslationReference {
+      const loc = node.loc?.start ?? { line: 1, column: 0 };
+      return {
+          key,
+          filePath: this.getRelativePath(filePath),
+          position: { line: loc.line, column: loc.column },
+      };
+  }
+
+  private createEstreeDynamicWarning(filePath: string, node: any, reason: DynamicKeyReason, content: string): DynamicKeyWarning {
+       const loc = node.loc?.start ?? { line: 1, column: 0 };
+       let expression = '<dynamic>';
+       if (node.range && Array.isArray(node.range)) {
+           expression = content.substring(node.range[0], node.range[1]);
+       }
+
+       return {
+           filePath: this.getRelativePath(filePath),
+           position: { line: loc.line, column: loc.column },
+           expression,
+           reason
+       };
   }
 }
