@@ -199,6 +199,14 @@ export interface I18nConfig {
   sync?: SyncConfig;
 
   diagnostics?: DiagnosticsConfig;
+
+  /**
+   * Explicit list of frameworks to enable for extraction.
+   * When specified, only these frameworks will be used for scanning files.
+   * When omitted, frameworks are auto-detected based on file extensions.
+   * Available frameworks: 'react', 'vue', 'svelte', etc.
+   */
+  frameworks?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

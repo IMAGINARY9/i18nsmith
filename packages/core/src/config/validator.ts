@@ -136,6 +136,10 @@ export function validateConfig(config: I18nConfig): ConfigValidationIssue[] {
   validateStringList('sync.dynamicKeyAssumptions', sync.dynamicKeyAssumptions, issues);
   validateStringList('sync.dynamicKeyGlobs', sync.dynamicKeyGlobs, issues);
 
+  if (config.frameworks) {
+    validateStringList('frameworks', config.frameworks, issues);
+  }
+
   return issues;
 }
 
