@@ -3,8 +3,8 @@ import path from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta } from '@i18nsmith/core';
-import { Transformer } from '@i18nsmith/transformer';
-import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer';
+// import { Transformer } from '@i18nsmith/transformer';
+// import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer';
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
 import { CliError, withErrorHandling } from '../utils/errors.js';
@@ -34,6 +34,7 @@ const collectTargetPatterns = (value: string | string[], previous: string[]) => 
   return [...previous, ...tokens];
 };
 
+/* Temporarily disabled during framework migration
 function printTransformSummary(summary: TransformSummary) {
   const counts = summary.candidates.reduce(
     (acc, c) => {
@@ -186,6 +187,7 @@ function createProgressLogger() {
     },
   };
 }
+*/
 
 export function registerTransform(program: Command) {
   program
@@ -204,7 +206,9 @@ export function registerTransform(program: Command) {
     .option('--apply-preview <path>', 'Apply a previously saved transform preview JSON file safely')
     .action(
       withErrorHandling(async (options: TransformOptions) => {
-      if (options.applyPreview) {
+        throw new CliError('Transform command is temporarily disabled during framework migration. Use scan command instead.');
+        /* Temporarily disabled during framework migration
+        if (options.applyPreview) {
         await applyPreviewFile('transform', options.applyPreview);
         return;
       }
@@ -330,6 +334,7 @@ export function registerTransform(program: Command) {
         }
         throw new CliError(`Transform failed: ${errorMessage}`);
       }
+      */
     })
     );
 }

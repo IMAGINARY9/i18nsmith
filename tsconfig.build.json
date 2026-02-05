@@ -3,7 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/translation" },
-    { "path": "packages/transformer" },
+    // { "path": "packages/transformer" }, // Temporarily excluded - old architecture to be replaced by framework adapters
     { "path": "packages/translator-mock" },
     { "path": "packages/cli" }
   ]
