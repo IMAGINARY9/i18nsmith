@@ -571,6 +571,12 @@ export class VueParser implements FileParser {
       return false;
     }
 
+    // Allow single tokens that are at least 3 characters (covers "Alpha", "Beta", etc.)
+    // or multiple tokens where at least one is word-like
+    if (sanitizedTokens.length === 1) {
+      return sanitizedTokens[0].length >= 3;
+    }
+
     const wordLikeTokens = sanitizedTokens.filter((token) => /[\p{L}\d]{2,}/u.test(token));
     return wordLikeTokens.length > 0;
   }

@@ -3,6 +3,8 @@ import {
   JsxExpression,
 } from 'ts-morph';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES, ScannerNodeCandidate } from '@i18nsmith/core';
+import type { ScanCandidate } from '@i18nsmith/core';
+import type { Project } from 'ts-morph';
 import type { TransformCandidate } from '../types.js';
 import type { I18nWriter } from './Writer.js';
 
@@ -16,11 +18,30 @@ export class ReactWriter implements I18nWriter {
     return ['ts', 'tsx', 'js', 'jsx'].includes(ext || '');
   }
 
-  async transform(_filePath: string, _content: string, _candidates: TransformCandidate[]): Promise<{ content: string; didMutate: boolean }> {
-    // For React files, we need to work with ts-morph SourceFile objects
-    // This method will be called by the Transformer after it has set up the SourceFile
-    // The actual transformation logic will be moved here from the Transformer class
-    throw new Error('ReactWriter.transform should be called via Transformer.applyWithWriter');
+  async prepare(candidate: ScanCandidate, project?: Project): Promise<TransformCandidate | null> {
+    if (candidate.kind === 'jsx-text') {
+      return {
+        ...candidate,
+        suggestedKey: candidate.suggestedKey || 'default.key',
+        hash: candidate.hash || '',
+        status: 'pending',
+        raw: candidate as ScannerNodeCandidate,
+      } as TransformCandidate & { raw: ScannerNodeCandidate };
+    }
+    // other kinds
+    return null;
+  }
+
+  async transform(candidate: TransformCandidate, project?: Project): Promise<{ content: string; didMutate: boolean }> {
+    if (!project) {
+      return { didMutate: false, content: '' };
+    }
+    const sourceFile = project.getSourceFile(candidate.filePath);
+    if (!sourceFile) {
+      return { didMutate: false, content: '' };
+    }
+    const didMutate = this.applyCandidate(candidate as InternalCandidate);
+    return { didMutate, content: sourceFile.getFullText() };
   }
 
   applyCandidate(candidate: InternalCandidate): boolean {
