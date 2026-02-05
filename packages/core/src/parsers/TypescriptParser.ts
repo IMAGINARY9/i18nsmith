@@ -27,6 +27,7 @@ export class TypescriptParser implements FileParser {
   private preserveNewlines: boolean;
   private decodeHtmlEntities: boolean;
   private activeSkipLog?: SkippedCandidate[];
+  private lastSkipped: SkippedCandidate[] = [];
 
   constructor(config: I18nConfig, workspaceRoot: string) {
     this.config = config;
@@ -47,36 +48,54 @@ export class TypescriptParser implements FileParser {
     return ['.ts', '.tsx', '.js', '.jsx'].includes(ext);
   }
 
-  parse(filePath: string, _content: string, project?: Project): ScanCandidate[] {
+  parse(
+    filePath: string,
+    content: string,
+    project?: Project,
+    options: { scanCalls?: boolean } = {}
+  ): ScanCandidate[] {
     const scannerProject = project ?? createScannerProject();
 
     let sourceFile: SourceFile;
+    let shouldForget = false;
     if (project) {
-      // For tests with in-memory files, get from project
+      // For tests with in-memory files, get from project or create from content
       const foundFile = project.getSourceFile(filePath) ?? project.getSourceFile(path.basename(filePath));
-      if (!foundFile) {
-        throw new Error(`Source file not found in project: ${filePath}`);
+      if (foundFile) {
+        sourceFile = foundFile;
+      } else {
+        sourceFile = project.createSourceFile(filePath, content, { overwrite: true });
+        shouldForget = true;
       }
-      sourceFile = foundFile;
     } else {
       // For real files, add from path
       sourceFile = scannerProject.addSourceFileAtPath(filePath);
+      shouldForget = true;
     }
 
-    const candidates: ScanCandidate[] = [];
-    const skipped: SkippedCandidate[] = [];
-    this.activeSkipLog = skipped;
+  const candidates: ScanCandidate[] = [];
+  const skipped: SkippedCandidate[] = [];
+  this.activeSkipLog = skipped;
 
     const record = (candidate: ScanCandidate) => {
       candidates.push(candidate);
     };
 
-    this.scanSourceFile(sourceFile, false, record);
+  this.scanSourceFile(sourceFile, options.scanCalls ?? false, record);
 
-    sourceFile.forget();
+    if (shouldForget) {
+      sourceFile.forget();
+    }
     this.activeSkipLog = undefined;
+    this.lastSkipped = skipped;
 
     return candidates;
+  }
+
+  getSkippedCandidates(): SkippedCandidate[] {
+    const skipped = this.lastSkipped;
+    this.lastSkipped = [];
+    return skipped;
   }
 
   private scanSourceFile(

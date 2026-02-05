@@ -179,30 +179,40 @@ export class Scanner {
       }
 
       try {
-        const content = this.readFileContent(filePath);
-        const fileCandidates = parser.parse(filePath, content, this.project); // Pass the project for ts-morph based parsing
+        const projectFile = this.project.getSourceFile(filePath) ?? this.project.getSourceFile(path.basename(filePath));
+        const content = projectFile ? projectFile.getFullText() : this.readFileContent(filePath);
+        const fileCandidates = parser.parse(filePath, content, this.project, {
+          scanCalls: options?.scanCalls,
+        }); // Pass the project for ts-morph based parsing
         candidates.push(...fileCandidates);
+        if (typeof parser.getSkippedCandidates === 'function') {
+          buckets.skipped.push(...parser.getSkippedCandidates());
+        }
         filesExamined.push(this.getRelativePath(filePath));
         filesScanned += 1;
-
-        // Apply confidence bucketing
-        for (const candidate of fileCandidates) {
-          const bucket = this.getConfidenceBucket(candidate);
-          if (bucket === "high") {
-            buckets.highConfidence.push(candidate);
-          } else {
-            buckets.needsReview.push(candidate);
-          }
-        }
       } catch (error) {
         console.warn(`Failed to parse ${filePath}: ${error}`);
+      }
+    }
+
+    const dedupeCandidates = this.config.extraction?.dedupeCandidates ?? true;
+    const uniqueCandidates = dedupeCandidates
+      ? Array.from(new Map(candidates.map(candidate => [candidate.id, candidate])).values())
+      : candidates;
+
+    for (const candidate of uniqueCandidates) {
+      const bucket = this.getConfidenceBucket(candidate);
+      if (bucket === "high") {
+        buckets.highConfidence.push(candidate);
+      } else {
+        buckets.needsReview.push(candidate);
       }
     }
 
     const summary: ScanSummary = {
       filesScanned,
       filesExamined,
-      candidates,
+      candidates: uniqueCandidates,
       buckets,
     };
 
@@ -308,24 +318,8 @@ export class Scanner {
         const includePatterns = patterns.include.length ? patterns.include : DEFAULT_INCLUDE;
         const excludePatterns = patterns.exclude.length ? patterns.exclude : [];
 
-        // Check if file matches include patterns
-        const matchesInclude = includePatterns.some(pattern => {
-          // Simple glob matching for in-memory files
-          if (pattern.includes('*')) {
-            const regex = new RegExp(pattern.replace(/\*/g, '.*').replace(/\//g, '\\/'));
-            return regex.test(relativePath);
-          }
-          return relativePath === pattern;
-        });
-
-        // Check if file matches exclude patterns
-        const matchesExclude = excludePatterns.some(pattern => {
-          if (pattern.includes('*')) {
-            const regex = new RegExp(pattern.replace(/\*/g, '.*').replace(/\//g, '\\/'));
-            return regex.test(relativePath);
-          }
-          return relativePath === pattern;
-        });
+        const matchesInclude = this.matchesAnyGlobPattern(relativePath, includePatterns, filePath);
+        const matchesExclude = this.matchesAnyGlobPattern(relativePath, excludePatterns, filePath);
 
         return matchesInclude && !matchesExclude;
       });
@@ -375,8 +369,83 @@ export class Scanner {
   }
 
   private getRelativePath(filePath: string): string {
+    if (!path.isAbsolute(filePath)) {
+      return filePath;
+    }
     const relative = path.relative(this.workspaceRoot, filePath);
     return relative || filePath;
+  }
+
+  private matchesAnyGlobPattern(relativePath: string, patterns: string[], absolutePath: string): boolean {
+    if (!patterns.length) {
+      return false;
+    }
+
+  const normalizedRelative = this.normalizeGlobPath(relativePath);
+  const normalizedAbsolute = this.normalizeGlobPath(absolutePath);
+  const normalizedBase = this.normalizeGlobPath(path.basename(relativePath));
+
+    return patterns.some((pattern) => {
+      const isAbsolute = path.isAbsolute(pattern);
+      const regex = this.globToRegExp(pattern);
+      if (isAbsolute) {
+        return regex.test(normalizedAbsolute);
+      }
+      return (
+        regex.test(normalizedRelative) ||
+        regex.test(normalizedBase) ||
+        regex.test(normalizedAbsolute)
+      );
+    });
+  }
+
+  private normalizeGlobPath(input: string): string {
+    return input.replace(/\\/g, '/');
+  }
+
+  private globToRegExp(pattern: string): RegExp {
+    const normalized = this.normalizeGlobPath(pattern);
+    const braceExpanded = normalized.replace(/\{([^}]+)\}/g, (_, inner) => {
+      const parts = inner.split(',').map((item: string) => item.trim());
+      return `(${parts.join('|')})`;
+    });
+
+    let regex = '';
+    let index = 0;
+    while (index < braceExpanded.length) {
+      const char = braceExpanded[index];
+
+      if (char === '*') {
+        if (braceExpanded[index + 1] === '*') {
+          if (braceExpanded[index + 2] === '/') {
+            regex += '(?:.*/)?';
+            index += 3;
+            continue;
+          }
+          regex += '.*';
+          index += 2;
+          continue;
+        }
+        regex += '[^/]*';
+        index += 1;
+        continue;
+      }
+
+      if (char === '?') {
+        regex += '.';
+        index += 1;
+        continue;
+      }
+
+      if ("\\.^$+[]{}".includes(char)) {
+        regex += `\\${char}`;
+      } else {
+        regex += char;
+      }
+      index += 1;
+    }
+
+    return new RegExp(`^${regex}$`);
   }
 
   private createProject(): Project {

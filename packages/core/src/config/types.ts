@@ -169,6 +169,14 @@ export interface I18nConfig {
     allowPatterns?: string[];
     /** Regex patterns that should always be skipped (override heuristics) */
     denyPatterns?: string[];
+    /** Additional attributes to treat as translatable in Vue templates */
+    translatableAttributes?: string[];
+    /** Attributes to exclude from translation in Vue templates */
+    nonTranslatableAttributes?: string[];
+    /** Attribute name suffixes that should be treated as translatable (default: label, text, title, message, description, hint, placeholder) */
+    attributeSuffixes?: string[];
+    /** Deduplicate identical candidates emitted multiple times (default: true) */
+    dedupeCandidates?: boolean;
   };
   /**
    * Translation service configuration

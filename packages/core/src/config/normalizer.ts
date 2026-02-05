@@ -295,6 +295,10 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
     : (DEFAULT_LOCALE_SORT_KEYS as LocaleSortOrder);
 
   const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
+  const extractionConfig = parsed.extraction ?? {};
+  const translatableAttributes = ensureUniqueStrings(extractionConfig.translatableAttributes);
+  const nonTranslatableAttributes = ensureUniqueStrings(extractionConfig.nonTranslatableAttributes);
+  const attributeSuffixes = ensureUniqueStrings(extractionConfig.attributeSuffixes);
 
   const normalized: I18nConfig = {
     version: (parsed.version ?? 1) as 1,
@@ -306,6 +310,28 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
     minTextLength: typeof parsed.minTextLength === 'number' && parsed.minTextLength >= 0
       ? parsed.minTextLength
       : DEFAULT_MIN_TEXT_LENGTH,
+    extraction: {
+      minLetterCount: typeof extractionConfig.minLetterCount === 'number' && extractionConfig.minLetterCount >= 0
+        ? extractionConfig.minLetterCount
+        : undefined,
+      minLetterRatio: typeof extractionConfig.minLetterRatio === 'number' && extractionConfig.minLetterRatio >= 0
+        ? extractionConfig.minLetterRatio
+        : undefined,
+      preserveNewlines: typeof extractionConfig.preserveNewlines === 'boolean'
+        ? extractionConfig.preserveNewlines
+        : undefined,
+      decodeHtmlEntities: typeof extractionConfig.decodeHtmlEntities === 'boolean'
+        ? extractionConfig.decodeHtmlEntities
+        : undefined,
+      allowPatterns: ensureOptionalArray(extractionConfig.allowPatterns),
+      denyPatterns: ensureOptionalArray(extractionConfig.denyPatterns),
+      translatableAttributes,
+      nonTranslatableAttributes,
+      attributeSuffixes,
+      dedupeCandidates: typeof extractionConfig.dedupeCandidates === 'boolean'
+        ? extractionConfig.dedupeCandidates
+        : true,
+    },
     translation: translationConfig,
     translationAdapter: {
       module: adapterModule,
