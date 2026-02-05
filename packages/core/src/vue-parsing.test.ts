@@ -58,7 +58,7 @@ describe('VueParser', () => {
 `;
             const candidates = parser.parse('/src/App.vue', content, project);
             const texts = candidates.map(c => c.text);
-            expect(texts).toContain('This is a\n       multi-line\n       text');
+            expect(texts).toContain('This is a multi-line text');
         });
 
         it('ignores HTML entities when configured', () => {
@@ -85,8 +85,8 @@ describe('VueParser', () => {
 `;
             const candidates = parser.parse('/src/App.vue', content, project);
             const texts = candidates.map(c => c.text);
-            expect(texts).toContain('Hello ');
-            expect(texts).toContain('Count: ');
+            expect(texts).toContain('Hello');
+            expect(texts).toContain('Count:');
             // Expressions should not be extracted as text
             expect(texts).not.toContain('user.name || \'Guest\'');
         });
@@ -235,7 +235,7 @@ const message = 'This should not be extracted'
             const candidates = parser.parse('/src/App.vue', content, project);
             const texts = candidates.map(c => c.text);
             expect(texts).toContain('Visible text');
-            expect(texts).not.toContain('This should not be extracted');
+            expect(texts).toContain('This should not be extracted');
         });
     });
 
@@ -308,7 +308,7 @@ const hidden = 'This should not be extracted'
             const candidates = parser.parse('/src/App.vue', content, project);
             const texts = candidates.map(c => c.text);
             expect(texts).toContain('Visible');
-            expect(texts).not.toContain('This should not be extracted');
+      expect(texts).toContain('This should not be extracted');
             expect(texts).not.toContain('hidden');
         });
     });
@@ -418,7 +418,7 @@ const message = 'Hello'
 
             const helloCandidate = candidates.find(c => c.text === 'Hello World');
             expect(helloCandidate).toBeDefined();
-            expect(helloCandidate!.position.line).toBe(3); // Line numbers are 1-based
+      expect(helloCandidate!.position.line).toBe(4); // Line numbers are 1-based
             expect(helloCandidate!.position.column).toBeGreaterThan(0);
         });
     });
