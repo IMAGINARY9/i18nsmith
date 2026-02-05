@@ -11,6 +11,7 @@ import MagicString from 'magic-string';
 
 // Lazy loader for optional vue-eslint-parser
 let _cachedVueParser: any | undefined;
+let _vueParserMissingWarned = false;
 function getVueEslintParser(): any | null {
   if (_cachedVueParser !== undefined) return _cachedVueParser;
   try {
@@ -609,6 +610,10 @@ export class KeyRenamer {
     const content = await fs.readFile(filePath, 'utf-8');
     
     if (!vueParser || typeof vueParser.parse !== 'function') {
+      if (!_vueParserMissingWarned) {
+        _vueParserMissingWarned = true;
+        console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue key renaming will be skipped for .vue files.');
+      }
       // Parser not available, skip Vue files
       return { hasMatches: false, original: content, modified: content };
     }

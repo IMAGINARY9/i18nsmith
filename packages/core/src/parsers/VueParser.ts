@@ -5,6 +5,7 @@ import path from "path";
 // dependency at build time — we only attempt to require it at runtime when
 // actually needed, and we handle the case where it isn't installed.
 let _cachedVueParser: any | undefined;
+let _vueParserMissingWarned = false;
 function getVueEslintParser(): any | null {
   if (_cachedVueParser !== undefined) return _cachedVueParser;
   try {
@@ -29,7 +30,7 @@ const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
 /**
  * Attributes that typically contain translatable text
  */
-const TRANSLATABLE_ATTRIBUTES = new Set([
+const DEFAULT_TRANSLATABLE_ATTRIBUTES = new Set([
   'alt',
   'aria-label',
   'aria-placeholder',
@@ -55,7 +56,7 @@ const TRANSLATABLE_ATTRIBUTES = new Set([
 /**
  * Attributes that should never be considered for translation
  */
-const NON_TRANSLATABLE_ATTRIBUTES = new Set([
+const DEFAULT_NON_TRANSLATABLE_ATTRIBUTES = new Set([
   'class',
   'id',
   'name',
@@ -125,6 +126,11 @@ export class VueParser implements FileParser {
   private preserveNewlines: boolean;
   private decodeHtmlEntities: boolean;
   private activeSkipLog?: SkippedCandidate[];
+  private readonly translatableAttributes: Set<string>;
+  private readonly nonTranslatableAttributes: Set<string>;
+  private readonly attributeSuffixes: string[];
+  private seenCandidateIds: Set<string> = new Set();
+  private lastSkipped: SkippedCandidate[] = [];
 
   constructor(config: I18nConfig, workspaceRoot: string) {
     this.config = config;
@@ -138,23 +144,49 @@ export class VueParser implements FileParser {
     this.preserveNewlines = this.config.extraction?.preserveNewlines ?? false;
     this.decodeHtmlEntities =
       this.config.extraction?.decodeHtmlEntities ?? true;
+    const extraTranslatable = this.config.extraction?.translatableAttributes ?? [];
+    const extraNonTranslatable = this.config.extraction?.nonTranslatableAttributes ?? [];
+    const suffixes = this.config.extraction?.attributeSuffixes;
+    this.translatableAttributes = new Set([
+      ...DEFAULT_TRANSLATABLE_ATTRIBUTES,
+      ...extraTranslatable.map((item) => item.toLowerCase()),
+    ]);
+    this.nonTranslatableAttributes = new Set([
+      ...DEFAULT_NON_TRANSLATABLE_ATTRIBUTES,
+      ...extraNonTranslatable.map((item) => item.toLowerCase()),
+    ]);
+    this.attributeSuffixes = (suffixes && suffixes.length)
+      ? suffixes.map((item) => item.toLowerCase())
+      : ['label', 'text', 'title', 'message', 'description', 'hint', 'placeholder'];
   }
 
   canHandle(filePath: string): boolean {
     return path.extname(filePath).toLowerCase() === '.vue';
   }
 
-  parse(filePath: string, content: string, _project?: Project): ScanCandidate[] {
+  parse(
+    filePath: string,
+    content: string,
+    _project?: Project,
+    _options: { scanCalls?: boolean } = {}
+  ): ScanCandidate[] {
     const candidates: ScanCandidate[] = [];
     this.activeSkipLog = [];
+    this.seenCandidateIds.clear();
 
     try {
       const vueEslintParser = getVueEslintParser();
       if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
+        if (!_vueParserMissingWarned) {
+          _vueParserMissingWarned = true;
+          console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue SFC parsing will use a fallback extractor. Install it for better accuracy.');
+        }
         // Fallback: no parser available - use a minimal text-based extraction
         // so the extension still works when the optional dependency isn't
         // installed in the runtime environment.
         this.extractFromContent(content, filePath, candidates);
+        this.lastSkipped = this.activeSkipLog ?? [];
+        this.activeSkipLog = undefined;
         return candidates;
       }
 
@@ -182,7 +214,15 @@ export class VueParser implements FileParser {
       this.extractFromContent(content, filePath, candidates);
     }
 
+    this.lastSkipped = this.activeSkipLog ?? [];
+    this.activeSkipLog = undefined;
     return candidates;
+  }
+
+  getSkippedCandidates(): SkippedCandidate[] {
+    const skipped = this.lastSkipped;
+    this.lastSkipped = [];
+    return skipped;
   }
 
   private extractFromTemplate(templateBody: any, content: string, filePath: string, candidates: ScanCandidate[]) {
@@ -273,26 +313,18 @@ export class VueParser implements FileParser {
     const normalizedName = attrName.toLowerCase();
     
     // Explicitly non-translatable attributes
-    if (NON_TRANSLATABLE_ATTRIBUTES.has(normalizedName)) {
+    if (this.nonTranslatableAttributes.has(normalizedName)) {
       return false;
     }
     
     // Explicitly translatable attributes
-    if (TRANSLATABLE_ATTRIBUTES.has(normalizedName)) {
+    if (this.translatableAttributes.has(normalizedName)) {
       return true;
     }
     
     // Heuristics for unknown attributes:
     // - Attributes ending with common translatable suffixes
-    if (
-      normalizedName.endsWith('label') ||
-      normalizedName.endsWith('text') ||
-      normalizedName.endsWith('title') ||
-      normalizedName.endsWith('message') ||
-      normalizedName.endsWith('description') ||
-      normalizedName.endsWith('hint') ||
-      normalizedName.endsWith('placeholder')
-    ) {
+    if (this.attributeSuffixes.some((suffix) => normalizedName.endsWith(suffix))) {
       return true;
     }
     
@@ -402,6 +434,10 @@ export class VueParser implements FileParser {
     if (this.shouldSkip(cleanText)) return;
 
     const id = `${filePath}:${loc.start.line}:${loc.start.column}:${kind}`;
+    if (this.seenCandidateIds.has(id)) {
+      return;
+    }
+    this.seenCandidateIds.add(id);
     const position = {
       line: loc.start.line,
       column: loc.start.column,
@@ -452,7 +488,7 @@ export class VueParser implements FileParser {
       return true;
     }
 
-    if (text.length < (this.config.minTextLength ?? 3)) {
+    if (text.length < (this.config.minTextLength ?? 1)) {
       this.logSkip(text, 'below_min_length');
       return true;
     }
@@ -466,8 +502,8 @@ export class VueParser implements FileParser {
       return true;
     }
 
-    const minLetterCount = this.config.extraction?.minLetterCount ?? 2;
-    const minLetterRatio = this.config.extraction?.minLetterRatio ?? 0.5;
+  const minLetterCount = this.config.extraction?.minLetterCount ?? 2;
+  const minLetterRatio = this.config.extraction?.minLetterRatio ?? 0.25;
 
     const letterRatio = letterCount / totalLength;
 
@@ -491,6 +527,11 @@ export class VueParser implements FileParser {
       return true;
     }
 
+    if (!this.hasMeaningfulTextShape(text)) {
+      this.logSkip(text, 'non_sentence');
+      return true;
+    }
+
     return false;
   }
 
@@ -501,6 +542,37 @@ export class VueParser implements FileParser {
         reason,
       });
     }
+  }
+
+  private hasMeaningfulTextShape(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    if (HTML_ENTITY_PATTERN.test(trimmed)) {
+      return false;
+    }
+
+    if (REPEATED_SYMBOL_PATTERN.test(trimmed)) {
+      return false;
+    }
+
+    const rawTokens = trimmed.split(/\s+/).filter(Boolean);
+    if (!rawTokens.length) {
+      return false;
+    }
+
+    const sanitizedTokens = rawTokens
+      .map((token) => token.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, ''))
+      .filter(Boolean);
+
+    if (!sanitizedTokens.length) {
+      return false;
+    }
+
+    const wordLikeTokens = sanitizedTokens.filter((token) => /[\p{L}\d]{2,}/u.test(token));
+    return wordLikeTokens.length > 0;
   }
 
   private compilePatterns(patterns?: string[]): RegExp[] {

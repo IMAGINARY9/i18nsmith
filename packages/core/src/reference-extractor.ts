@@ -16,6 +16,7 @@ import { createDefaultProject } from './project-factory.js';
 // use `eval('require')` to prevent bundlers from statically hoisting the
 // require call. The loader caches the result so we only try once.
 let _cachedVueParserRef: any | undefined;
+let _vueParserMissingWarned = false;
 function getVueEslintParser(): any | null {
   if (_cachedVueParserRef !== undefined) return _cachedVueParserRef;
   try {
@@ -497,6 +498,10 @@ export class ReferenceExtractor {
 
     const vueEslintParser = getVueEslintParser();
     if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
+      if (!_vueParserMissingWarned) {
+        _vueParserMissingWarned = true;
+        console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue reference extraction will be skipped.');
+      }
       // vue-eslint-parser not available, skip Vue AST parsing and return empty
       // results. We avoid throwing so the extension can activate in runtime
       // environments where the optional parser isn't installed.
