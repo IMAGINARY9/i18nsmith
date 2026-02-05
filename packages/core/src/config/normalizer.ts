@@ -360,6 +360,7 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
       seedValue: typeof syncConfig.seedValue === 'string' ? syncConfig.seedValue : '',
     },
     diagnostics: diagnosticsConfig,
+    frameworks: ensureOptionalArray(parsed.frameworks),
   };
 
   return normalized;
