@@ -24,3 +24,4 @@ export { AdapterRegistry } from './registry.js';
 
 // Export adapters
 export { ReactAdapter } from './ReactAdapter.js';
+export { VueAdapter } from './adapters/vue.js';
