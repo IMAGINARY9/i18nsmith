@@ -51,8 +51,8 @@ function findKeyRangeAtPosition(
 ): vscode.Range | null {
   const line = document.lineAt(position.line).text;
   const patterns = [
-    /t\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
-    /t\(\s*['"`]([^'"`]+)['"`]\s*,/g,
+    /\$?t\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
+    /\$?t\(\s*['"`]([^'"`]+)['"`]\s*,/g,
   ];
   for (const pattern of patterns) {
     let m: RegExpExecArray | null;

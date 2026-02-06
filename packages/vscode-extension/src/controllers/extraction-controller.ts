@@ -74,8 +74,7 @@ export class ExtractionController implements vscode.Disposable {
     }
 
     const literalValue = this.normalizeSelectedLiteral(selectionText || text);
-    const wrapInJsx = this.shouldWrapSelectionInJsx(document, range, selectionText);
-    const replacement = wrapInJsx ? `{t('${key}')}` : `t('${key}')`;
+    const replacement = this.buildReplacement(document, range, selectionText, key);
 
     const sourceChange = await this.createSourceFilePreviewChange(document, range, replacement, workspaceFolder.uri.fsPath);
 
@@ -134,6 +133,72 @@ export class ExtractionController implements vscode.Disposable {
       return trimmed.slice(1, -1);
     }
     return trimmed;
+  }
+
+  /**
+   * Build the replacement string based on the document type and cursor position.
+   * - JSX files: `{t('key')}` for JSX text, `t('key')` for attributes
+   * - Vue template: `{{ $t('key') }}` for text, `$t('key')` for attributes
+   * - Vue script / other: `t('key')`
+   */
+  private buildReplacement(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    selectedText: string,
+    key: string
+  ): string {
+    if (document.languageId === 'vue') {
+      const inTemplate = this.isInsideVueTemplate(document, range.start);
+      if (inTemplate) {
+        const trimmed = selectedText.trim();
+        const isPlainText = !/^['"`]/.test(trimmed) && /[A-Za-z0-9]/.test(trimmed);
+        const charBefore = this.getCharBefore(document, range.start);
+        const charAfter = this.getCharAfter(document, range.end);
+        const isBoundary =
+          (!charBefore || charBefore === '>' || /\s/.test(charBefore)) &&
+          (!charAfter || charAfter === '<' || /\s/.test(charAfter));
+        if (isPlainText && isBoundary) {
+          return `{{ $t('${key}') }}`;
+        }
+        return `$t('${key}')`;
+      }
+      // Inside <script> – use standard t()
+      return `t('${key}')`;
+    }
+
+    const wrapInJsx = this.shouldWrapSelectionInJsx(document, range, selectedText);
+    return wrapInJsx ? `{t('${key}')}` : `t('${key}')`;
+  }
+
+  /**
+   * Rough heuristic: check if the position is inside a <template> block in a Vue SFC.
+   */
+  private isInsideVueTemplate(document: vscode.TextDocument, position: vscode.Position): boolean {
+    const text = document.getText();
+    const offset = document.offsetAt(position);
+
+    // Find the last <template...> before offset
+    const templateOpenRe = /<template[^>]*>/gi;
+    const templateCloseRe = /<\/template>/gi;
+
+    let lastTemplateOpen = -1;
+    let lastTemplateClose = -1;
+
+    let m: RegExpExecArray | null;
+    while ((m = templateOpenRe.exec(text)) !== null) {
+      if (m.index + m[0].length <= offset) {
+        lastTemplateOpen = m.index + m[0].length;
+      }
+    }
+    while ((m = templateCloseRe.exec(text)) !== null) {
+      if (m.index <= offset) {
+        lastTemplateClose = m.index;
+      }
+    }
+
+    // If the last <template> open tag is after the last </template> close tag
+    // and both are before our offset, we're inside the template
+    return lastTemplateOpen > -1 && lastTemplateOpen > lastTemplateClose;
   }
 
   private shouldWrapSelectionInJsx(

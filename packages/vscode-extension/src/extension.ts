@@ -16,6 +16,7 @@ import {
 import { summarizeReportIssues } from "./report-utils";
 import { registerMarkdownPreviewProvider } from "./markdown-preview";
 import { ServiceContainer } from "./services/container";
+import { CliService } from "./services/cli-service";
 import { ConfigurationController } from "./controllers/configuration-controller";
 import { SyncController } from "./controllers/sync-controller";
 import { TransformController } from "./controllers/transform-controller";
@@ -77,6 +78,7 @@ let quickActionsProvider: QuickActionsProvider | null = null;
 let quickActionSelectionState = false;
 let configurationService: ConfigurationService | null = null;
 let lastScanResult: ScanResult | null = null;
+let detectedAdapter: string | undefined;
 
 function logVerbose(message: string) {
   const config = vscode.workspace.getConfiguration("i18nsmith");
@@ -252,6 +254,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Ensure .gitignore has i18nsmith artifacts listed (non-blocking)
   cliService.ensureGitignoreEntries();
 
+  // Detect framework adapter for context-aware Quick Actions (non-blocking)
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot) {
+    services.frameworkDetectionService.detectFramework(workspaceRoot).then((info) => {
+      detectedAdapter = info.adapter;
+    }).catch(() => { /* ignore detection failures */ });
+  }
+
   quickActionsProvider = new QuickActionsProvider();
   const quickActionsView = vscode.window.createTreeView(
     "i18nsmith.quickActionsView",
@@ -326,6 +336,12 @@ export function activate(context: vscode.ExtensionContext) {
       refreshQuickActionsModel({ silent: true });
     }
     services.reportWatcher.refresh();
+    codeLensProvider.refresh();
+  });
+
+  // Refresh CodeLens when report watcher detects file changes
+  services.reportWatcher.onDidRefresh(() => {
+    codeLensProvider.refresh();
   });
 
   // Register commands
@@ -345,9 +361,6 @@ export function activate(context: vscode.ExtensionContext) {
         await refreshDiagnosticsWithMessage("command");
       }
     ),
-    // vscode.commands.registerCommand('i18nsmith.addPlaceholder', async (key: string, workspaceRoot: string) => {
-    //   await addPlaceholderWithPreview(key, workspaceRoot);
-    // }),
     vscode.commands.registerCommand(
       "i18nsmith.extractKey",
       async (uri: vscode.Uri, range: vscode.Range, text: string) => {
@@ -384,15 +397,9 @@ export function activate(context: vscode.ExtensionContext) {
         await syncController.renameSuspiciousKeysInFile();
       }
     ),
-    // vscode.commands.registerCommand('i18nsmith.ignoreSuspiciousKey', async (uri: vscode.Uri, line: number) => {
-    //   await insertIgnoreComment(uri, line, 'suspicious-key');
-    // }),
     vscode.commands.registerCommand("i18nsmith.openLocaleFile", async () => {
       await openSourceLocaleFile();
     }),
-    // vscode.commands.registerCommand('i18nsmith.checkFile', async () => {
-    //   await checkCurrentFile();
-    // }),
     vscode.commands.registerCommand("i18nsmith.extractSelection", async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.selection.isEmpty) {
@@ -422,6 +429,55 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("i18nsmith.showOutput", () => {
       services.smartScanner.showOutput();
+    }),
+    vscode.commands.registerCommand("i18nsmith.checkFile", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage("No active editor found");
+        return;
+      }
+      // Run a scan and refresh; the diagnostics already filter per-file
+      await runHealthCheckWithSummary({ revealOutput: false });
+    }),
+    vscode.commands.registerCommand("i18nsmith.renameKey", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage("No active editor found");
+        return;
+      }
+      const document = editor.document;
+      const position = editor.selection.active;
+      const line = document.lineAt(position.line).text;
+      const keyMatch = line.match(/\$?t\(\s*['"`]([^'"`]+)['"`]/);
+      if (!keyMatch) {
+        vscode.window.showWarningMessage("Place cursor on a t() or $t() call to rename the key.");
+        return;
+      }
+      const oldKey = keyMatch[1];
+      const newKey = await vscode.window.showInputBox({
+        prompt: `Rename key "${oldKey}" to:`,
+        value: oldKey,
+        placeHolder: "e.g., common.new_key_name",
+      });
+      if (!newKey || newKey === oldKey) {
+        return;
+      }
+      await syncController.renameKey(oldKey, newKey);
+    }),
+    vscode.commands.registerCommand("i18nsmith.ignoreSuspiciousKey", async (uri: vscode.Uri, line: number) => {
+      if (!uri || typeof line !== 'number') {
+        return;
+      }
+      const document = await vscode.workspace.openTextDocument(uri);
+      const edit = new vscode.WorkspaceEdit();
+      const lineText = document.lineAt(line).text;
+      const indent = lineText.match(/^(\s*)/)?.[1] ?? '';
+      edit.insert(uri, new vscode.Position(line, 0), `${indent}// i18nsmith-ignore-next-line\n`);
+      await vscode.workspace.applyEdit(edit);
+      await reportWatcher?.refresh();
+    }),
+    vscode.commands.registerCommand("i18nsmith.exportMissingTranslations", async () => {
+      await syncController.exportMissingTranslations();
     })
   );
 
@@ -454,6 +510,7 @@ function refreshQuickActionsModel(
     report,
     hasSelection: getQuickActionSelectionState(),
     scanResult: lastScanResult,
+    detectedAdapter,
   });
 
   if (quickActionsProvider) {
