@@ -1,0 +1,205 @@
+# ─────────────────────────────────────────────────────────────
+# i18nsmith VS Code Extension – Update Plan
+# Generated from deep analysis of all extension source files
+# ─────────────────────────────────────────────────────────────
+
+title: Extension Hardening & Multi-Framework Polish
+goal: >
+  Close every gap between core/CLI adapter capabilities and the extension UI.
+  Fix all identified bugs. Keep changes minimal – delegate to CLI, don't reinvent.
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 1 – BUGS (must fix)
+# ═══════════════════════════════════════════════════════════════
+
+bugs:
+
+  # ── 1.1 Ghost commands in package.json ──────────────────────
+  - id: BUG-01
+    title: Ghost commands registered but never handled
+    severity: high
+    files:
+      - packages/vscode-extension/package.json
+      - packages/vscode-extension/src/extension.ts
+    description: >
+      package.json contributes commands that have NO registerCommand() in
+      extension.ts, so clicking them in the command palette / context menu
+      does nothing (or throws "command not found").
+    affected_commands:
+      - i18nsmith.addPlaceholder    # commented out in extension.ts
+      - i18nsmith.checkFile         # commented out in extension.ts
+      - i18nsmith.renameKey         # context-menu entry, never registered
+      - i18nsmith.ignoreSuspiciousKey  # commented out in extension.ts
+      - i18nsmith.convertVueAttribute  # referenced in codeactions.ts, never registered
+      - i18nsmith.importVueUseI18n     # referenced in codeactions.ts, never registered
+    fix: >
+      Either (a) implement the command handler, or (b) remove the command
+      from package.json AND from codeactions.ts/menus that reference it.
+      Strategy per command:
+        • addPlaceholder → remove from package.json (extraction flow replaces it)
+        • checkFile → implement as `smartScanner.scan("manual")` on active file
+        • renameKey → implement via syncController.renameSuspiciousKey (prompt for key at cursor)
+        • ignoreSuspiciousKey → implement inline comment insertion
+        • convertVueAttribute → remove action from codeactions.ts (CLI transform handles this)
+        • importVueUseI18n → remove action from codeactions.ts (CLI transform handles this)
+
+  # ── 1.2 Debug console.log in hover.ts ───────────────────────
+  - id: BUG-02
+    title: Production console.log statements in hover provider
+    severity: medium
+    files:
+      - packages/vscode-extension/src/hover.ts
+    description: >
+      ~15 console.log statements like
+      `console.log('[hover] Using cached locale data...')` leak into the
+      Debug Console of every user. Should use logVerbose or be removed.
+    fix: Remove all console.log statements from hover.ts.
+
+  # ── 1.3 CodeLens never refreshes ───────────────────────────
+  - id: BUG-03
+    title: CodeLens refresh() method exists but is never called
+    severity: medium
+    files:
+      - packages/vscode-extension/src/codelens.ts
+      - packages/vscode-extension/src/extension.ts
+    description: >
+      I18nCodeLensProvider has a `refresh()` method that fires
+      onDidChangeCodeLenses, but nothing calls it after report watcher
+      refresh or scan complete. CodeLens goes stale.
+    fix: >
+      Wire codeLensProvider.refresh() into:
+        1. reportWatcher.onDidRefresh
+        2. smartScanner.onScanComplete
+
+  # ── 1.4 Vue code-actions reference dead commands ────────────
+  - id: BUG-04
+    title: Vue-specific code actions call unregistered commands
+    severity: high
+    files:
+      - packages/vscode-extension/src/codeactions.ts
+    description: >
+      createVueTemplateAttributeAction → "i18nsmith.convertVueAttribute"
+      createVueImportUseI18nAction → "i18nsmith.importVueUseI18n"
+      Both commands are never registered; clicking the action errors.
+    fix: >
+      Remove both createVueTemplateAttributeAction and
+      createVueImportUseI18nAction from codeactions.ts.
+      The CLI `transform` command already handles Vue attribute conversion
+      and import injection via the VueAdapter – no need to duplicate in
+      the extension. (Keep it simple.)
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 2 – GAPS (framework support)
+# ═══════════════════════════════════════════════════════════════
+
+gaps:
+
+  # ── 2.1 Hover/Definition miss $t() ─────────────────────────
+  - id: GAP-01
+    title: Hover & Definition only match t(), not $t()
+    severity: high
+    files:
+      - packages/vscode-extension/src/hover.ts    # findKeyAtPosition()
+      - packages/vscode-extension/src/definition.ts # findKeyRangeAtPosition()
+    description: >
+      Both use patterns like `/t\(\s*['"\`]…/` which miss Vue template
+      `$t('key')`. Hovering $t('key') in .vue files shows nothing.
+    fix: >
+      Update regex patterns to also match `$t(`:
+        /\$?t\(\s*['"`]([^'"`]+)['"`]\s*\)/g
+        /\$?t\(\s*['"`]([^'"`]+)['"`]\s*,/g
+
+  # ── 2.2 Extraction doesn't handle Vue ──────────────────────
+  - id: GAP-02
+    title: Extraction controller uses t() for Vue instead of $t()
+    severity: medium
+    files:
+      - packages/vscode-extension/src/controllers/extraction-controller.ts
+    description: >
+      shouldWrapSelectionInJsx only checks for 'typescriptreact'/'javascriptreact'.
+      In Vue template sections, extracted text should use `$t('key')` not `t('key')`.
+      In Vue <script> sections, `t('key')` is correct.
+    fix: >
+      Add Vue handling:
+        • If languageId === 'vue', detect whether cursor is in <template>
+          (rough heuristic: check if line is inside <template>…</template>).
+        • In template: replacement = `{{ $t('${key}') }}`
+        • In script: replacement = `t('${key}')` (current default)
+        • For JSX-like Vue template positions: `$t('${key}')`
+
+  # ── 2.3 Scaffold hardcodes react-i18next ────────────────────
+  - id: GAP-03
+    title: Quick actions scaffold always suggests react-i18next
+    severity: medium
+    files:
+      - packages/vscode-extension/src/quick-actions-data.ts  # line ~167
+    description: >
+      The "initialize-runtime" action always emits
+      `i18nsmith scaffold-adapter --type react-i18next --install-deps`
+      regardless of which framework was detected by FrameworkDetectionService.
+    fix: >
+      Pass detected framework info into buildQuickActionModel request.
+      Use it to pick the correct --type flag:
+        react/next → react-i18next
+        vue/nuxt   → vue-i18n
+        svelte     → svelte (or omit if not supported yet)
+      Fallback to react-i18next if no framework detected.
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 3 – POLISH
+# ═══════════════════════════════════════════════════════════════
+
+polish:
+
+  # ── 3.1 package.json keywords ───────────────────────────────
+  - id: POLISH-01
+    title: Add missing keywords for discoverability
+    severity: low
+    files:
+      - packages/vscode-extension/package.json
+    fix: >
+      Add keywords: "vue-i18n", "vue", "svelte", "next-intl", "i18next"
+
+  # ── 3.2 whitelistDynamicKeys dead reference ─────────────────
+  - id: POLISH-02
+    title: Remove whitelistDynamicKeys from quick-actions-data
+    severity: low
+    files:
+      - packages/vscode-extension/src/quick-actions-data.ts  # line ~273
+    description: >
+      "i18nsmith.whitelistDynamicKeys" command referenced but never registered.
+    fix: Remove the action entry or wire it as a CLI passthrough.
+
+# ═══════════════════════════════════════════════════════════════
+# IMPLEMENTATION ORDER
+# ═══════════════════════════════════════════════════════════════
+
+implementation_order:
+  - step: 1
+    items: [BUG-01, BUG-04]
+    status: done
+    reason: Fix broken user-facing interactions first (ghost commands, dead actions)
+  - step: 2
+    items: [BUG-02]
+    status: done
+    reason: Clean debug noise
+  - step: 3
+    items: [GAP-01]
+    status: done
+    reason: Core multi-framework feature – hover/definition for $t()
+  - step: 4
+    items: [BUG-03]
+    status: done
+    reason: Wire CodeLens refresh so diagnostics update live
+  - step: 5
+    items: [GAP-02]
+    status: done
+    reason: Vue extraction improvements
+  - step: 6
+    items: [GAP-03, POLISH-02]
+    status: done
+    reason: Framework-aware scaffold suggestion
+  - step: 7
+    items: [POLISH-01]
+    status: done
+    reason: Final polish pass

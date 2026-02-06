@@ -37,21 +37,12 @@ export class I18nHoverProvider implements vscode.HoverProvider {
 
     // Load locales asynchronously using the folder that actually contains the document
     return this.loadLocales(docFolder.uri.fsPath).then(async () => {
-        console.log(`[hover] After loadLocales, localeData.size: ${this.localeData.size}`);
-        console.log(`[hover] Looking up key: "${key}"`);
-        if (this.localeData.size > 0) {
-            const enData = this.localeData.get('en');
-            console.log(`[hover] en locale keys:`, enData ? Object.keys(enData).slice(0, 10) : 'undefined');
-            console.log(`[hover] Value for "${key}" in en:`, enData?.[key]);
-        }
-        
     let markdown = await this.buildHoverContent(key);
     if (!markdown) {
             // Fallback: try other workspace folders (multi-root scenarios) before giving up
             const folders = vscode.workspace.workspaceFolders ?? [];
             for (const f of folders) {
             if (f.uri.fsPath === docFolder.uri.fsPath) continue;
-            console.log('[hover] Fallback: loading locales from other folder', f.uri.fsPath);
             // clear cache to force reload for a different root
             this.clearCache();
             // eslint-disable-next-line no-await-in-loop
@@ -83,10 +74,10 @@ export class I18nHoverProvider implements vscode.HoverProvider {
   ): vscode.Range | null {
     const line = document.lineAt(position.line).text;
     
-    // Pattern to match t('key'), t("key"), t(`key`)
+    // Pattern to match t('key'), t("key"), t(`key`), $t('key'), $t("key"), $t(`key`)
     const patterns = [
-      /t\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
-      /t\(\s*['"`]([^'"`]+)['"`]\s*,/g,
+      /\$?t\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
+      /\$?t\(\s*['"`]([^'"`]+)['"`]\s*,/g,
     ];
 
     for (const pattern of patterns) {
@@ -119,11 +110,9 @@ export class I18nHoverProvider implements vscode.HoverProvider {
       Date.now() - this.lastLoadTime < 5000 &&
       this.localeData.size > 0
     ) {
-      console.log('[hover] Using cached locale data for root:', workspaceRoot);
       return;
     }
 
-    console.log('[hover] Loading locales from:', workspaceRoot);
     this.localeData.clear();
     this.localeStores.clear();
     this.lastLoadTime = Date.now();
@@ -132,7 +121,6 @@ export class I18nHoverProvider implements vscode.HoverProvider {
     try {
       // loadConfigWithMeta lets us specify the cwd so callers can pass a directory root
       const { config } = await loadConfigWithMeta(undefined, { cwd: workspaceRoot });
-      console.log('[hover] Config loaded, localesDir:', config.localesDir);
       const localesDir = path.join(workspaceRoot, config.localesDir);
       
       const store = new LocaleStore(localesDir, {
@@ -143,22 +131,17 @@ export class I18nHoverProvider implements vscode.HoverProvider {
 
       // Load all locale files (source + targets)
       const allLocales = [config.sourceLanguage, ...config.targetLanguages];
-      console.log('[hover] Loading locales:', allLocales);
       
       for (const locale of allLocales) {
         try {
           const data = await store.get(locale);
-          console.log(`[hover] Loaded ${locale}:`, Object.keys(data).length, 'keys');
           this.localeData.set(locale, data);
           this.localeStores.set(locale, store);
         } catch (err) {
-          console.error(`[hover] Failed to load ${locale}:`, err);
           // Locale file doesn't exist yet; skip
         }
       }
-      console.log('[hover] Total locales loaded:', this.localeData.size);
     } catch (err) {
-      console.error('[hover] Failed to load config:', err);
       // Config not found or invalid; use empty data
     }
   }

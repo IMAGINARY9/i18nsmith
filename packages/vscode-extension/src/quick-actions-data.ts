@@ -30,6 +30,8 @@ export interface QuickActionBuildRequest {
   report: CheckReport | null;
   hasSelection: boolean;
   scanResult?: ScanResult | null;
+  /** Detected adapter type from FrameworkDetectionService (e.g. "react-i18next", "vue-i18n") */
+  detectedAdapter?: string;
 }
 
 export interface QuickActionMetadata {
@@ -155,6 +157,9 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const sections: QuickActionSection[] = [];
 
   if (!runtimeReady) {
+    const adapterType = request.detectedAdapter && request.detectedAdapter !== 'custom'
+      ? request.detectedAdapter
+      : 'react-i18next';
     sections.push({
       title: '⚙️ Setup Required',
       actions: [
@@ -163,8 +168,8 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
           icon: ICONS.scaffold,
           title: 'Initialize i18n Project',
           description: 'Install runtime packages and scaffold the provider shell.',
-          detail: 'Runs the scaffold adapter command with recommended defaults.',
-          command: 'i18nsmith scaffold-adapter --type react-i18next --install-deps',
+          detail: `Runs scaffold-adapter with --type ${adapterType}.`,
+          command: `i18nsmith scaffold-adapter --type ${adapterType} --install-deps`,
         }),
         createQuickAction({
           id: 'open-output-channel',
@@ -269,8 +274,8 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
           id: 'whitelist-dynamic',
           icon: ICONS.dynamic,
           title: `Resolve Dynamic Keys (${dynamicWarningCount})`,
-          description: 'Whitelist runtime expressions to silence false unused warnings.',
-          command: 'i18nsmith.whitelistDynamicKeys',
+          description: 'Run health check to review dynamic key warnings in the output.',
+          command: 'i18nsmith.check',
         })!
       );
     }
