@@ -120,6 +120,10 @@
       {
         "command": "i18nsmith.applyPreviewPlan",
         "title": "i18nsmith: Apply Preview Plan"
+      },
+      {
+        "command": "i18nsmith.whitelistDynamicKeys",
+        "title": "i18nsmith: Whitelist Dynamic Keys"
       }
     ],
     "viewsContainers": {

@@ -274,8 +274,9 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
           id: 'whitelist-dynamic',
           icon: ICONS.dynamic,
           title: `Resolve Dynamic Keys (${dynamicWarningCount})`,
-          description: 'Run health check to review dynamic key warnings in the output.',
-          command: 'i18nsmith.check',
+          description: 'Review dynamic key warnings and add selected patterns to i18n.config.json',
+          command: 'i18nsmith.whitelistDynamicKeys',
+          interactive: true,
         })!
       );
     }
@@ -458,6 +459,7 @@ interface CommandActionConfig {
   description: string;
   detail?: string;
   command?: string;
+  interactive?: boolean;
   previewIntent?: PreviewableCommand;
   confirmMessage?: string;
   longRunning?: boolean;
@@ -483,7 +485,7 @@ function createQuickAction(config: CommandActionConfig): QuickActionDefinition |
     detail: config.detail ?? (previewIntent && rawCommand ? formatPreviewIntentDetail(previewIntent, rawCommand) : config.detail),
     command: previewIntent ? undefined : rawCommand,
     previewIntent: previewIntent ?? undefined,
-    interactive: Boolean(rawCommand && !isVsCodeCommand && isInteractiveCliCommand(rawCommand)),
+  interactive: config.interactive ?? Boolean(rawCommand && !isVsCodeCommand && isInteractiveCliCommand(rawCommand)),
     confirmMessage: config.confirmMessage,
     longRunning: config.longRunning !== false,
     postRunBehavior: config.postRunBehavior,
