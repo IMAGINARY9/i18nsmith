@@ -33,9 +33,53 @@ export class TransformController extends PreviewApplyController implements vscod
       vscode.window.showErrorMessage('No workspace folder found');
       return;
     }
-
     if (!await checkAndPromptForVueParser(workspaceFolder, options.targets)) {
       return;
+    }
+
+    // Run adapter preflight checks and surface actionable choices when missing
+    try {
+      const { runAdapterPreflightCheck } = await import('../utils/adapter-preflight');
+      const missing = runAdapterPreflightCheck();
+      if (missing.length) {
+        const choice = await vscode.window.showWarningMessage(
+          'Missing framework adapter dependencies detected. Install required packages or scaffold the adapter before proceeding.',
+          'Show details',
+          'Install dependencies',
+          'Scaffold adapter',
+          'Continue anyway',
+          'Cancel'
+        );
+        if (!choice || choice === 'Cancel') return;
+        if (choice === 'Show details') {
+          this.services.cliOutputChannel.show();
+          this.services.cliOutputChannel.appendLine('Missing framework adapter dependencies:');
+          for (const m of missing) {
+            this.services.cliOutputChannel.appendLine(` - ${m.adapter}: ${m.dependency}`);
+            this.services.cliOutputChannel.appendLine(`   Install: ${m.installHint}`);
+          }
+          return;
+        }
+        if (choice === 'Install dependencies') {
+          const workspaceRoot = workspaceFolder.uri.fsPath;
+          const unique = Array.from(new Set(missing.map((m) => m.installHint)));
+          const terminal = vscode.window.createTerminal({ name: 'i18nsmith install', cwd: workspaceRoot });
+          terminal.show();
+          for (const cmd of unique) terminal.sendText(cmd, true);
+          vscode.window.showInformationMessage('Installing dependencies in the integrated terminal. Re-run when complete.');
+          return;
+        }
+        if (choice === 'Scaffold adapter') {
+          const info = await this.services.frameworkDetectionService.detectFramework(workspaceFolder.uri.fsPath).catch(() => null);
+          const adapter = info?.adapter ?? 'react-i18next';
+          await this.services.cliService.runCliCommand(`i18nsmith scaffold-adapter --type ${adapter} --install-deps`, { interactive: true, workspaceFolder });
+          return;
+        }
+        // Continue anyway -> proceed with transform
+      }
+    } catch (e) {
+      // Ignore preflight errors and continue
+      this.services.logVerbose(`transform preflight check failed: ${(e as Error).message}`);
     }
 
     const baseArgs = this.buildTransformTargetArgs(options.targets ?? []);
