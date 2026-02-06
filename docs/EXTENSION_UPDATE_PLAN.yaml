@@ -88,6 +88,26 @@ bugs:
       and import injection via the VueAdapter – no need to duplicate in
       the extension. (Keep it simple.)
 
+  # ── 1.5 whitelist dynamic keys workflow missing ───────────
+  - id: BUG-05
+    title: Quick Action for resolving dynamic keys is only a placeholder
+    severity: medium
+    files:
+      - packages/vscode-extension/src/quick-actions-data.ts
+      - packages/vscode-extension/src/dynamic-key-whitelist.ts
+      - packages/vscode-extension/src/workspace-config.ts
+    description: >
+      Currently the Quick Action "Resolve Dynamic Keys" just runs
+      `i18nsmith.check`. There is no end-to-end flow to inspect derived
+      whitelist suggestions and persist them into `i18n.config.json`.
+    fix: >
+      Implement `i18nsmith.whitelistDynamicKeys` command to:
+        1. Read report.dynamicKeyWarnings and derive suggestions (deriveWhitelistSuggestions).
+        2. Present multi-select QuickPick allowing the user to pick suggestions.
+        3. Persist chosen suggestions via persistDynamicKeyAssumptions in workspace-config.ts.
+        4. Refresh diagnostics (prune + refresh) and show success counts.
+      Add unit tests and a small e2e scenario that covers the UX.
+
 # ═══════════════════════════════════════════════════════════════
 # SECTION 2 – GAPS (framework support)
 # ═══════════════════════════════════════════════════════════════
@@ -127,6 +147,24 @@ gaps:
         • In script: replacement = `t('${key}')` (current default)
         • For JSX-like Vue template positions: `$t('${key}')`
 
+  # ── 2.4 Vue template detection is heuristic only ───────────
+  - id: GAP-04
+    title: `isInsideVueTemplate` is heuristic and not robust
+    severity: medium
+    files:
+      - packages/vscode-extension/src/controllers/extraction-controller.ts
+      - packages/vscode-extension/src/utils/vue-parser-check.ts
+    description: >
+      Current implementation uses a string/offset heuristic to decide
+      whether the cursor is inside a Vue <template> block. This is
+      brittle for edge cases (pug, comments, nested templates) and
+      can't be easily reused.
+    fix: >
+      Implement AST-based detection using `vue-eslint-parser` when
+      available. Use `vue-parser-check.ts` to prompt users to install the
+      parser when needed. Cache parsed AST per document for performance.
+      Keep the current heuristic as a fallback when parser is unavailable.
+
   # ── 2.3 Scaffold hardcodes react-i18next ────────────────────
   - id: GAP-03
     title: Quick actions scaffold always suggests react-i18next
@@ -144,6 +182,27 @@ gaps:
         vue/nuxt   → vue-i18n
         svelte     → svelte (or omit if not supported yet)
       Fallback to react-i18next if no framework detected.
+
+  # ── 2.5 No adapter preflight integration in extension flows ─
+  - id: GAP-05
+    title: Adapter preflight checks not performed in extension flows
+    severity: high
+    files:
+      - packages/vscode-extension/src/controllers/transform-controller.ts
+      - packages/vscode-extension/src/controllers/sync-controller.ts
+      - packages/vscode-extension/src/services/framework-detection-service.ts
+    description: >
+      The CLI and core provide adapter preflight checks (dependency
+      verification, runtime requirements) but the extension does not
+      call them before running transforms/syncs. Users can get
+      unexpected CLI failures with non-actionable errors.
+    fix: >
+      Call AdapterRegistry.preflightCheck or the CLI's adapter-preflight
+      utility prior to transform/sync invocations. If preflight fails,
+      surface a VS Code notification with actionable buttons: "Install
+      Dependencies" (run recommended package manager command) and
+      "Scaffold Adapter" (run scaffold-adapter). Prefer lightweight
+      automatic install only when the user consents.
 
 # ═══════════════════════════════════════════════════════════════
 # SECTION 3 – POLISH
@@ -169,6 +228,20 @@ polish:
     description: >
       "i18nsmith.whitelistDynamicKeys" command referenced but never registered.
     fix: Remove the action entry or wire it as a CLI passthrough.
+
+  # ── 3.3 Tests & docs for dynamic key workflow and Vue extraction ─
+  - id: POLISH-03
+    title: Add tests and docs for new flows
+    severity: low
+    files:
+      - packages/vscode-extension/src/dynamic-key-whitelist.ts
+      - packages/vscode-extension/src/controllers/extraction-controller.ts
+      - docs/EXTENSION_UPDATE_PLAN.yaml
+      - README.md
+    fix: >
+      Add unit tests for deriveWhitelistSuggestions and the persist flow,
+      add tests for Vue extraction replacements (template vs script),
+      and update README with the new "Resolve Dynamic Keys" UX.
 
 # ═══════════════════════════════════════════════════════════════
 # IMPLEMENTATION ORDER
@@ -203,3 +276,15 @@ implementation_order:
     items: [POLISH-01]
     status: done
     reason: Final polish pass
+  - step: 8
+    items: [BUG-05]
+    status: done
+    reason: Implement end-to-end "Resolve Dynamic Keys" quick action (pick & persist). Command `i18nsmith.whitelistDynamicKeys` registered and wired into Quick Actions; QuickPick + persist logic implemented in ConfigurationController; added unit test for Quick Action wiring.
+  - step: 9
+    items: [GAP-04]
+    status: todo
+    reason: Replace heuristic Vue template detection with AST-based approach (vue-eslint-parser)
+  - step: 10
+    items: [GAP-05, POLISH-03]
+    status: todo
+    reason: Add adapter preflight integration, tests, and docs

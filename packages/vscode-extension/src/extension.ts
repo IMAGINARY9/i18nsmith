@@ -479,6 +479,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("i18nsmith.exportMissingTranslations", async () => {
       await syncController.exportMissingTranslations();
     })
+    ,
+    vscode.commands.registerCommand("i18nsmith.whitelistDynamicKeys", async () => {
+      // Launch the dynamic key whitelist flow (shows QuickPick and persists selections)
+      await configController.whitelistDynamicKeys();
+    })
   );
 
   // Trigger an initial refresh of the report on startup so diagnostics appear immediately
