@@ -4,6 +4,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { loadConfig, KeyRenamer, type KeyRenameSummary, type KeyRenameBatchSummary, type KeyRenameMapping } from '@i18nsmith/core';
 import { applyPreviewFile, writePreviewFile } from '../utils/preview.js';
+import { runAdapterPreflight } from '../utils/adapter-preflight.js';
 import { CliError, withErrorHandling } from '../utils/errors.js';
 
 interface ScanOptions {
@@ -59,6 +60,12 @@ export function registerRename(program: Command): void {
 
         try {
           const config = await loadConfig(options.config);
+
+          // Run preflight checks for write operations
+          if (writeEnabled) {
+            await runAdapterPreflight();
+          }
+
           const renamer = new KeyRenamer(config);
           const summary = await renamer.rename(oldKey, newKey, {
             write: options.write,
@@ -113,6 +120,12 @@ export function registerRename(program: Command): void {
 
         try {
           const config = await loadConfig(options.config);
+
+          // Run preflight checks for write operations
+          if (options.write) {
+            await runAdapterPreflight();
+          }
+
           const mappings = await loadRenameMappings(options.map);
           const renamer = new KeyRenamer(config);
           const summary = await renamer.renameBatch(mappings, { write: options.write, diff: options.diff });

@@ -12,9 +12,8 @@ import {
 import fg from "fast-glob";
 import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE, I18nConfig } from "./config.js";
 import { createScannerProject } from "./project-factory.js";
-import { TypescriptParser } from "./parsers/TypescriptParser.js";
-import { VueParser } from "./parsers/VueParser.js";
-import type { FileParser } from "./parsers/FileParser.js";
+import { AdapterRegistry } from "./framework/registry.js";
+import type { FrameworkAdapter } from "./framework/types.js";
 
 export type CandidateKind =
   | "jsx-text"
@@ -91,6 +90,7 @@ export interface DetailedScanSummary extends ScanSummary {
 export interface ScannerOptions {
   workspaceRoot?: string;
   project?: Project;
+  registry?: AdapterRegistry;
 }
 
 export interface ScanExecutionOptions {
@@ -126,7 +126,7 @@ export class Scanner {
   private project: Project;
   private config: I18nConfig;
   private workspaceRoot: string;
-  private parsers: FileParser[];
+  private registry: AdapterRegistry;
   private readonly usesExternalProject: boolean;
 
   constructor(config: I18nConfig, options: ScannerOptions = {}) {
@@ -134,10 +134,39 @@ export class Scanner {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.project = options.project ?? this.createProject();
     this.usesExternalProject = Boolean(options.project);
-    this.parsers = [
-      new TypescriptParser(config, this.workspaceRoot),
-      new VueParser(config, this.workspaceRoot),
-    ];
+    // Registry will be initialized asynchronously
+    this.registry = options.registry ?? new AdapterRegistry(); // Temporary empty registry
+  }
+
+  /**
+   * Factory method for backward compatibility.
+   * Creates a Scanner with React and Vue adapters registered.
+   */
+  static async create(config: I18nConfig, options: ScannerOptions = {}): Promise<Scanner> {
+    const workspaceRoot = options.workspaceRoot ?? process.cwd();
+    const [{ ReactAdapter }, { VueAdapter }] = await Promise.all([
+      import('./framework/ReactAdapter'),
+      import('./framework/adapters/vue')
+    ]);
+    
+    const registry = new AdapterRegistry();
+    registry.register(new ReactAdapter(config, workspaceRoot));
+    registry.register(new VueAdapter(config, workspaceRoot));
+    
+    return new Scanner(config, { ...options, registry });
+  }
+
+  private async createDefaultRegistry(): Promise<AdapterRegistry> {
+    const [{ ReactAdapter }, { VueAdapter }] = await Promise.all([
+      import('./framework/ReactAdapter'),
+      import('./framework/adapters/vue')
+    ]);
+    
+    const registry = new AdapterRegistry();
+    registry.register(new ReactAdapter(this.config, this.workspaceRoot));
+    registry.register(new VueAdapter(this.config, this.workspaceRoot));
+    
+    return registry;
   }
 
   private readFileContent(filePath: string): string {
@@ -149,9 +178,7 @@ export class Scanner {
     options: ScanExecutionOptions & { collectNodes: true }
   ): DetailedScanSummary;
   public scan(options: ScanExecutionOptions): ScanSummary;
-  public scan(
-    options?: ScanExecutionOptions
-  ): ScanSummary | DetailedScanSummary {
+  public scan(options?: ScanExecutionOptions): ScanSummary | DetailedScanSummary {
     const collectNodes = options?.collectNodes ?? false;
     const patterns = this.getGlobPatterns();
     const targetFiles = options?.targets?.length
@@ -182,26 +209,26 @@ export class Scanner {
       : this.resolveAllFiles(patterns);
 
     for (const filePath of filePaths) {
-      const parser = this.parsers.find(p => p.canHandle(filePath));
-      if (!parser) {
-        continue; // Skip files that no parser can handle
+      const adapter = this.registry.getForFile(filePath);
+      if (!adapter) {
+        continue; // Skip files that no adapter can handle
       }
 
       try {
         const projectFile = this.project.getSourceFile(filePath) ?? this.project.getSourceFile(path.basename(filePath));
         const content = projectFile ? projectFile.getFullText() : this.readFileContent(filePath);
-        const fileCandidates = parser.parse(filePath, content, this.project, {
+        const fileCandidates = adapter.scan(filePath, content, {
           scanCalls: options?.scanCalls,
-          recordDetailed,
-        }); // Pass the project for ts-morph based parsing
+          config: this.config,
+          workspaceRoot: this.workspaceRoot,
+        });
         candidates.push(...fileCandidates);
-        if (typeof parser.getSkippedCandidates === 'function') {
-          buckets.skipped.push(...parser.getSkippedCandidates());
-        }
+        // Note: adapters don't have getSkippedCandidates method like old parsers
+        // Skipped candidates are handled internally by adapters if needed
         filesExamined.push(this.getRelativePath(filePath));
         filesScanned += 1;
       } catch (error) {
-        console.warn(`Failed to parse ${filePath}: ${error}`);
+        console.warn(`Failed to scan ${filePath}: ${error}`);
       }
     }
 

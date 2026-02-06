@@ -74,6 +74,7 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
   }
 
   // Must contain at least one letter
+  LETTER_REGEX_GLOBAL.lastIndex = 0;
   if (!LETTER_REGEX_GLOBAL.test(text)) {
     return { shouldExtract: false, skipReason: 'no-letters' };
   }
