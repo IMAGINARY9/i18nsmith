@@ -11,6 +11,8 @@ VS Code integration for [i18nsmith](https://github.com/IMAGINARY9/i18nsmith) —
 - **Inline Diagnostics**: See i18n issues directly in your editor (Problems panel + squiggles)
 - **Hover Provider**: Hover over `t('key')` to see values across all locales
 - **CodeLens Actions**: Quick actions to run i18nsmith commands above files with issues
+ - **Resolve Dynamic Keys**: Review runtime/computed translation key warnings and add selected patterns to `i18n.config.json` directly from the Quick Actions menu.
+ - **Adapter Preflight**: Before apply operations (sync/transform), the extension will check adapter dependencies (e.g., `vue-eslint-parser`) and surface actionable buttons to install missing packages or scaffold adapters.
 - **Quick Fixes**: Add missing key placeholders directly from the editor
 - **Extract String**: Select a hardcoded string and extract it as a translation key
 - **Auto-refresh**: Diagnostics update when the report file changes
