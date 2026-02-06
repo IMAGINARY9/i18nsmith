@@ -26,20 +26,6 @@ import {
 } from '@i18nsmith/core';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '@i18nsmith/core';
 import {
-  detectExistingTranslationImport,
-  ensureClientDirective,
-  ensureUseTranslationBindingWithOptions,
-  ensureUseTranslationImport,
-  findNearestFunctionScope,
-  hasUseTranslationBinding,
-  isComponentLikeFunction,
-  type FunctionLike,
-} from './react-adapter.js';
-import { formatFileWithPrettier } from './formatting.js';
-import { ReactWriter } from './writers/ReactWriter.js';
-import { VueWriter } from './writers/VueWriter.js';
-import type { I18nWriter } from './writers/Writer.js';
-import {
   CandidateStatus,
   FileTransformRecord,
   TransformCandidate,
@@ -48,6 +34,7 @@ import {
   TransformSummary,
   TransformerOptions,
 } from './types.js';
+import { formatFileWithPrettier } from './formatting.js';
 
 interface InternalCandidate extends TransformCandidate {
   raw: ScannerNodeCandidate;
@@ -107,311 +94,9 @@ export class Transformer {
     this.registry.register(new VueAdapter(this.config, this.workspaceRoot));
   }
 
-  private async processReactFile(
-    relativePath: string,
-    plans: TransformCandidate[],
-    progressState: ProgressState,
-    emitProgress: () => void,
-    skippedFiles: FileTransformRecord[],
-    changedFiles: Set<string>,
-    write: boolean,
-    generateDiffs: boolean,
-    runOptions: TransformRunOptions,
-    fileImportCache: Map<string, { module: string; hookName: string }>
-  ): Promise<void> {
-    let sourceFile: SourceFile | undefined;
-    let originalContent = '';
-// Process the file
-    try {
-      const scanner = new Scanner(this.config, { workspaceRoot: this.workspaceRoot, project: this.project });
-      const detailedSummary = scanner.scan({ collectNodes: true, targets: [this.normalizeTargetPath(relativePath)], scanCalls: runOptions.migrateTextKeys });
-      const detailedCandidates = detailedSummary.detailedCandidates;
-      sourceFile = detailedCandidates[0]?.sourceFile;
 
-      if (generateDiffs && sourceFile) {
-        originalContent = sourceFile.getFullText();
-      }
 
-      if (!sourceFile) {
-        const reason = `Failed to process file: ${relativePath} produced no candidates`;
-        for (const plan of plans) {
-          progressState.processed += 1;
-          plan.status = 'skipped';
-          plan.reason = reason;
-          skippedFiles.push({ filePath: plan.filePath, reason });
-          progressState.skipped += 1;
-          progressState.errors += 1;
-          emitProgress();
-        }
-        return;
-      }
 
-      let adapterForFile = this.translationAdapter;
-      if (!fileImportCache.has(relativePath)) {
-        const detected = detectExistingTranslationImport(sourceFile);
-        if (detected) {
-          fileImportCache.set(relativePath, { module: detected.moduleSpecifier, hookName: detected.namedImport });
-        }
-      }
-
-      const cachedAdapter = fileImportCache.get(relativePath);
-      if (cachedAdapter) {
-        adapterForFile = cachedAdapter;
-      }
-
-      const candidateLookup = new Map(detailedCandidates.map((candidate) => [candidate.id, candidate]));
-
-      for (const plan of plans) {
-        progressState.processed += 1;
-        let skipCounted = false;
-        const wasExisting = plan.status === 'existing';
-        let didMutate = false;
-
-        const rawCandidate = candidateLookup.get(plan.id);
-        if (!rawCandidate) {
-          plan.status = 'skipped';
-          plan.reason = 'Candidate not found during apply pass';
-          skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
-          progressState.skipped += 1;
-          skipCounted = true;
-          emitProgress();
-          continue;
-        }
-
-        const internalCandidate: InternalCandidate = { ...plan, raw: rawCandidate };
-
-        const scope = findNearestFunctionScope(internalCandidate.raw.node);
-          if (!scope) {
-            plan.status = 'skipped';
-            plan.reason = 'No React component/function scope found';
-            skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
-            progressState.skipped += 1;
-            skipCounted = true;
-            emitProgress();
-            continue;
-          }
-
-          const componentScope = internalCandidate.raw.node.getFirstAncestor((ancestor) => {
-            if (
-              Node.isFunctionDeclaration(ancestor) ||
-              Node.isMethodDeclaration(ancestor) ||
-              Node.isFunctionExpression(ancestor) ||
-              Node.isArrowFunction(ancestor)
-            ) {
-              return isComponentLikeFunction(ancestor as FunctionLike);
-            }
-            return false;
-          }) as FunctionLike | undefined;
-
-          const injectionScope = componentScope ?? scope;
-          const allowExpressionBody = isComponentLikeFunction(injectionScope);
-          const hasBinding = hasUseTranslationBinding(injectionScope, adapterForFile.hookName, true);
-          const scopeBody = injectionScope.getBody();
-          const canInsert = Boolean(scopeBody && Node.isBlock(scopeBody)) ||
-            (Node.isArrowFunction(injectionScope) && allowExpressionBody);
-          const canInject = hasBinding || canInsert;
-
-          if (!componentScope && !canInject) {
-            plan.status = 'skipped';
-            plan.reason = 'No React component scope available for useTranslation';
-            skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
-            progressState.skipped += 1;
-            skipCounted = true;
-            emitProgress();
-            continue;
-          }
-
-          if (!canInject) {
-            plan.status = 'skipped';
-            plan.reason = 'Cannot safely inject useTranslation into non-component scope';
-            skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
-            progressState.skipped += 1;
-            skipCounted = true;
-            emitProgress();
-            continue;
-          }
-
-          if (write || generateDiffs) {
-            const adapter = this.registry.getForFile(plan.filePath);
-            if (adapter) {
-            didMutate = true;
-              if (didMutate) {
-                plan.status = 'applied';
-                progressState.applied += 1;
-                changedFiles.add(plan.filePath);
-              } else {
-                plan.status = 'skipped';
-                plan.reason = plan.reason ?? 'Already translated';
-                progressState.skipped += 1;
-                skipCounted = true;
-              }
-          }
-
-          if (didMutate && !wasExisting) {
-            const sourceValue =
-              (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
-              plan.text ??
-              generateValueFromKey(plan.suggestedKey);
-            await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);
-
-            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
-            if (shouldMigrate) {
-              const allTargetLocales = new Set(this.targetLocales);
-              const stored = await this.localeStore.getStoredLocales();
-              stored.forEach((l) => allTargetLocales.add(l));
-              allTargetLocales.delete(this.sourceLocale);
-              for (const locale of allTargetLocales) {
-                const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
-                await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
-              }
-            }
-          }
-
-          if (plan.status === 'skipped' && !skipCounted) {
-          progressState.skipped += 1;
-          skipCounted = true;
-        }
-
-        emitProgress();
-      }
-    } catch (error) {
-      const reason = `Failed to process file: ${(error as Error).message}`;
-      for (const plan of plans) {
-        progressState.processed += 1;
-        plan.status = 'skipped';
-        plan.reason = reason;
-        skippedFiles.push({ filePath: plan.filePath, reason });
-        progressState.skipped += 1;
-        progressState.errors += 1;
-        emitProgress();
-      }
-    } finally {
-      if (generateDiffs && sourceFile && changedFiles.has(relativePath)) {
-        const newContent = sourceFile.getFullText();
-        if (originalContent !== newContent) {
-          // Note: sourceDiffs handling would need to be passed in or handled differently
-        }
-      }
-      if (sourceFile) {
-        if (write && changedFiles.has(relativePath)) {
-          await sourceFile.save();
-          await formatFileWithPrettier(sourceFile.getFilePath());
-          try {
-            sourceFile.refreshFromFileSystemSync();
-          } catch {
-            // Ignore refresh errors; file may have been removed.
-          }
-        }
-        if (!this.usesExternalProject) {
-          sourceFile.forget();
-        }
-      }
-    }
-  }
-
-  private async processVueFile(
-    filePath: string,
-    plans: TransformCandidate[],
-    progressState: ProgressState,
-    emitProgress: () => void,
-    skippedFiles: FileTransformRecord[],
-    changedFiles: Set<string>,
-    write: boolean,
-    runOptions: TransformRunOptions,
-    sourceDiffs?: SourceFileDiffEntry[]
-  ): Promise<void> {
-    // Vue file processing - content-based transformation
-    try {
-      const originalContent = await fs.readFile(filePath, 'utf-8');
-      
-      // Create a copy of plans for transformation (VueWriter mutates status)
-      const newContent = originalContent;
-      const didMutate = false;
-
-      // Generate source diffs if requested
-      if (runOptions.diff && didMutate && sourceDiffs) {
-        const relativePath = path.relative(this.workspaceRoot, filePath);
-        const { createPatch } = await import('diff');
-        const diff = createPatch(relativePath, originalContent, newContent);
-        
-        // Count the number of changes
-        const lines = diff.split('\n');
-        let changes = 0;
-        for (const line of lines) {
-          if ((line.startsWith('+') || line.startsWith('-')) && 
-              !line.startsWith('+++') && 
-              !line.startsWith('---')) {
-            changes++;
-          }
-        }
-
-        sourceDiffs.push({
-          path: filePath,
-          relativePath,
-          diff,
-          changes,
-        });
-      }
-
-      if (didMutate && write) {
-        await fs.writeFile(filePath, newContent, 'utf-8');
-        await formatFileWithPrettier(filePath);
-        changedFiles.add(path.relative(this.workspaceRoot, filePath));
-      }
-
-      for (const plan of plans) {
-        progressState.processed += 1;
-        const wasExisting = plan.status === 'existing';
-
-        // The VueWriter.transform already sets status to 'applied' for each candidate it processes
-        // Check if this plan was successfully transformed
-        if (plan.status === 'applied') {
-          progressState.applied += 1;
-          
-          // Update locale store with the new key
-          if (write && !wasExisting) {
-            const sourceValue =
-              (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
-              plan.text ??
-              generateValueFromKey(plan.suggestedKey);
-            await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);
-
-            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
-            if (shouldMigrate) {
-              const allTargetLocales = new Set(this.targetLocales);
-              const stored = await this.localeStore.getStoredLocales();
-              stored.forEach((l) => allTargetLocales.add(l));
-              allTargetLocales.delete(this.sourceLocale);
-              for (const locale of allTargetLocales) {
-                const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
-                await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
-              }
-            }
-          }
-        } else if (plan.status !== 'skipped') {
-          // If not applied and not already skipped, mark as skipped
-          plan.status = 'skipped';
-          plan.reason = 'Could not locate text in file';
-          progressState.skipped += 1;
-        } else {
-          progressState.skipped += 1;
-        }
-
-        emitProgress();
-      }
-    } catch (error) {
-      const reason = `Failed to process Vue file: ${(error as Error).message}`;
-      for (const plan of plans) {
-        progressState.processed += 1;
-        plan.status = 'skipped';
-        plan.reason = reason;
-        skippedFiles.push({ filePath: plan.filePath, reason });
-        progressState.skipped += 1;
-        progressState.errors += 1;
-        emitProgress();
-      }
-    }
-  }
 
   public async run(runOptions: TransformRunOptions = {}): Promise<TransformSummary> {
     // Reset per-run state
@@ -567,21 +252,66 @@ export class Transformer {
           continue;
         }
 
-        // Process file with appropriate method based on adapter
-        if (adapter.id === 'react') {
-          await this.processReactFile(relativePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, generateDiffs, runOptions, fileImportCache);
-        } else if (adapter.id === 'vue') {
-          await this.processVueFile(filePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, runOptions, sourceDiffs);
+        // Use adapter to mutate the file
+        const content = await fs.readFile(filePath, 'utf-8');
+        const result = adapter.mutate(filePath, content, plans, {
+          config: this.config,
+          workspaceRoot: this.workspaceRoot,
+          translationAdapter: this.translationAdapter,
+        });
+
+        if (result.didMutate) {
+          if (write) {
+            await fs.writeFile(filePath, result.content, 'utf-8');
+            await formatFileWithPrettier(filePath);
+            changedFiles.add(filePath);
+          }
+
+          // Mark all plans as applied
+          for (const plan of plans) {
+            progressState.processed += 1;
+            progressState.applied += 1;
+            plan.status = 'applied';
+            emitProgress();
+          }
+
+          // Handle diffs if needed
+          if (generateDiffs && result.edits.length > 0) {
+            // Generate source diffs from adapter edits
+            // This would need to be implemented based on result.edits
+          }
         } else {
-          const reason = `Unsupported adapter: ${adapter.id}`;
+          // No mutations applied
           for (const plan of plans) {
             progressState.processed += 1;
             plan.status = 'skipped';
-            plan.reason = reason;
-            skippedFiles.push({ filePath: plan.filePath, reason });
+            plan.reason = 'No mutations applied by adapter';
+            skippedFiles.push({ filePath: plan.filePath, reason: 'No mutations applied by adapter' });
             progressState.skipped += 1;
-            progressState.errors += 1;
             emitProgress();
+          }
+        }
+
+        // Locale store upserts — identical for all frameworks
+        for (const plan of plans) {
+          if (plan.status === 'applied') {
+            const sourceValue =
+              (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
+              plan.text ??
+              generateValueFromKey(plan.suggestedKey);
+            await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);
+
+            const shouldMigrate = this.config.seedTargetLocales || runOptions.migrateTextKeys;
+            if (shouldMigrate) {
+              const allTargetLocales = new Set(this.targetLocales);
+              const stored = await this.localeStore.getStoredLocales();
+              stored.forEach((l) => allTargetLocales.add(l));
+              allTargetLocales.delete(this.sourceLocale);
+              for (const locale of allTargetLocales) {
+                const legacyValue = await this.findLegacyLocaleValue(locale, plan.text);
+                await this.localeStore.upsert(locale, plan.suggestedKey, legacyValue ?? '');
+              }
+            }
           }
         }
       }

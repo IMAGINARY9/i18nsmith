@@ -20,6 +20,35 @@ The project is a monorepo managed by `pnpm` workspaces. This structure improves 
 | **`@i18nsmith/transformer`** | Responsible for all code modifications. Replaces strings with i18n function calls  | - Receive identified strings from `Scanner`<br>- Generate stable keys<br>- Modify source files to insert i18n calls   |
 | **`@i18nsmith/translation`** | A collection of adapters for various translation services                          | - Define a common `Translator` interface<br>- Implement adapters for Google Translate, DeepL, etc.<br>- Fetch translations |
 
+## Framework Adapter Architecture
+
+i18nsmith supports multiple frontend frameworks through a pluggable adapter system. Each framework (React, Vue, Svelte, etc.) has its own adapter that implements the `FrameworkAdapter` interface.
+
+### Adapter Registry Pattern
+
+The `AdapterRegistry` in `@i18nsmith/core` acts as a service locator:
+
+- **Registration**: Adapters register themselves at startup
+- **Lookup**: Files are matched to adapters by file extension (`.tsx` → ReactAdapter, `.vue` → VueAdapter)
+- **Preflight**: Dependencies are checked before operations begin
+
+### FrameworkAdapter Interface
+
+```typescript
+interface FrameworkAdapter {
+  id: string;                    // 'react', 'vue', etc.
+  name: string;                  // Display name
+  capabilities: AdapterCapabilities; // scan, mutate, diff
+  extensions: string[];          // ['.tsx', '.jsx']
+  
+  checkDependencies(): AdapterDependencyCheck[];
+  scan(options: AdapterScanOptions): ScanSummary;
+  mutate(options: AdapterMutateOptions): MutationResult;
+}
+```
+
+This design allows new frameworks to be added without modifying core logic. See `docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md` for detailed implementation.
+
 ---
 
 ## Detailed Module Structure
