@@ -14,9 +14,8 @@ export * from './suspicious-key-renamer.js';
 export * from './backup.js';
 export * from './gitignore.js';
 
-// Parsers
-export * from './parsers/FileParser.js';
-export * from './parsers/TypescriptParser.js';
+// Framework Support
+export * from './framework/index.js';
 
 // Project Intelligence
 export * from './project-intelligence/index.js';

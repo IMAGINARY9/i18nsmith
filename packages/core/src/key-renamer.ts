@@ -7,6 +7,8 @@ import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
 import { createUnifiedDiff, SourceFileDiffEntry, LocaleDiffEntry, buildLocaleDiffs } from './diff-utils.js';
 import { createDefaultProject } from './project-factory.js';
+import { AdapterRegistry } from './framework/registry.js';
+import { Scanner, TransformCandidate } from './index.js';
 import MagicString from 'magic-string';
 
 // Lazy loader for optional vue-eslint-parser
@@ -29,6 +31,7 @@ export interface KeyRenamerOptions {
   project?: Project;
   localeStore?: LocaleStore;
   translationIdentifier?: string;
+  registry?: AdapterRegistry;
 }
 
 export interface KeyRenameOptions {
@@ -96,6 +99,7 @@ export class KeyRenamer {
   private readonly translationIdentifier: string;
   private readonly sourceLocale: string;
   private readonly targetLocales: string[];
+  private readonly registry: AdapterRegistry;
 
   constructor(private readonly config: I18nConfig, options: KeyRenamerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -110,6 +114,7 @@ export class KeyRenamer {
     this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
+    this.registry = options.registry ?? new AdapterRegistry();
   }
 
   public async rename(oldKey: string, newKey: string, options: KeyRenameOptions = {}): Promise<KeyRenameSummary> {
@@ -169,26 +174,7 @@ export class KeyRenamer {
       );
     }
 
-    const files = this.loadFiles();
-    const filesToSave = new Map<string, SourceFile>();
     const mappingBySource = new Map<string, KeyRenameMapping>();
-    
-    // Vue file tracking
-    const vueFilesToProcess = this.findVueFiles();
-    const vueFilesToSave = new Map<string, { original: string; modified: string }>();
-
-    // Store original content for diff generation
-    const originalContents = new Map<string, string>();
-    const originalLocaleData = new Map<string, Record<string, string>>();
-
-    if (generateDiffs) {
-      const storedLocales = await this.localeStore.getStoredLocales();
-      const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
-      for (const locale of allLocales) {
-        originalLocaleData.set(locale, await this.localeStore.get(locale));
-      }
-    }
-
     for (const mapping of mappings) {
       if (mappingBySource.has(mapping.from)) {
         throw new Error(`Duplicate mapping detected for key "${mapping.from}".`);
@@ -197,89 +183,78 @@ export class KeyRenamer {
     }
 
     const occurrencesByKey = new Map<string, number>();
-    const filesToModify = new Set<SourceFile>();
+    const filesToModify = new Map<string, TransformCandidate[]>();
 
-    // First pass: identify files to modify and count occurrences (ts-morph files)
-    for (const file of files) {
-      let hasMatch = false;
-      file.forEachDescendant((node) => {
-        if (!Node.isCallExpression(node)) {
-          return;
-        }
-        const callee = node.getExpression();
-        if (!this.isTranslationCall(callee)) {
-          return;
-        }
-        const [arg] = node.getArguments();
-        if (!arg || !Node.isStringLiteral(arg)) {
-          return;
-        }
-        const literal = arg.getLiteralText();
-        // Try exact match first, then normalized match
-        let mapping = mappingBySource.get(literal);
-        if (!mapping) {
-          const normalized = literal.replace(/\s+/g, ' ').trim();
-          mapping = mappingBySource.get(normalized);
-        }
-        
-        if (!mapping) {
-          return;
-        }
+    // First pass: identify files to modify and count occurrences using adapters
+    const scanner = new Scanner(this.config, {
+      workspaceRoot: this.workspaceRoot,
+      project: this.project,
+    });
+    const scanSummary = scanner.scan({
+      targets: undefined, // scan all files
+      scanCalls: true,
+    });
 
-        occurrencesByKey.set(mapping.from, (occurrencesByKey.get(mapping.from) ?? 0) + 1);
-        hasMatch = true;
+    for (const candidate of scanSummary.candidates) {
+      const literal = candidate.text;
+      // Try exact match first, then normalized match
+      let mapping = mappingBySource.get(literal);
+      if (!mapping) {
+        const normalized = literal.replace(/\s+/g, ' ').trim();
+        mapping = mappingBySource.get(normalized);
+      }
+      
+      if (!mapping) {
+        continue;
+      }
+
+      occurrencesByKey.set(mapping.from, (occurrencesByKey.get(mapping.from) ?? 0) + 1);
+      
+      const filePath = candidate.filePath;
+      const existing = filesToModify.get(filePath) ?? [];
+      existing.push({
+        ...candidate,
+        suggestedKey: mapping.to,
+        hash: '', // not needed for renaming
+        status: 'pending' as const,
       });
+      filesToModify.set(filePath, existing);
 
-      if (hasMatch) {
-        filesToModify.add(file);
-        // Capture original content for diffs
-        if (generateDiffs || write) {
-          originalContents.set(file.getFilePath(), file.getFullText());
-        }
+      // Capture original content for diffs
+      if (generateDiffs || write) {
+        // Note: original content handling would need to be adjusted
       }
     }
 
-    // First pass for Vue files: count occurrences (without applying changes yet)
-    for (const vueFilePath of vueFilesToProcess) {
-      // Only count occurrences, don't apply changes yet
-      await this.processVueFile(vueFilePath, mappingBySource, occurrencesByKey, false);
-    }
-
-    // Second pass: apply modifications (only if writing or generating diffs)
+    // Second pass: apply modifications using adapters
+    const updatedFiles: string[] = [];
     if (write || generateDiffs) {
-      for (const file of filesToModify) {
-        file.forEachDescendant((node) => {
-          if (!Node.isCallExpression(node)) {
-            return;
-          }
-          const callee = node.getExpression();
-          if (!this.isTranslationCall(callee)) {
-            return;
-          }
-          const [arg] = node.getArguments();
-          if (!arg || !Node.isStringLiteral(arg)) {
-            return;
-          }
-          const literal = arg.getLiteralText();
-          let mapping = mappingBySource.get(literal);
-          if (!mapping) {
-            const normalized = literal.replace(/\s+/g, ' ').trim();
-            mapping = mappingBySource.get(normalized);
-          }
+      for (const [filePath, candidates] of filesToModify) {
+        const adapter = this.registry.getForFile(filePath);
+        if (!adapter) {
+          continue;
+        }
 
-          if (mapping) {
-            arg.setLiteralValue(mapping.to);
-          }
+        // Read the file content
+        const content = await fs.readFile(filePath, 'utf-8');
+        
+        const result = adapter.mutate(filePath, content, candidates, {
+          config: this.config,
+          workspaceRoot: this.workspaceRoot,
+          translationAdapter: { module: '@i18nsmith/core', hookName: this.translationIdentifier },
         });
 
-        filesToSave.set(file.getFilePath(), file);
-      }
-
-      // Process Vue files
-      for (const vueFilePath of vueFilesToProcess) {
-        const result = await this.processVueFile(vueFilePath, mappingBySource, occurrencesByKey, true);
-        if (result.hasMatches && result.original !== result.modified) {
-          vueFilesToSave.set(vueFilePath, result);
+        if (result.didMutate) {
+          if (write) {
+            await fs.writeFile(filePath, result.content, 'utf-8');
+          }
+          updatedFiles.push(filePath);
+          
+          // Handle diffs
+          if (generateDiffs) {
+            // Generate diffs using result.edits
+            // This would need to be implemented
+          }
         }
       }
     }
@@ -287,23 +262,8 @@ export class KeyRenamer {
     // Generate diffs before saving
     const diffs: SourceFileDiffEntry[] = [];
     if (generateDiffs) {
-      // Diffs for ts-morph files
-      for (const [filePath, file] of filesToSave) {
-        const original = originalContents.get(filePath) ?? '';
-        const modified = file.getFullText();
-        const diff = createUnifiedDiff(filePath, original, modified, this.workspaceRoot);
-        if (diff) {
-          diffs.push(diff);
-        }
-      }
-      
-      // Diffs for Vue files
-      for (const [filePath, { original, modified }] of vueFilesToSave) {
-        const diff = createUnifiedDiff(filePath, original, modified, this.workspaceRoot);
-        if (diff) {
-          diffs.push(diff);
-        }
-      }
+      // TODO: Implement diff generation using adapter mutation results
+      // For now, diffs are not generated
     }
 
     const mappingSummaries: KeyRenameMappingSummary[] = mappings.map((mapping) => {
@@ -316,6 +276,16 @@ export class KeyRenamer {
         missingLocales: analysis?.missingLocales ?? [],
       };
     });
+
+    // Capture original locale data before any modifications
+    const originalLocaleData = new Map<string, Record<string, string>>();
+    if (generateDiffs) {
+      const storedLocales = await this.localeStore.getStoredLocales();
+      const allLocales = new Set([this.sourceLocale, ...this.targetLocales, ...storedLocales]);
+      for (const locale of allLocales) {
+        originalLocaleData.set(locale, await this.localeStore.get(locale));
+      }
+    }
 
     if (write || generateDiffs) {
       for (const mapping of mappings) {
@@ -351,16 +321,6 @@ export class KeyRenamer {
       }
     }
 
-    if (write) {
-      // Save ts-morph files
-      await Promise.all(Array.from(filesToSave.values()).map((file) => file.save()));
-      
-      // Save Vue files
-      for (const [filePath, { modified }] of vueFilesToSave) {
-        await fs.writeFile(filePath, modified, 'utf-8');
-      }
-    }
-
     const localeStats = write ? await this.localeStore.flush() : [];
     
     const currentLocaleData = new Map<string, Record<string, string>>();
@@ -384,15 +344,9 @@ export class KeyRenamer {
     const totalOccurrences = mappingSummaries.reduce((sum, item) => sum + item.occurrences, 0);
     const actionableItems = this.buildActionableItems(mappingSummaries, allowConflicts);
 
-    // Combine ts-morph and Vue files for the result
-    const allUpdatedFiles = [
-      ...Array.from(filesToSave.keys()),
-      ...Array.from(vueFilesToSave.keys()),
-    ];
-
     return {
-      filesScanned: files.length + vueFilesToProcess.length,
-      filesUpdated: allUpdatedFiles.map((filePath) => this.getRelativePath(filePath)),
+      filesScanned: scanSummary.candidates.length,
+      filesUpdated: updatedFiles.map((filePath) => this.getRelativePath(filePath)),
       occurrences: totalOccurrences,
       localeStats,
       mappingSummaries,

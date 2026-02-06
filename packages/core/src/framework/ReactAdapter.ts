@@ -82,6 +82,11 @@ export class ReactAdapter implements FrameworkAdapter {
     // Scan JSX text content
     this.scanJsxText(sourceFile, candidates, filePath);
 
+    // Scan translation call expressions if enabled
+    if (options?.scanCalls) {
+      this.scanCallExpressions(sourceFile, candidates, filePath);
+    }
+
     return candidates;
   }
 
@@ -236,9 +241,67 @@ export class ReactAdapter implements FrameworkAdapter {
     return hashText(text);
   }
 
+  private scanCallExpressions(sourceFile: SourceFile, candidates: ScanCandidate[], filePath: string): void {
+    // Find all call expressions
+    const callExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression);
+
+    for (const callExpr of callExpressions) {
+      const expression = callExpr.getExpression();
+      const args = callExpr.getArguments();
+
+      // Check if this is a translation call
+      if (this.isTranslationCall(expression) && args.length > 0) {
+        const firstArg = args[0];
+        
+        // Only handle string literals for now
+        if (Node.isStringLiteral(firstArg)) {
+          const text = firstArg.getLiteralText();
+          
+          if (this.shouldExtractText(text)) {
+            const candidate: ScanCandidate = {
+              id: `${filePath}:${callExpr.getStart()}`,
+              kind: 'call-expression' as CandidateKind,
+              filePath,
+              text,
+              position: {
+                line: callExpr.getStartLineNumber(),
+                column: callExpr.getStart() - callExpr.getStartLinePos(),
+              },
+              suggestedKey: this.generateKey(text),
+              hash: this.hashText(text),
+            };
+
+            candidates.push(candidate);
+          }
+        }
+      }
+    }
+  }
+
+  private isTranslationCall(expression: Node): boolean {
+    // Check for direct calls: t('text')
+    if (Node.isIdentifier(expression)) {
+      return expression.getText() === 't';
+    }
+
+    // Check for property access: props.t('text'), i18n.t('text')
+    if (Node.isPropertyAccessExpression(expression)) {
+      return expression.getName() === 't';
+    }
+
+    // Check for element access: props['t']('text')
+    if (Node.isElementAccessExpression(expression)) {
+      const argument = expression.getArgumentExpression();
+      if (Node.isStringLiteral(argument)) {
+        return argument.getLiteralText() === 't';
+      }
+    }
+
+    return false;
+  }
+
   private findNodeByPosition(sourceFile: SourceFile, candidate: TransformCandidate): Node | null {
-    // This is a simplified implementation - in practice you'd need more sophisticated
-    // node matching based on the candidate's position and content
+    // Find node matching based on the candidate's position and content
     const descendants = sourceFile.getDescendants();
 
     for (const node of descendants) {

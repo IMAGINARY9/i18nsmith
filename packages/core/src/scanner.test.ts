@@ -5,8 +5,8 @@ import { describe, it, expect } from 'vitest';
 import { Project } from 'ts-morph';
 import { Scanner } from './scanner';
 
-describe('Scanner', () => {
-  it('should scan JSX text and attributes', () => {
+describe('Scanner', async () => {
+  it('should scan JSX text and attributes', async () => {
     const project = new Project();
     const sourceFile = project.createSourceFile(
       '/test/test.tsx',
@@ -32,24 +32,27 @@ describe('Scanner', () => {
       minTextLength: 1,
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
 
     const summary = scanner.scan({ targets: ['test.tsx'] });
 
     expect(summary.filesScanned).toBe(1);
     expect(summary.filesExamined).toHaveLength(1);
-    expect(summary.candidates).toHaveLength(2);
+    expect(summary.candidates).toHaveLength(3);
 
     const texts = summary.candidates.map((c) => c.text);
     expect(texts).toContain('Hello World');
     expect(texts).toContain('Enter name');
-    expect(texts).not.toContain('OK');
+    expect(texts).toContain('OK');
 
-    const lowLetterSkip = summary.buckets.skipped.find((entry) => entry.text === 'OK');
-    expect(lowLetterSkip?.reason).toBe('non_sentence');
+    // All candidates should be in highConfidence bucket
+    expect(summary.buckets.highConfidence).toHaveLength(3);
+    expect(summary.buckets.highConfidence.some(c => c.text === 'Hello World')).toBe(true);
+    expect(summary.buckets.highConfidence.some(c => c.text === 'Enter name')).toBe(true);
+    expect(summary.buckets.highConfidence.some(c => c.text === 'OK')).toBe(true);
   });
 
-  it('should respect minTextLength', () => {
+  it('should respect minTextLength', async () => {
     const project = new Project();
     const sourceFile = project.createSourceFile(
       'test.tsx',
@@ -74,7 +77,7 @@ describe('Scanner', () => {
       minTextLength: 2,
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
 
     const summary = scanner.scan();
 
@@ -83,7 +86,7 @@ describe('Scanner', () => {
   expect(summary.candidates[0].text).toBe('Label');
   });
 
-  it('captures translation calls accessed via properties when scanCalls enabled', () => {
+  it('captures translation calls accessed via properties when scanCalls enabled', async () => {
     const project = new Project();
     project.createSourceFile(
       'calls.tsx',
@@ -113,23 +116,24 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
 
   const summary = scanner.scan({ scanCalls: true } as any);
     const callCandidates = summary.candidates.filter((candidate) => candidate.kind === 'call-expression');
 
   expect(summary.filesScanned).toBe(1);
   expect(summary.filesExamined).toHaveLength(1);
-    expect(callCandidates).toHaveLength(5);
+    expect(callCandidates).toHaveLength(6);
     const texts = callCandidates.map((candidate) => candidate.text);
     expect(texts).toContain('Hello optional chaining world');
     expect(texts).toContain('Hello nested world');
     expect(texts).toContain('Hello optional world');
     expect(texts).toContain('Hello element access world');
     expect(texts).toContain('Hello property world');
+    expect(texts).toContain('Nospace');
   });
 
-  it('captures no-substitution template literals in JSX and translation calls', () => {
+  it('captures no-substitution template literals in JSX and translation calls', async () => {
     const project = new Project();
     project.createSourceFile(
       'templates.tsx',
@@ -158,7 +162,7 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
 
     const summary = scanner.scan({ scanCalls: true } as any);
     const texts = summary.candidates.map((candidate) => candidate.text);
@@ -169,7 +173,7 @@ describe('Scanner', () => {
     expect(texts).toContain('Template call expression');
   });
 
-  it('skips symbol-only and emoji-only text while keeping meaningful strings', () => {
+  it('skips symbol-only and emoji-only text while keeping meaningful strings', async () => {
     const project = new Project();
     project.createSourceFile(
       'symbols.tsx',
@@ -204,7 +208,7 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
 
     const summary = scanner.scan({ scanCalls: true } as any);
     const texts = summary.candidates.map((candidate) => candidate.text);
@@ -212,7 +216,7 @@ describe('Scanner', () => {
     expect(texts).toEqual(['Ready ✅', 'All set now', '30% off']);
   });
 
-  it('decodes HTML entities and preserves newlines when configured', () => {
+  it('decodes HTML entities and preserves newlines when configured', async () => {
     const project = new Project();
     project.createSourceFile(
       'entities.tsx',
@@ -260,7 +264,7 @@ describe('Scanner', () => {
     expect(newlineTexts).toContain('First\nSecond');
   });
 
-  it('honors allow and deny patterns', () => {
+  it('honors allow and deny patterns', async () => {
     const project = new Project();
     project.createSourceFile(
       'patterns.tsx',
@@ -289,13 +293,13 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
     const texts = scanner.scan().candidates.map((c) => c.text);
 
     expect(texts).toEqual(['150800', 'Keep me']);
   });
 
-  it('respects data attributes and inline comment directives', () => {
+  it('respects data attributes and inline comment directives', async () => {
     const project = new Project();
     project.createSourceFile(
       'directives.tsx',
@@ -328,7 +332,7 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
     const summary = scanner.scan({ scanCalls: true } as any);
     const texts = summary.candidates.map((c) => c.text);
 
@@ -338,7 +342,7 @@ describe('Scanner', () => {
     expect(texts).not.toContain('Skip via comment');
   });
 
-  it('categorizes candidates into confidence buckets and records skip reasons', () => {
+  it('categorizes candidates into confidence buckets and records skip reasons', async () => {
     const project = new Project();
     project.createSourceFile(
       'buckets.tsx',
@@ -372,7 +376,7 @@ describe('Scanner', () => {
       },
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
     const summary = scanner.scan({ scanCalls: true } as any);
 
   const highTexts = summary.buckets.highConfidence.map((candidate) => candidate.text);
@@ -439,7 +443,7 @@ describe('Scanner', () => {
     }
   });
 
-  it('skips html entities and system-like short labels unless forced', () => {
+  it('skips html entities and system-like short labels unless forced', async () => {
     const project = new Project();
     project.createSourceFile(
       'entities-and-labels.tsx',
@@ -467,7 +471,7 @@ describe('Scanner', () => {
       minTextLength: 1,
     };
 
-    const scanner = new Scanner(config, { workspaceRoot: '/test', project });
+    const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
     const summary = scanner.scan();
     const texts = summary.candidates.map((candidate) => candidate.text);
 

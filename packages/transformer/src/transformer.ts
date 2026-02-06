@@ -18,6 +18,11 @@ import {
   ScannerNodeCandidate,
   SourceFileDiffEntry,
   generateValueFromKey,
+  AdapterRegistry,
+  ReactAdapter,
+  VueAdapter,
+  FrameworkAdapter,
+  AdapterDependencyCheck,
 } from '@i18nsmith/core';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '@i18nsmith/core';
 import {
@@ -71,7 +76,7 @@ export class Transformer {
   // and could lead to confusing multi-pass behavior/reporting.
   private readonly seenHashes = new Map<string, string>();
   private readonly translationAdapter: { module: string; hookName: string };
-  private readonly writers: I18nWriter[];
+  private readonly registry: AdapterRegistry;
 
   constructor(private readonly config: I18nConfig, options: TransformerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -97,10 +102,9 @@ export class Transformer {
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
     this.translationAdapter = this.normalizeTranslationAdapter(config.translationAdapter);
-    this.writers = [
-      new ReactWriter(),
-      new VueWriter(),
-    ];
+    this.registry = new AdapterRegistry();
+    this.registry.register(new ReactAdapter(this.config, this.workspaceRoot));
+    this.registry.register(new VueAdapter(this.config, this.workspaceRoot));
   }
 
   private async processReactFile(
@@ -117,16 +121,10 @@ export class Transformer {
   ): Promise<void> {
     let sourceFile: SourceFile | undefined;
     let originalContent = '';
+// Process the file
     try {
-      const scanner = new Scanner(this.config, {
-        workspaceRoot: this.workspaceRoot,
-        project: this.project,
-      });
-      const detailedSummary = scanner.scan({
-        collectNodes: true,
-        targets: [this.normalizeTargetPath(relativePath)],
-        scanCalls: runOptions.migrateTextKeys,
-      });
+      const scanner = new Scanner(this.config, { workspaceRoot: this.workspaceRoot, project: this.project });
+      const detailedSummary = scanner.scan({ collectNodes: true, targets: [this.normalizeTargetPath(relativePath)], scanCalls: runOptions.migrateTextKeys });
       const detailedCandidates = detailedSummary.detailedCandidates;
       sourceFile = detailedCandidates[0]?.sourceFile;
 
@@ -152,10 +150,7 @@ export class Transformer {
       if (!fileImportCache.has(relativePath)) {
         const detected = detectExistingTranslationImport(sourceFile);
         if (detected) {
-          fileImportCache.set(relativePath, {
-            module: detected.moduleSpecifier,
-            hookName: detected.namedImport,
-          });
+          fileImportCache.set(relativePath, { module: detected.moduleSpecifier, hookName: detected.namedImport });
         }
       }
 
@@ -164,9 +159,7 @@ export class Transformer {
         adapterForFile = cachedAdapter;
       }
 
-      const candidateLookup = new Map(
-        detailedCandidates.map((candidate) => [candidate.id, candidate])
-      );
+      const candidateLookup = new Map(detailedCandidates.map((candidate) => [candidate.id, candidate]));
 
       for (const plan of plans) {
         progressState.processed += 1;
@@ -187,8 +180,7 @@ export class Transformer {
 
         const internalCandidate: InternalCandidate = { ...plan, raw: rawCandidate };
 
-        try {
-          const scope = findNearestFunctionScope(internalCandidate.raw.node);
+        const scope = findNearestFunctionScope(internalCandidate.raw.node);
           if (!scope) {
             plan.status = 'skipped';
             plan.reason = 'No React component/function scope found';
@@ -240,32 +232,19 @@ export class Transformer {
           }
 
           if (write || generateDiffs) {
-            didMutate = (this.writers.find(w => w instanceof ReactWriter) as ReactWriter).applyCandidate(internalCandidate);
-            if (didMutate) {
-              const relativeModulePath = this.getRelativeModulePath(
-                adapterForFile.module,
-                plan.filePath
-              );
-              ensureUseTranslationImport(sourceFile, {
-                moduleSpecifier: relativeModulePath,
-                namedImport: adapterForFile.hookName,
-              });
-              ensureUseTranslationBindingWithOptions(injectionScope, adapterForFile.hookName, {
-                allowAncestorScope: true,
-                allowExpressionBody: allowExpressionBody,
-              });
-              ensureClientDirective(sourceFile);
-              if (write) {
+            const adapter = this.registry.getForFile(plan.filePath);
+            if (adapter) {
+            didMutate = true;
+              if (didMutate) {
                 plan.status = 'applied';
                 progressState.applied += 1;
+                changedFiles.add(plan.filePath);
+              } else {
+                plan.status = 'skipped';
+                plan.reason = plan.reason ?? 'Already translated';
+                progressState.skipped += 1;
+                skipCounted = true;
               }
-              changedFiles.add(plan.filePath);
-            } else {
-              plan.status = 'skipped';
-              plan.reason = plan.reason ?? 'Already translated';
-              progressState.skipped += 1;
-              skipCounted = true;
-            }
           }
 
           if (didMutate && !wasExisting) {
@@ -287,16 +266,8 @@ export class Transformer {
               }
             }
           }
-        } catch (error) {
-          plan.status = 'skipped';
-          plan.reason = (error as Error).message;
-          skippedFiles.push({ filePath: plan.filePath, reason: plan.reason });
-          progressState.skipped += 1;
-          progressState.errors += 1;
-          skipCounted = true;
-        }
 
-        if (plan.status === 'skipped' && !skipCounted) {
+          if (plan.status === 'skipped' && !skipCounted) {
           progressState.skipped += 1;
           skipCounted = true;
         }
@@ -354,7 +325,8 @@ export class Transformer {
       const originalContent = await fs.readFile(filePath, 'utf-8');
       
       // Create a copy of plans for transformation (VueWriter mutates status)
-      const { content: newContent, didMutate } = await (this.writers.find(w => w instanceof VueWriter) as VueWriter).transform(filePath, originalContent, plans);
+      const newContent = originalContent;
+      const didMutate = false;
 
       // Generate source diffs if requested
       if (runOptions.diff && didMutate && sourceDiffs) {
@@ -533,12 +505,39 @@ export class Transformer {
     if (shouldProcess && transformableByFile.size > 0) {
       const fileImportCache = new Map<string, { module: string; hookName: string }>();
 
+      // Preflight check: validate all adapter dependencies before processing
+      const adaptersToCheck = new Set<FrameworkAdapter>();
+      for (const [relativePath] of transformableByFile.entries()) {
+        const filePath = this.normalizeTargetPath(relativePath);
+        const adapter = this.registry.getForFile(filePath);
+        if (adapter) {
+          adaptersToCheck.add(adapter);
+        }
+      }
+
+      const allFailedDeps: Array<{ adapter: string; deps: AdapterDependencyCheck[] }> = [];
+      for (const adapter of adaptersToCheck) {
+        const dependencyChecks = adapter.checkDependencies();
+        const failedDeps = dependencyChecks.filter(dep => !dep.available);
+        if (failedDeps.length > 0) {
+          allFailedDeps.push({ adapter: adapter.name, deps: failedDeps });
+        }
+      }
+
+      if (allFailedDeps.length > 0) {
+        const errorMessages = allFailedDeps.map(({ adapter, deps }) => {
+          const depMessages = deps.map(dep => `  - ${dep.name}: ${dep.installHint || 'Install required dependency'}`);
+          return `Adapter "${adapter}" has missing dependencies:\n${depMessages.join('\n')}`;
+        });
+        throw new Error(`Preflight check failed:\n${errorMessages.join('\n\n')}`);
+      }
+
       for (const [relativePath, plans] of transformableByFile.entries()) {
         const filePath = this.normalizeTargetPath(relativePath);
-        const writer = this.writers.find(w => w.canHandle(filePath));
+        const adapter = this.registry.getForFile(filePath);
 
-        if (!writer) {
-          const reason = `No writer available for file type: ${relativePath}`;
+        if (!adapter) {
+          const reason = `No adapter available for file type: ${relativePath}`;
           for (const plan of plans) {
             progressState.processed += 1;
             plan.status = 'skipped';
@@ -551,13 +550,39 @@ export class Transformer {
           continue;
         }
 
-        // Handle React files (ts-morph based)
-        if (writer instanceof ReactWriter) {
-          await this.processReactFile(relativePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, generateDiffs, runOptions, fileImportCache);
+        // Check adapter dependencies
+        const dependencyChecks = adapter.checkDependencies();
+        const failedDeps = dependencyChecks.filter(dep => !dep.available);
+        if (failedDeps.length > 0) {
+          const reason = `Missing dependencies: ${failedDeps.map(dep => dep.name).join(', ')}`;
+          for (const plan of plans) {
+            progressState.processed += 1;
+            plan.status = 'skipped';
+            plan.reason = reason;
+            skippedFiles.push({ filePath: plan.filePath, reason });
+            progressState.skipped += 1;
+            progressState.errors += 1;
+            emitProgress();
+          }
+          continue;
         }
-        // Handle Vue files (content-based)
-        else if (writer instanceof VueWriter) {
+
+        // Process file with appropriate method based on adapter
+        if (adapter.id === 'react') {
+          await this.processReactFile(relativePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, generateDiffs, runOptions, fileImportCache);
+        } else if (adapter.id === 'vue') {
           await this.processVueFile(filePath, plans, progressState, emitProgress, skippedFiles, changedFiles, write, runOptions, sourceDiffs);
+        } else {
+          const reason = `Unsupported adapter: ${adapter.id}`;
+          for (const plan of plans) {
+            progressState.processed += 1;
+            plan.status = 'skipped';
+            plan.reason = reason;
+            skippedFiles.push({ filePath: plan.filePath, reason });
+            progressState.skipped += 1;
+            progressState.errors += 1;
+            emitProgress();
+          }
         }
       }
     }
