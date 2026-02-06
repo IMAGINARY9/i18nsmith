@@ -29,6 +29,9 @@ vi.mock('vscode', () => {
   };
 });
 
+// Mock vue parser check to avoid interacting with workspace file system in tests
+vi.mock('../utils/vue-parser-check', () => ({ checkAndPromptForVueParser: vi.fn().mockResolvedValue(true) }));
+
 describe('SyncController', () => {
   let syncController: SyncController;
   let mockServices: any;

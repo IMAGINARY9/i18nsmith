@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
+// Mock vue parser check to avoid interacting with workspace file system in tests
+vi.mock('../utils/vue-parser-check', () => ({ checkAndPromptForVueParser: vi.fn().mockResolvedValue(true) }));
 import { TransformController } from './transform-controller';
 import { ServiceContainer } from '../services/container';
 

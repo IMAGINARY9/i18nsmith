@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Minimal vscode mock for tests
+vi.mock('vscode', () => ({
+  window: {
+    showQuickPick: vi.fn(),
+    showInformationMessage: vi.fn(),
+    showErrorMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
+  },
+  workspace: {
+    workspaceFolders: [{ uri: { fsPath: '/tmp/project' } }],
+  },
+}));
 import * as vscode from 'vscode';
 import { ConfigurationController } from './configuration-controller';
 import * as dyn from '../dynamic-key-whitelist';
