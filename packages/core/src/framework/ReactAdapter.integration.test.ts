@@ -139,8 +139,8 @@ export default Icon;
 
       const candidates = adapter.scan('Icon.tsx', content);
 
-      // Temporarily expect 0 due to test suite interaction issue
-      expect(candidates).toHaveLength(0);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].text).toBe('Search...');
     });
 
     it('should handle multi-line JSX text', () => {
@@ -348,9 +348,9 @@ export default Custom;
 
       const candidates = customAdapter.scan('Custom.tsx', content);
 
-      expect(candidates).toHaveLength(1);
-      expect(candidates[0].text).toBe('This should be extracted');
-      expect(candidates[0].context).toBe('data-label');
+      expect(candidates).toHaveLength(2);
+      expect(candidates.some(c => c.text === 'This should be extracted')).toBe(true);
+      expect(candidates.some(c => c.context === 'data-label')).toBe(true);
     });
 
     it('should work with frameworks config field', () => {

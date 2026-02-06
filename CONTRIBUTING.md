@@ -22,3 +22,30 @@ Code style & tests
 Releases
 
 - Update `packages/vscode-extension/CHANGELOG.md` and bump the version in `packages/vscode-extension/package.json` when preparing a release.
+
+## Adding a New Framework Adapter
+
+i18nsmith supports multiple frontend frameworks through pluggable adapters. To add support for a new framework:
+
+1. **Create the adapter** in `packages/core/src/framework/adapters/<framework>.ts`
+   - Implement the `FrameworkAdapter` interface
+   - Handle framework-specific AST transformations
+   - Add dependency checks for framework parsers
+
+2. **Add comprehensive tests** in `packages/core/src/framework/adapters/<framework>.test.ts`
+   - Unit tests for scanning and mutation logic
+   - Integration tests with sample files
+
+3. **Register the adapter** in CLI/extension setup
+   - Add to `AdapterRegistry` in the main entry point
+   - Update preflight checks
+
+4. **Add CI matrix entry** in `.github/workflows/`
+   - Include framework-specific dependencies
+   - Run adapter tests in parallel
+
+5. **Update documentation**
+   - Add to supported frameworks list in README.md
+   - Document any framework-specific configuration
+
+See existing adapters (ReactAdapter, VueAdapter) for reference implementations.

@@ -508,17 +508,19 @@ Use these recipes to copy/paste minimal setups rather than reverse-engineering l
 
 ## Adapter / Framework Support Matrix
 
-| Framework / Runtime | Adapter Kind | Writer | Status | Notes |
-|---------------------|--------------|--------|--------|-------|
-| React + react-i18next | `react-i18next` | ReactWriter | Stable | Full transform + provider injection |
-| Next.js + next-intl | `next-intl` | ReactWriter (shared) | Beta | Import reuse & provider detection; verify placeholders |
-| React + lingui | `lingui` | ReactWriter (extended) | Planned | Key/message extraction alignment needed |
-| Vue + vue-i18n | `vue-i18n` | VueWriter | Stable | Full transform + provider injection for Vue SFC files |
-| Svelte (svelte-i18n) | `svelte-i18n` | NoopWriter (initial) | Experimental | Transform disabled until Writer implemented |
-| Custom zero-deps context | `custom` | ReactWriter / NoopWriter | Stable | Generated via scaffold-adapter; no external deps |
-| Mock pseudo-localization | `mock` | NoopWriter | Stable | For layout & overflow stress testing |
+i18nsmith uses a pluggable adapter architecture for framework support. Each adapter implements scanning and mutation logic specific to a framework's syntax and conventions.
 
-For adapter contract details and how to add new ones see [`adapter-extensibility.md`](./docs/adapter-extensibility.md).
+| Framework / Runtime | Adapter | Status | Notes |
+|---------------------|---------|--------|-------|
+| React + react-i18next | ReactAdapter | Stable | Full JSX transform + provider injection |
+| Vue + vue-i18n | VueAdapter | Stable | Full SFC transform + provider injection |
+| Next.js + next-intl | ReactAdapter (shared) | Beta | Import reuse & provider detection; verify placeholders |
+| React + lingui | ReactAdapter (extended) | Planned | Key/message extraction alignment needed |
+| Svelte (svelte-i18n) | SvelteAdapter | Planned | Adapter implementation needed |
+| Custom zero-deps context | ReactAdapter / VueAdapter | Stable | Generated via scaffold-adapter; no external deps |
+| Mock pseudo-localization | MockAdapter | Stable | For layout & overflow stress testing |
+
+For adapter implementation details and how to add new ones see [`docs/adapter-extensibility.md`](./docs/adapter-extensibility.md) and [`docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md`](./docs/FRAMEWORK_SUPPORT_ARCHITECTURE.md).
 
 ## Locale quality auditing
 
