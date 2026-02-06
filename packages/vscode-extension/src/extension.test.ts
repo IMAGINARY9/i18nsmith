@@ -69,7 +69,7 @@ vi.mock('./services/container', () => ({
     cliOutputChannel: {},
     diagnosticsManager: { getReport: vi.fn().mockReturnValue(null) },
     reportWatcher: {
-      refresh: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
       onDidRefresh: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
     },
     hoverProvider: { clearCache: vi.fn() },
@@ -81,6 +81,7 @@ vi.mock('./services/container', () => ({
       onDidChange: vi.fn().mockReturnValue({ dispose: vi.fn() }),
       getSnapshot: vi.fn().mockReturnValue(null),
     },
+    frameworkDetectionService: { detectFramework: vi.fn().mockResolvedValue({ adapter: 'react-i18next' }) },
   })),
 }));
 vi.mock('./controllers/configuration-controller');

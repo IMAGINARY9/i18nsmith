@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-// Avoid direct vscode types in unit tests to keep environment simple
+import { describe, it, expect, vi } from 'vitest';
+// Minimal vscode mock for tests that import modules which reference 'vscode'
+vi.mock('vscode', () => ({
+  workspace: { workspaceFolders: [{ uri: { fsPath: '/tmp/project' } }] },
+  Position: class {},
+  Range: class {},
+  window: { showInformationMessage: vi.fn(), showWarningMessage: vi.fn() },
+}));
 import { ExtractionController } from './extraction-controller';
 
 describe('ExtractionController.buildReplacement', () => {
@@ -28,7 +34,9 @@ describe('ExtractionController.buildReplacement', () => {
       lineCount: 1,
     };
 
-  const replacement = await (controller as any).buildReplacement(doc, { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, 'Hello World', 'common.hello');
+  const startPos: any = { line: 0, character: 0, translate: (d: number, c: number) => ({ line: 0, character: 1 }) };
+  const endPos: any = { line: 0, character: 5, translate: (d: number, c: number) => ({ line: 0, character: 6 }) };
+  const replacement = await (controller as any).buildReplacement(doc, { start: startPos, end: endPos } as any, 'Hello World', 'common.hello');
     expect(replacement).toBe("{{ $t('common.hello') }}");
   });
 
@@ -49,7 +57,9 @@ describe('ExtractionController.buildReplacement', () => {
       lineCount: 1,
     };
 
-  const replacement = await (controller as any).buildReplacement(doc, { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, 'hello', 'common.hello');
+  const startPos2: any = { line: 0, character: 0, translate: (d: number, c: number) => ({ line: 0, character: 1 }) };
+  const endPos2: any = { line: 0, character: 5, translate: (d: number, c: number) => ({ line: 0, character: 6 }) };
+  const replacement = await (controller as any).buildReplacement(doc, { start: startPos2, end: endPos2 } as any, 'hello', 'common.hello');
     expect(replacement).toBe("t('common.hello')");
   });
 });

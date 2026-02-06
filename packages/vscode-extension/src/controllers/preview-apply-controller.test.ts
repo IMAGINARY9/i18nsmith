@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Minimal vscode mock for tests
+vi.mock('vscode', () => ({
+  window: { showWarningMessage: vi.fn(), createTerminal: vi.fn() },
+  workspace: { workspaceFolders: [{ uri: { fsPath: '/tmp/project' } }] },
+}));
 import * as vscode from 'vscode';
+import * as adapterPreflight from '../utils/adapter-preflight';
 import { PreviewApplyController } from './preview-apply-controller';
+vi.mock('../utils/vue-parser-check', () => ({ checkAndPromptForVueParser: vi.fn().mockResolvedValue(true) }));
 
 class DummyController extends PreviewApplyController {
   public async callApply(opts: any) {
@@ -23,10 +30,11 @@ describe('PreviewApplyController preflight integration', () => {
     vi.restoreAllMocks();
   });
 
+
   it('aborts apply when user cancels preflight warning', async () => {
     const controller = new DummyController(fakeServices as any);
     const missing = [{ adapter: 'vue', dependency: 'vue-eslint-parser', installHint: 'npm i -D vue-eslint-parser' }];
-    vi.spyOn(require('../utils/adapter-preflight'), 'runAdapterPreflightCheck').mockReturnValue(missing as any);
+    vi.spyOn(adapterPreflight, 'runAdapterPreflightCheck').mockReturnValue(missing as any);
     vi.spyOn(vscode.window, 'showWarningMessage' as any).mockResolvedValueOnce('Cancel');
 
     const res = await controller.callApply({ command: 'i18nsmith sync --apply-preview foo', progressTitle: 'x', successMessage: 's', scannerTrigger: 'sync' });
