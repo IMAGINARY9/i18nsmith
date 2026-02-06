@@ -242,6 +242,7 @@ polish:
       Add unit tests for deriveWhitelistSuggestions and the persist flow,
       add tests for Vue extraction replacements (template vs script),
       and update README with the new "Resolve Dynamic Keys" UX.
+      NOTES: Added unit test to verify Quick Action wiring for dynamic whitelist (`quick-actions-whitelist.test.ts`). Still TODO: add e2e test that covers the interactive QuickPick + persistence and a unit test that asserts `persistDynamicKeyAssumptions` integration.
 
 # ═══════════════════════════════════════════════════════════════
 # IMPLEMENTATION ORDER
@@ -282,9 +283,9 @@ implementation_order:
     reason: Implement end-to-end "Resolve Dynamic Keys" quick action (pick & persist). Command `i18nsmith.whitelistDynamicKeys` registered and wired into Quick Actions; QuickPick + persist logic implemented in ConfigurationController; added unit test for Quick Action wiring.
   - step: 9
     items: [GAP-04]
-    status: todo
-    reason: Replace heuristic Vue template detection with AST-based approach (vue-eslint-parser)
+    status: done
+    reason: Replace heuristic Vue template detection with AST-based approach (vue-eslint-parser). Implemented `getVueTemplateRange` util that resolves project's `vue-eslint-parser` when available and caches per-document ranges; `ExtractionController` now prefers AST detection and falls back to heuristic.
   - step: 10
     items: [GAP-05, POLISH-03]
-    status: todo
-    reason: Add adapter preflight integration, tests, and docs
+    status: in-progress
+    reason: Add adapter preflight integration, tests, and docs. Adapter preflight check added to `applyPreviewCommand` (aborts apply if adapter deps missing and surfaces actionable buttons). Added unit tests for adapter preflight and Vue extraction replacements. Remaining: add e2e tests for preflight-driven flows and an integration test covering interactive QuickPick + persistence for dynamic keys, and update README with new UX notes.

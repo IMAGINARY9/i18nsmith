@@ -74,7 +74,7 @@ export class ExtractionController implements vscode.Disposable {
     }
 
     const literalValue = this.normalizeSelectedLiteral(selectionText || text);
-    const replacement = this.buildReplacement(document, range, selectionText, key);
+    const replacement = await this.buildReplacement(document, range, selectionText, key);
 
     const sourceChange = await this.createSourceFilePreviewChange(document, range, replacement, workspaceFolder.uri.fsPath);
 
@@ -141,14 +141,14 @@ export class ExtractionController implements vscode.Disposable {
    * - Vue template: `{{ $t('key') }}` for text, `$t('key')` for attributes
    * - Vue script / other: `t('key')`
    */
-  private buildReplacement(
+  private async buildReplacement(
     document: vscode.TextDocument,
     range: vscode.Range,
     selectedText: string,
     key: string
-  ): string {
+  ): Promise<string> {
     if (document.languageId === 'vue') {
-      const inTemplate = this.isInsideVueTemplate(document, range.start);
+      const inTemplate = await this.isInsideVueTemplate(document, range.start);
       if (inTemplate) {
         const trimmed = selectedText.trim();
         const isPlainText = !/^['"`]/.test(trimmed) && /[A-Za-z0-9]/.test(trimmed);
@@ -173,7 +173,20 @@ export class ExtractionController implements vscode.Disposable {
   /**
    * Rough heuristic: check if the position is inside a <template> block in a Vue SFC.
    */
-  private isInsideVueTemplate(document: vscode.TextDocument, position: vscode.Position): boolean {
+  private async isInsideVueTemplate(document: vscode.TextDocument, position: vscode.Position): Promise<boolean> {
+    // Prefer AST-based detection using the project's vue-eslint-parser when available
+    try {
+      const { getVueTemplateRange } = await import('../utils/vue-ast');
+      const range = await getVueTemplateRange(document);
+      if (range) {
+        const offset = document.offsetAt(position);
+        return offset >= range.start && offset <= range.end;
+      }
+    } catch {
+      // fall through to heuristic
+    }
+
+    // Heuristic fallback
     const text = document.getText();
     const offset = document.offsetAt(position);
 
