@@ -11,6 +11,7 @@ import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { createDefaultProject } from './project-factory.js';
+import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
 
 // Lazy runtime loader for the optional `vue-eslint-parser`. We intentionally
 // use `eval('require')` to prevent bundlers from statically hoisting the
@@ -48,6 +49,11 @@ function getVueEslintParser(workspaceRoot?: string): any | null {
     return _cachedVueParserRef;
   } catch {
     _cachedVueParserRef = null;
+    if (!_vueParserMissingWarned) {
+      _vueParserMissingWarned = true;
+      console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue reference extraction will be skipped.');
+      console.warn('[i18nsmith] Install it with: npm install --save-dev vue-eslint-parser');
+    }
     return null;
   }
 }
@@ -105,13 +111,16 @@ export interface ExtractionResult {
   filesScanned: number;
 }
 
-const REFERENCE_CACHE_VERSION = 2;
+// Bumped from 2 → 3 to invalidate stale caches from before the Vue parser
+// resolution fix (parser was resolved from CLI location instead of project).
+const REFERENCE_CACHE_VERSION = 3;
 
 export interface ReferenceExtractorOptions {
   workspaceRoot: string;
   project?: Project;
   cacheDir?: string;
   translationIdentifier?: string;
+  parserRegistry?: ParserRegistry;
 }
 
 /**
@@ -124,6 +133,7 @@ export class ReferenceExtractor {
   private readonly cacheDir: string;
   private readonly translationIdentifier: string;
   private readonly referenceCachePath: string;
+  private readonly parserRegistry: ParserRegistry;
 
   constructor(
     private readonly config: I18nConfig,
@@ -132,6 +142,7 @@ export class ReferenceExtractor {
     this.workspaceRoot = options.workspaceRoot;
     this.project = options.project ?? createDefaultProject();
     this.cacheDir = options.cacheDir ?? path.join(this.workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
+    this.parserRegistry = options.parserRegistry ?? createDefaultParserRegistry(this.project);
     const adapterHook = config.translationAdapter?.hookName?.trim();
     const inferredIdentifier = adapterHook && !adapterHook.startsWith('use')
       ? adapterHook
@@ -178,30 +189,25 @@ export class ReferenceExtractor {
     references: TranslationReference[];
     dynamicKeyWarnings: DynamicKeyWarning[];
   } {
-    const references: TranslationReference[] = [];
-    const dynamicKeyWarnings: DynamicKeyWarning[] = [];
+    const filePath = file.getFilePath();
+    const parser = this.parserRegistry.getForFile(filePath);
+    
+    if (!parser) {
+      return { references: [], dynamicKeyWarnings: [] };
+    }
 
-    file.forEachDescendant((node) => {
-      if (!Node.isCallExpression(node)) {
-        return;
-      }
+    if (!parser.isAvailable(this.workspaceRoot)) {
+      return { references: [], dynamicKeyWarnings: [] };
+    }
 
-      const analysis = this.extractKeyFromCall(node);
-      if (!analysis) {
-        return;
-      }
-
-      if (analysis.kind === 'dynamic') {
-        dynamicKeyWarnings.push(this.createDynamicWarning(file, node, analysis.reason));
-        return;
-      }
-
-      const reference = this.createReference(file, node, analysis.key);
-      reference.fallbackLiteral = this.extractFallbackLiteral(node);
-      references.push(reference);
-    });
-
-    return { references, dynamicKeyWarnings };
+    try {
+      const content = file.getFullText();
+      const result = parser.parseFile(filePath, content, this.translationIdentifier, this.workspaceRoot);
+      return result;
+    } catch (error) {
+      console.error(`Failed to parse ${filePath}:`, error);
+      throw error;
+    }
   }
 
   /**
@@ -348,15 +354,17 @@ export class ReferenceExtractor {
         fileWarnings = cachedEntry.dynamicKeyWarnings;
         nextCacheEntries[relativePath] = cachedEntry;
       } else {
-        if (absolutePath.toLowerCase().endsWith('.vue')) {
-          const extracted = await this.extractFromVueFile(absolutePath);
-          fileReferences = extracted.references;
-          fileWarnings = extracted.dynamicKeyWarnings;
+        // Use the appropriate parser based on file extension
+        const parser = this.parserRegistry.getForFile(absolutePath);
+        if (parser) {
+          const content = await fs.readFile(absolutePath, 'utf-8');
+          const result = parser.parseFile(absolutePath, content, this.translationIdentifier, this.workspaceRoot);
+          fileReferences = result.references;
+          fileWarnings = result.dynamicKeyWarnings;
         } else {
-          const sourceFile = this.project.addSourceFileAtPath(absolutePath);
-          const extracted = this.extractFromFile(sourceFile);
-          fileReferences = extracted.references;
-          fileWarnings = extracted.dynamicKeyWarnings;
+          // Fallback: no parser available for this file type
+          fileReferences = [];
+          fileWarnings = [];
         }
 
         nextCacheEntries[relativePath] = {
@@ -511,150 +519,5 @@ export class ReferenceExtractor {
       followSymbolicLinks: true,
     })) as string[];
     return files.sort((a, b) => a.localeCompare(b));
-  }
-
-  /**
-   * Extract references from a single Vue file.
-   */
-  public async extractFromVueFile(filePath: string): Promise<{
-    references: TranslationReference[];
-    dynamicKeyWarnings: DynamicKeyWarning[];
-  }> {
-    const content = await fs.readFile(filePath, 'utf-8');
-    const references: TranslationReference[] = [];
-    const dynamicKeyWarnings: DynamicKeyWarning[] = [];
-
-    const vueEslintParser = getVueEslintParser(this.workspaceRoot);
-    if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
-      if (!_vueParserMissingWarned) {
-        _vueParserMissingWarned = true;
-        console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue reference extraction will be skipped.');
-        console.warn('[i18nsmith] Install it with: npm install --save-dev vue-eslint-parser');
-      }
-      // vue-eslint-parser not available, skip Vue AST parsing and return empty
-      // results. We avoid throwing so the extension can activate in runtime
-      // environments where the optional parser isn't installed.
-      return { references, dynamicKeyWarnings };
-    }
-
-    try {
-      const ast = vueEslintParser.parse(content, { sourceType: 'module', ecmaVersion: 2020 });
-      
-      const visit = (node: any) => {
-        if (!node) return;
-        // console.log('Visiting:', node.type);
-
-        // Check for CallExpression
-        if (node.type === 'CallExpression') {
-          // Check callee: t('key'), $t('key'), this.$t('key'), i18n.t('key')
-          const isTranslationCall = this.isEstreeTranslationCall(node);
-          if (isTranslationCall) {
-            const analysis = this.extractKeyFromEstreeNode(node);
-            if (analysis) {
-               if (analysis.kind === 'literal') {
-                 references.push(this.createEstreeReference(filePath, node, analysis.key));
-               } else {
-                 dynamicKeyWarnings.push(this.createEstreeDynamicWarning(filePath, node, analysis.reason, content));
-               }
-            }
-          }
-        }
-        
-        // Check for VDirective (v-t)
-        if (node.type === 'VAttribute' && node.directive && node.key?.name?.name === 't') {
-             // v-t="'key'" -> value is VExpressionContainer -> expression is Literal
-             if (node.value && node.value.type === 'VExpressionContainer' && node.value.expression) {
-                 const expr = node.value.expression;
-                 if (expr.type === 'Literal' && typeof expr.value === 'string') {
-                     references.push(this.createEstreeReference(filePath, node.value, expr.value));
-                 } else {
-                     // Dynamic v-t
-                     dynamicKeyWarnings.push(this.createEstreeDynamicWarning(filePath, node.value, 'expression', content));
-                 }
-             }
-        }
-
-        // Recursively visit properties
-        for (const key in node) {
-            if (key === 'parent') continue;
-            const child = node[key];
-            if (Array.isArray(child)) {
-                child.forEach(c => visit(c));
-            } else if (typeof child === 'object' && child !== null && typeof child.type === 'string') {
-                visit(child);
-            }
-        }
-      };
-
-      visit(ast.templateBody);
-      visit(ast.body); // Script (Program)
-    } catch (e) {
-      console.warn(`Failed to parse Vue file ${filePath}:`, e);
-    }
-
-    return { references, dynamicKeyWarnings };
-  }
-
-  private isEstreeTranslationCall(node: any): boolean {
-      if (node.type !== 'CallExpression') return false;
-      const callee = node.callee;
-      
-      // t('...')
-      if (callee.type === 'Identifier' && (callee.name === this.translationIdentifier || callee.name === '$t')) return true;
-      
-      // this.$t('...')
-      if (callee.type === 'MemberExpression') {
-          const prop = callee.property;
-          
-          if (prop.type === 'Identifier' && (prop.name === 't' || prop.name === '$t')) {
-              // this.$t or i18n.t
-               return true;
-          }
-      }
-      return false;
-  }
-
-  private extractKeyFromEstreeNode(node: any): { kind: 'literal'; key: string } | { kind: 'dynamic'; reason: DynamicKeyReason } | undefined {
-      const args = node.arguments;
-      if (!args || args.length === 0) return undefined;
-      const arg = args[0];
-
-      if (arg.type === 'Literal' && typeof arg.value === 'string') {
-          return { kind: 'literal', key: arg.value };
-      }
-      if (arg.type === 'TemplateLiteral') {
-          if (arg.quasis.length === 1 && arg.expressions.length === 0) {
-              return { kind: 'literal', key: arg.quasis[0].value.raw };
-          }
-          return { kind: 'dynamic', reason: 'template' };
-      }
-      if (arg.type === 'BinaryExpression') {
-          return { kind: 'dynamic', reason: 'binary' };
-      }
-      return { kind: 'dynamic', reason: 'expression' };
-  }
-
-  private createEstreeReference(filePath: string, node: any, key: string): TranslationReference {
-      const loc = node.loc?.start ?? { line: 1, column: 0 };
-      return {
-          key,
-          filePath: this.getRelativePath(filePath),
-          position: { line: loc.line, column: loc.column },
-      };
-  }
-
-  private createEstreeDynamicWarning(filePath: string, node: any, reason: DynamicKeyReason, content: string): DynamicKeyWarning {
-       const loc = node.loc?.start ?? { line: 1, column: 0 };
-       let expression = '<dynamic>';
-       if (node.range && Array.isArray(node.range)) {
-           expression = content.substring(node.range[0], node.range[1]);
-       }
-
-       return {
-           filePath: this.getRelativePath(filePath),
-           position: { line: loc.line, column: loc.column },
-           expression,
-           reason
-       };
   }
 }

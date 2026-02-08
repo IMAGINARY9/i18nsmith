@@ -225,7 +225,16 @@ function buildActionableInsights(input: InsightBuilderInput) {
     recommendations.push('Use "i18nsmith init --merge" to reuse existing adapters and locales.');
   }
 
-  if (input.translationUsage.identifierOccurrences > 0 && input.translationUsage.hookOccurrences === 0) {
+  // Frameworks that expose translation functions as globals (e.g. $t in Vue
+  // templates, $t in Nuxt, $_ in Svelte) don't require an explicit hook import.
+  const GLOBAL_T_ADAPTER_MODULES = ['vue-i18n', '@nuxtjs/i18n', 'svelte-i18n'];
+  const usesGlobalTranslation = GLOBAL_T_ADAPTER_MODULES.includes(adapterModule ?? '');
+
+  if (
+    input.translationUsage.identifierOccurrences > 0 &&
+    input.translationUsage.hookOccurrences === 0 &&
+    !usesGlobalTranslation
+  ) {
     actionableItems.push({
       kind: 'diagnostics-translation-identifier-only',
       severity: 'info',

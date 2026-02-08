@@ -9,10 +9,11 @@ import {
   DEFAULT_EMPTY_VALUE_MARKERS,
   SuspiciousKeyPolicy,
 } from './config.js';
+import { createDefaultProject } from './project-factory.js';
 import { createBackup, BackupResult } from './backup.js';
 import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { buildPlaceholderPatterns, PlaceholderPatternInstance } from './placeholders.js';
-import { createDefaultProject } from './project-factory.js';
+import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
 import { ActionableItem } from './actionable.js';
 import { buildLocaleDiffs, buildLocalePreview, LocaleDiffEntry, LocaleDiffPreview, SourceFileDiffEntry } from './diff-utils.js';
 import { KeyValidator, SuspiciousKeyReason } from './key-validator.js';
@@ -131,6 +132,7 @@ export interface SyncerOptions {
   project?: Project;
   localeStore?: LocaleStore;
   translationIdentifier?: string;
+  parserRegistry?: ParserRegistry;
 }
 
 export interface SyncRunOptions {
@@ -177,6 +179,7 @@ export class Syncer {
   private readonly suspiciousKeyPolicy: SuspiciousKeyPolicy;
   private readonly keyValidator: KeyValidator;
   private readonly extractor: ReferenceExtractor;
+  private readonly parserRegistry: ParserRegistry;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -198,7 +201,9 @@ export class Syncer {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
       translationIdentifier: this.translationIdentifier,
+      parserRegistry: options.parserRegistry ?? createDefaultParserRegistry(),
     });
+    this.parserRegistry = options.parserRegistry ?? createDefaultParserRegistry();
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
     this.defaultValidateInterpolations = syncOptions.validateInterpolations ?? false;
@@ -227,10 +232,11 @@ export class Syncer {
     if (targetFilter) {
       filePaths = filePaths.filter((filePath) => targetFilter.absolute.has(filePath));
     }
+    const parserAvailability = this.getParserAvailability();
     const cacheState = await loadReferenceCache(
       this.referenceCachePath,
       this.translationIdentifier,
-      runOptions.invalidateCache
+      { invalidate: runOptions.invalidateCache, parserAvailability }
     );
     const nextCacheEntries: Record<string, ReferenceCacheEntry> = targetFilter
       ? { ...(cacheState?.files ?? {}) }
@@ -410,7 +416,8 @@ export class Syncer {
       this.referenceCachePath,
       this.cacheDir,
       this.translationIdentifier,
-      nextCacheEntries
+      nextCacheEntries,
+      { parserAvailability }
     );
 
     const actionableItems = buildActionableItems({
@@ -779,12 +786,8 @@ export class Syncer {
       } else {
         let extracted: { references: TranslationReference[]; dynamicKeyWarnings: DynamicKeyWarning[] };
         
-        if (absolutePath.endsWith('.vue')) {
-          extracted = await this.extractor.extractFromVueFile(absolutePath);
-        } else {
-          const sourceFile = this.project.addSourceFileAtPath(absolutePath);
-          extracted = this.extractor.extractFromFile(sourceFile);
-        }
+        const sourceFile = this.project.addSourceFileAtPath(absolutePath);
+        extracted = this.extractor.extractFromFile(sourceFile);
         
         fileReferences = extracted.references;
         fileWarnings = extracted.dynamicKeyWarnings;
@@ -937,6 +940,15 @@ export class Syncer {
         }
       }
     }
+  }
+
+  /**
+   * Quick probe to check if vue-eslint-parser is available.  Used to track
+   * parser availability in the reference cache so it auto-invalidates when
+   * the parser is installed (or removed) between runs.
+   */
+  private getParserAvailability(): Record<string, boolean> {
+    return this.parserRegistry.getAvailabilityStatus(this.workspaceRoot);
   }
 
   private getGlobPatterns(): string[] {

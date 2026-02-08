@@ -15,18 +15,24 @@ export interface ReferenceCacheEntry {
 export interface ReferenceCacheFile {
   version: number;
   translationIdentifier: string;
+  /** Parser availability status when the cache was written.
+   *  If parser availability changes, the cache is invalidated. */
+  parserAvailability?: Record<string, boolean>;
   files: Record<string, ReferenceCacheEntry>;
 }
 
-const CACHE_VERSION = 2;
+// Bumped from 2 → 3 to invalidate stale caches that stored empty Vue references
+// because vue-eslint-parser wasn't resolved from the project's node_modules.
+const CACHE_VERSION = 3;
 export const REFERENCE_CACHE_VERSION = CACHE_VERSION;
 
 export async function loadReferenceCache(
   filePath: string,
   translationIdentifier: string,
-  options?: boolean | { invalidate?: boolean }
+  options?: boolean | { invalidate?: boolean; parserAvailability?: Record<string, boolean> }
 ): Promise<ReferenceCacheFile | undefined> {
   const shouldInvalidate = typeof options === 'boolean' ? options : options?.invalidate;
+  const currentParserAvailability = typeof options === 'object' ? options?.parserAvailability : undefined;
   
   if (shouldInvalidate) {
     return undefined;
@@ -38,6 +44,15 @@ export async function loadReferenceCache(
     if (data.version !== CACHE_VERSION || data.translationIdentifier !== translationIdentifier) {
       return undefined;
     }
+    // Invalidate cache if parser availability changed (e.g. user installs a parser)
+    if (currentParserAvailability && data.parserAvailability) {
+      const hasChanged = Object.keys(currentParserAvailability).some(
+        (parserId) => currentParserAvailability[parserId] !== data.parserAvailability?.[parserId]
+      );
+      if (hasChanged) {
+        return undefined;
+      }
+    }
     return data as ReferenceCacheFile;
   } catch {
     return undefined;
@@ -48,11 +63,13 @@ export async function saveReferenceCache(
   filePath: string,
   cacheDir: string,
   translationIdentifier: string,
-  entries: Record<string, ReferenceCacheEntry>
+  entries: Record<string, ReferenceCacheEntry>,
+  options?: { parserAvailability?: Record<string, boolean> }
 ): Promise<void> {
   const data: ReferenceCacheFile = {
     version: CACHE_VERSION,
     translationIdentifier,
+    parserAvailability: options?.parserAvailability,
     files: entries,
   };
   await fs.mkdir(cacheDir, { recursive: true });
