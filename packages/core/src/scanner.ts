@@ -228,8 +228,11 @@ export class Scanner {
         filesExamined.push(this.getRelativePath(filePath));
         filesScanned += 1;
       } catch (error) {
-        console.warn(`Failed to scan ${filePath}: ${error}`);
-      }
+        console.warn(`Failed to scan ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof Error && error.stack) {
+          console.warn(error.stack);
+        }
+  }
     }
 
     const dedupeCandidates = this.config.extraction?.dedupeCandidates ?? true;

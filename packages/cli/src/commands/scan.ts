@@ -75,7 +75,10 @@ export function registerScan(program: Command) {
           if (options.exclude?.length) {
             config.exclude = options.exclude;
           }
-          const scanner = new Scanner(config, { workspaceRoot: projectRoot });
+          // Use factory that registers framework adapters (React/Vue) so
+          // scans include files handled by adapters. Backwards compatible
+          // API: Scanner.create will return a scanner with adapters wired.
+          const scanner = await Scanner.create(config, { workspaceRoot: projectRoot });
           const summary = scanner.scan();
 
           if (options.report) {

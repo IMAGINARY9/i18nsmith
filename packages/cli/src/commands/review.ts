@@ -138,7 +138,7 @@ export function registerReview(program: Command) {
       withErrorHandling(async (options: ReviewCommandOptions) => {
         try {
           const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
-          const scanner = new Scanner(config, { workspaceRoot: projectRoot });
+          const scanner = await Scanner.create(config, { workspaceRoot: projectRoot });
           const summary = scanner.scan({ scanCalls: options.scanCalls }) as BucketedScanSummary;
           const buckets = summary.buckets ?? {};
           const needsReview = buckets.needsReview ?? [];

@@ -86,7 +86,9 @@ export class CheckRunner {
       },
     };
     if (scanHardcoded) {
-      const scanner = new Scanner(this.config, { workspaceRoot: this.workspaceRoot });
+      // Use factory that registers framework adapters (React/Vue) so
+      // hardcoded text scanning will include framework-specific files.
+      const scanner = await Scanner.create(this.config, { workspaceRoot: this.workspaceRoot });
       scan = options.targets?.length
         ? scanner.scan({ targets: options.targets })
         : scanner.scan();

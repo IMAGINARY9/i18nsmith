@@ -60,35 +60,59 @@ export class FrameworkDetector {
     // Load package.json
     await this.loadPackageJson();
 
-    // Check each framework signature in priority order
+    // Check each framework signature and collect evidence from all
     const signatures = getSignaturesByPriority();
-    const evidence: DetectionEvidence[] = [];
+    const frameworkResults: Array<{
+      type: FrameworkType;
+      matched: boolean;
+      evidence: DetectionEvidence[];
+      confidence: number;
+    }> = [];
 
     for (const signature of signatures) {
       const result = await this.checkFramework(signature.type);
-      if (result.matched) {
-        evidence.push(...result.evidence);
+      const confidence = this.calculateConfidence(result.evidence);
+      
+      frameworkResults.push({
+        type: signature.type,
+        matched: result.matched,
+        evidence: result.evidence,
+        confidence,
+      });
+    }
 
+    // Find the framework with the highest confidence
+    const bestMatch = frameworkResults.reduce((best, current) => {
+      // Prefer matched frameworks, but also consider confidence from evidence
+      const shouldPreferCurrent = 
+        (current.matched && !best.matched) || // Prefer matched over unmatched
+        (current.matched === best.matched && current.confidence > best.confidence) || // Same match status, higher confidence
+        (!best.matched && current.confidence > best.confidence); // Both unmatched, higher confidence
+      
+      return shouldPreferCurrent ? current : best;
+    }, { type: 'unknown' as FrameworkType, matched: false, evidence: [] as DetectionEvidence[], confidence: 0 });
+
+    if (bestMatch.confidence > 0) {
+      const signature = FRAMEWORK_SIGNATURES.find((s) => s.type === bestMatch.type);
+      
+      if (signature) {
         // Detect additional features
-        const features = await this.detectFeatures(signature.type);
-        const routerType = signature.type === 'next' ? await this.detectNextRouter() : undefined;
+        const features = await this.detectFeatures(bestMatch.type);
+        const routerType = bestMatch.type === 'next' ? await this.detectNextRouter() : undefined;
 
         // Find i18n adapter
-        const { adapter, adapterEvidence } = this.detectI18nAdapter(signature.type);
-        evidence.push(...adapterEvidence);
-
-        // Calculate confidence
-        const confidence = this.calculateConfidence(evidence);
+        const { adapter, adapterEvidence } = this.detectI18nAdapter(bestMatch.type);
+        bestMatch.evidence.push(...adapterEvidence);
 
         return {
-          type: signature.type,
+          type: bestMatch.type,
           version: this.getPackageVersion(signature.packages[0]),
           adapter,
           hookName: getAdapterHook(adapter),
           features,
           routerType,
-          confidence,
-          evidence,
+          confidence: this.calculateConfidence(bestMatch.evidence),
+          evidence: bestMatch.evidence,
         };
       }
     }
@@ -160,7 +184,59 @@ export class FrameworkDetector {
     }
 
     if (!hasRequiredPackage) {
-      return { matched: false, evidence };
+      // If no required package is present, try to detect framework by
+      // presence of characteristic files (e.g., .vue files for Vue).
+      // This helps detection in minimal test projects that don't list
+      // framework packages in package.json (common in temp fixtures).
+      // First, check for explicit feature indicators (config files, dirs)
+      let matchedFeatureIndicator = false;
+      if (signature.featureIndicators) {
+        for (const indicators of Object.values(signature.featureIndicators)) {
+          for (const indicator of indicators) {
+            // eslint-disable-next-line no-await-in-loop
+            if (await this.pathExists(indicator)) {
+              matchedFeatureIndicator = true;
+              evidence.push({
+                type: 'file',
+                source: indicator,
+                weight: 0.25,
+                description: `Found feature indicator ${indicator}`,
+              });
+              break;
+            }
+          }
+          if (matchedFeatureIndicator) break;
+        }
+      }
+
+      for (const pattern of signature.includePatterns ?? []) {
+        // pathExists understands globs
+        // Use a slightly higher weight since file patterns are strong indicators
+        // when present (e.g., many .vue files -> Vue project).
+        // eslint-disable-next-line no-await-in-loop
+        const exists = await this.pathExists(pattern);
+        if (exists) {
+          hasRequiredPackage = true;
+          evidence.push({
+            type: 'file',
+            source: pattern,
+            weight: 0.3,
+            description: `Found files matching ${pattern}`,
+          });
+          break;
+        }
+      }
+      // Heuristic: for high-level frameworks that encompass others (e.g., Nuxt
+      // includes Vue), require a feature indicator (nuxt.config.* or pages/)
+      // in addition to generic file matches to avoid misclassification.
+      if (!hasRequiredPackage) {
+        // Return evidence even if no match, for aggregate scoring
+        return { matched: false, evidence };
+      }
+      if (signature.type === 'nuxt' && !matchedFeatureIndicator) {
+        // Return evidence even if demoted, for aggregate scoring
+        return { matched: false, evidence };
+      }
     }
 
     // Check optional packages for additional confidence

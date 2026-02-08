@@ -66,8 +66,8 @@ export class ReactAdapter implements FrameworkAdapter {
 
   scan(filePath: string, content: string, options?: AdapterScanOptions): ScanCandidate[] {
     const candidates: ScanCandidate[] = [];
-    const project = createScannerProject();
-    const sourceFile = project.createSourceFile(filePath, content);
+  const project = createScannerProject();
+  const sourceFile = project.createSourceFile(filePath, content, { overwrite: true });
 
     if (!sourceFile) {
       return candidates;
@@ -96,8 +96,8 @@ export class ReactAdapter implements FrameworkAdapter {
     candidates: TransformCandidate[],
     options: AdapterMutateOptions
   ): MutationResult {
-    const project = createScannerProject();
-    const sourceFile = project.createSourceFile(filePath, content);
+  const project = createScannerProject();
+  const sourceFile = project.createSourceFile(filePath, content, { overwrite: true });
 
     if (!sourceFile) {
       return { didMutate: false, content, edits: [] };

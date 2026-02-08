@@ -189,6 +189,7 @@ export class KeyRenamer {
     const scanner = new Scanner(this.config, {
       workspaceRoot: this.workspaceRoot,
       project: this.project,
+      registry: this.registry,
     });
     const scanSummary = scanner.scan({
       targets: undefined, // scan all files

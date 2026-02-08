@@ -1,0 +1,10 @@
+{
+  "filesScanned": 0,
+  "filesExamined": [],
+  "candidates": [],
+  "buckets": {
+    "highConfidence": [],
+    "needsReview": [],
+    "skipped": []
+  }
+}
