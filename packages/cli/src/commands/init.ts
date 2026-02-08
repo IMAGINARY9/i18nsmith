@@ -596,14 +596,24 @@ export function registerInit(program: Command) {
         // Manual setup - use the existing prompts
         console.log(chalk.blue('🔧 Manual configuration...'));
         
+        // Map the selected adapter preset to the correct module name and hook.
+        // The prompt offers 'react-i18next', 'vue-i18n', 'svelte-i18n', 'next-intl', and 'custom'.
+        // Only 'custom' uses the user-provided module specifier; all known presets
+        // are used directly as the adapter module name.
         const adapterModule =
           answers.adapterPreset === 'custom'
             ? answers.customAdapterModule?.trim()
-            : 'react-i18next';
+            : answers.adapterPreset; // Use actual selection (vue-i18n, svelte-i18n, etc.)
+        const ADAPTER_HOOKS: Record<string, string> = {
+          'react-i18next': 'useTranslation',
+          'vue-i18n': 'useI18n',
+          'svelte-i18n': 't',
+          'next-intl': 'useTranslations',
+        };
         const adapterHook =
           answers.adapterPreset === 'custom'
             ? (answers.customAdapterHook?.trim() || 'useTranslation')
-            : 'useTranslation';
+            : ADAPTER_HOOKS[answers.adapterPreset] || 'useTranslation';
 
         const translationConfig: TranslationConfig =
           answers.service === 'manual'
@@ -651,6 +661,22 @@ export function registerInit(program: Command) {
         const gitignoreResult = await ensureGitignore(workspaceRoot);
         if (gitignoreResult.updated) {
           console.log(chalk.green(`Updated .gitignore with i18nsmith artifacts`));
+        }
+
+        // Create locales directory and minimal source locale file so
+        // `i18nsmith check` doesn't immediately report missing source locale.
+        try {
+          const localesDirPath = path.join(workspaceRoot, config!.localesDir || 'locales');
+          await fs.mkdir(localesDirPath, { recursive: true });
+          const sourceLocalePath = path.join(localesDirPath, `${config!.sourceLanguage}.json`);
+          try {
+            await fs.access(sourceLocalePath);
+          } catch {
+            await fs.writeFile(sourceLocalePath, JSON.stringify({}, null, 2));
+            console.log(chalk.green(`✓ Created source locale file at ${sourceLocalePath}`));
+          }
+        } catch {
+          console.log(chalk.yellow('Could not create source locale file automatically.'));
         }
 
         if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {

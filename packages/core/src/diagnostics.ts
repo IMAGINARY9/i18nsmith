@@ -13,6 +13,9 @@ const DEFAULT_RUNTIME_DEPENDENCIES = [
   'next-intl',
   '@lingui/core',
   '@lingui/react',
+  'vue-i18n',
+  '@nuxtjs/i18n',
+  'svelte-i18n',
 ];
 
 const DEFAULT_PROVIDER_GLOBS = [

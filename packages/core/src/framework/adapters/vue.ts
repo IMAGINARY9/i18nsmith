@@ -141,15 +141,8 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   checkDependencies(): Array<{ name: string; available: boolean; installHint: string }> {
-    // Check if vue-eslint-parser is available
-    let available = false;
-    try {
-      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      eval('require')('vue-eslint-parser');
-      available = true;
-    } catch {
-      available = false;
-    }
+    // Check if vue-eslint-parser is available (resolve from workspace root first)
+    const available = this.getVueEslintParser() !== null;
 
     return [{
       name: 'vue-eslint-parser',
@@ -239,11 +232,24 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private getVueEslintParser(): any | null {
+    // Try to resolve from the project's workspace root first, then fall back to
+    // the CLI's own node_modules. This is critical when the CLI is installed
+    // globally or in a monorepo — the project's vue-eslint-parser lives in the
+    // project's node_modules, not the CLI's.
+    const resolveFrom = [this.workspaceRoot, path.join(this.workspaceRoot, 'node_modules')];
     try {
       // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      return eval('require')('vue-eslint-parser');
+      const resolved = eval('require').resolve('vue-eslint-parser', { paths: resolveFrom });
+      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+      return eval('require')(resolved);
     } catch {
-      return null;
+      // Fall back to default resolution (CLI's own node_modules)
+      try {
+        // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+        return eval('require')('vue-eslint-parser');
+      } catch {
+        return null;
+      }
     }
   }
 
@@ -262,18 +268,27 @@ export class VueAdapter implements FrameworkAdapter {
       if (templateMatches) {
         for (const match of templateMatches) {
           const text = match.slice(1, -1).trim();
-          if (this.shouldExtractText(text)) {
+          // Skip Vue template expressions ({{ ... }}) and translation calls ($t, t)
+          if (/^\{\{.*\}\}$/.test(text) || /\$?t\s*\(/.test(text)) {
+            continue;
+          }
+          // Skip text that is entirely a mustache expression or whitespace
+          const withoutMustache = text.replace(/\{\{[^}]*\}\}/g, '').trim();
+          if (!withoutMustache) {
+            continue;
+          }
+          if (this.shouldExtractText(withoutMustache)) {
             const candidate: ScanCandidate = {
               id: `${filePath}:${i + 1}`,
               kind: 'jsx-text' as CandidateKind,
               filePath,
-              text,
+              text: withoutMustache,
               position: {
                 line: i + 1,
                 column: line.indexOf(text),
               },
-              suggestedKey: this.generateKey(text),
-              hash: this.hashText(text),
+              suggestedKey: this.generateKey(withoutMustache),
+              hash: this.hashText(withoutMustache),
             };
             candidates.push(candidate);
           }

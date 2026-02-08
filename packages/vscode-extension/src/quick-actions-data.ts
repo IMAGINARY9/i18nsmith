@@ -157,30 +157,46 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const sections: QuickActionSection[] = [];
 
   if (!runtimeReady) {
-    const adapterType = request.detectedAdapter && request.detectedAdapter !== 'custom'
-      ? request.detectedAdapter
-      : 'react-i18next';
-    sections.push({
-      title: '⚙️ Setup Required',
-      actions: [
-        createQuickAction({
-          id: 'initialize-runtime',
-          icon: ICONS.scaffold,
-          title: 'Initialize i18n Project',
-          description: 'Install runtime packages and scaffold the provider shell.',
-          detail: `Runs scaffold-adapter with --type ${adapterType}.`,
-          command: `i18nsmith scaffold-adapter --type ${adapterType} --install-deps`,
-        }),
-        createQuickAction({
-          id: 'open-output-channel',
-          icon: ICONS.terminal,
-          title: 'Show i18nsmith Output Channel',
-          description: 'Review CLI output and diagnostics.',
-          command: 'i18nsmith.showOutput',
-          longRunning: false,
-        }),
-      ].filter(Boolean) as QuickActionDefinition[],
-    });
+    const detectedAdapter = request.detectedAdapter;
+    // scaffold-adapter only supports 'custom' and 'react-i18next' types.
+    // For other adapters (vue-i18n, svelte-i18n, etc.), use init which
+    // handles all frameworks via templates and auto-detection.
+    const isScaffoldable = !detectedAdapter || detectedAdapter === 'react-i18next' || detectedAdapter === 'custom';
+    const scaffoldType = isScaffoldable
+      ? (detectedAdapter === 'custom' ? 'custom' : 'react-i18next')
+      : 'custom';
+
+    const setupActions: QuickActionDefinition[] = [];
+    if (isScaffoldable) {
+      const action = createQuickAction({
+        id: 'initialize-runtime',
+        icon: ICONS.scaffold,
+        title: 'Initialize i18n Project',
+        description: 'Install runtime packages and scaffold the provider shell.',
+        detail: `Runs scaffold-adapter with --type ${scaffoldType}.`,
+        command: `i18nsmith scaffold-adapter --type ${scaffoldType} --install-deps`,
+      });
+      if (action) setupActions.push(action);
+    } else {
+      // For non-scaffoldable adapters (vue-i18n, svelte-i18n, etc.),
+      // suggest init which has templates for all frameworks.
+      const action = createQuickAction({
+        id: 'initialize-runtime',
+        icon: ICONS.scaffold,
+        title: 'Initialize i18n Project',
+        description: `Set up ${detectedAdapter} runtime and configuration.`,
+        detail: 'Choose from auto-detection, framework templates, or manual setup.',
+        command: 'i18nsmith.init',
+      });
+      if (action) setupActions.push(action);
+    }
+
+    if (setupActions.length) {
+      sections.push({
+        title: '⚙️ Setup Required',
+        actions: setupActions,
+      });
+    }
   }
 
   const suggestionBuckets = groupSuggestionsByCategory(suggestions);
@@ -296,7 +312,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     sections.push(projectSection);
   }
 
-  const setupSection = createSetupSection(suggestionBuckets);
+  const setupSection = createSetupSection(suggestionBuckets, runtimeReady);
   if (setupSection) {
     sections.push(setupSection);
   }
@@ -409,12 +425,16 @@ function createProjectHealthSection(
 }
 
 function createSetupSection(
-  suggestionBuckets: Map<SuggestionCategory, SuggestedCommandEntry[]>
+  suggestionBuckets: Map<SuggestionCategory, SuggestedCommandEntry[]>,
+  runtimeReady: boolean
 ): QuickActionSection | null {
   const actions: QuickActionDefinition[] = [];
   const setupSuggestion = suggestionBuckets.get('setup')?.[0];
 
-  if (setupSuggestion) {
+  // Only show scaffold suggestion when the runtime IS ready (no "Setup Required"
+  // section already visible). When !runtimeReady, "Setup Required" already
+  // offers the initialize/scaffold action — avoid duplication.
+  if (setupSuggestion && runtimeReady) {
     actions.push(
       createQuickAction({
         id: 'scaffold-runtime',

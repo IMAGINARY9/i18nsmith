@@ -14,11 +14,34 @@ import { createDefaultProject } from './project-factory.js';
 
 // Lazy runtime loader for the optional `vue-eslint-parser`. We intentionally
 // use `eval('require')` to prevent bundlers from statically hoisting the
-// require call. The loader caches the result so we only try once.
+// require call. The loader caches the result so we only try once per
+// workspaceRoot (to handle multiple projects in a single process).
 let _cachedVueParserRef: any | undefined;
+let _cachedVueParserRoot: string | undefined;
 let _vueParserMissingWarned = false;
-function getVueEslintParser(): any | null {
+function getVueEslintParser(workspaceRoot?: string): any | null {
+  // If the workspace root changed, invalidate the cache so we re-resolve
+  // from the new project's node_modules.
+  if (workspaceRoot && workspaceRoot !== _cachedVueParserRoot) {
+    _cachedVueParserRef = undefined;
+    _cachedVueParserRoot = workspaceRoot;
+  }
   if (_cachedVueParserRef !== undefined) return _cachedVueParserRef;
+  // Try to resolve from the project's workspace root first, then fall back
+  // to the CLI's own node_modules.
+  if (workspaceRoot) {
+    try {
+      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+      const resolved = eval('require').resolve('vue-eslint-parser', {
+        paths: [workspaceRoot, path.join(workspaceRoot, 'node_modules')],
+      });
+      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
+      _cachedVueParserRef = eval('require')(resolved);
+      return _cachedVueParserRef;
+    } catch {
+      // Fall through to default resolution
+    }
+  }
   try {
     // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
     _cachedVueParserRef = eval('require')('vue-eslint-parser');
@@ -501,11 +524,12 @@ export class ReferenceExtractor {
     const references: TranslationReference[] = [];
     const dynamicKeyWarnings: DynamicKeyWarning[] = [];
 
-    const vueEslintParser = getVueEslintParser();
+    const vueEslintParser = getVueEslintParser(this.workspaceRoot);
     if (!vueEslintParser || typeof vueEslintParser.parse !== 'function') {
       if (!_vueParserMissingWarned) {
         _vueParserMissingWarned = true;
         console.warn('[i18nsmith] vue-eslint-parser is not installed. Vue reference extraction will be skipped.');
+        console.warn('[i18nsmith] Install it with: npm install --save-dev vue-eslint-parser');
       }
       // vue-eslint-parser not available, skip Vue AST parsing and return empty
       // results. We avoid throwing so the extension can activate in runtime
