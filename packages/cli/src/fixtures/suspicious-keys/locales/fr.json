@@ -1,11 +1,11 @@
 {
-  "Hello World": "Bonjour le monde",
-  "Welcome to our app!": "Bienvenue dans notre application!",
-  "Click Here": "Cliquez ici",
-  "Save": "Sauvegarder",
-  "The Quick Brown Fox": "Le Renard Brun Rapide",
-  "When to use this feature:": "Quand utiliser cette fonctionnalité:",
+  "common.badkeys.buttons-submit.3b94a6": "Soumettre",
+  "common.badkeys.click-here.788c1e": "Cliquez ici",
+  "common.badkeys.hello-world.66bf53": "Bonjour le monde",
+  "common.badkeys.save.a495bf": "Sauvegarder",
+  "common.badkeys.welcome-to-our-app.a53bf0": "Bienvenue dans notre application!",
+  "common.title": "Titre de l'application",
   "proper.namespaced.key": "Ceci est une clé correctement nommée",
-  "buttons.submit": "Soumettre",
-  "common.title": "Titre de l'application"
+  "The Quick Brown Fox": "Le Renard Brun Rapide",
+  "When to use this feature:": "Quand utiliser cette fonctionnalité:"
 }

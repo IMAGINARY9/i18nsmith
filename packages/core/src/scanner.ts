@@ -12,8 +12,9 @@ import {
 import fg from "fast-glob";
 import { DEFAULT_EXCLUDE, DEFAULT_INCLUDE, I18nConfig } from "./config.js";
 import { createScannerProject } from "./project-factory.js";
-import { AdapterRegistry } from "./framework/registry.js";
-import type { FrameworkAdapter } from "./framework/types.js";
+import { AdapterRegistry, createDefaultRegistry } from './framework/registry.js';
+import { ReactAdapter } from './framework/ReactAdapter.js';
+import { VueAdapter } from './framework/adapters/vue.js';
 
 export type CandidateKind =
   | "jsx-text"
@@ -144,29 +145,8 @@ export class Scanner {
    */
   static async create(config: I18nConfig, options: ScannerOptions = {}): Promise<Scanner> {
     const workspaceRoot = options.workspaceRoot ?? process.cwd();
-    const [{ ReactAdapter }, { VueAdapter }] = await Promise.all([
-      import('./framework/ReactAdapter'),
-      import('./framework/adapters/vue')
-    ]);
-    
-    const registry = new AdapterRegistry();
-    registry.register(new ReactAdapter(config, workspaceRoot));
-    registry.register(new VueAdapter(config, workspaceRoot));
-    
+    const registry = createDefaultRegistry(config, workspaceRoot);
     return new Scanner(config, { ...options, registry });
-  }
-
-  private async createDefaultRegistry(): Promise<AdapterRegistry> {
-    const [{ ReactAdapter }, { VueAdapter }] = await Promise.all([
-      import('./framework/ReactAdapter'),
-      import('./framework/adapters/vue')
-    ]);
-    
-    const registry = new AdapterRegistry();
-    registry.register(new ReactAdapter(this.config, this.workspaceRoot));
-    registry.register(new VueAdapter(this.config, this.workspaceRoot));
-    
-    return registry;
   }
 
   private readFileContent(filePath: string): string {

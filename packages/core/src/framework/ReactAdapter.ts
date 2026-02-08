@@ -107,21 +107,37 @@ export class ReactAdapter implements FrameworkAdapter {
     let didMutate = false;
 
     for (const candidate of candidates) {
-      // Find the node to mutate based on position
-      const node = this.findNodeByPosition(sourceFile, candidate);
-      if (node) {
-        const keyCall = `t('${candidate.suggestedKey}')`;
-        const start = node.getStart();
-        const end = node.getEnd();
+      if (candidate.kind === 'call-expression') {
+        // For renaming existing calls, find and replace the key
+        const oldCall = `t('${candidate.text}')`;
+        const newCall = `t('${candidate.suggestedKey}')`;
+        const index = content.indexOf(oldCall);
+        
+        if (index !== -1) {
+          edits.push({
+            start: index,
+            end: index + oldCall.length,
+            replacement: newCall,
+          });
+          didMutate = true;
+        }
+      } else {
+        // For transforming hardcoded text, replace the entire node with a translation call
+        const node = this.findNodeByPosition(sourceFile, candidate);
+        if (node) {
+          const keyCall = `t('${candidate.suggestedKey}')`;
+          const start = node.getStart();
+          const end = node.getEnd();
 
-        // Replace the node with the translation call
-        edits.push({
-          start,
-          end,
-          replacement: keyCall,
-        });
+          // Replace the node with the translation call
+          edits.push({
+            start,
+            end,
+            replacement: keyCall,
+          });
 
-        didMutate = true;
+          didMutate = true;
+        }
       }
     }
 

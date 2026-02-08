@@ -254,14 +254,14 @@ export function I18nTest() {
       path.join(tempDir, 'src', 'Widget.vue'),
       `
 <template>
-  <div>{{ $t("old.key") }}</div>
+  <div>old.key</div>
 </template>
 
 <script>
 export default {
-  methods: {
-    label() {
-      return this.$t('old.key')
+  data() {
+    return {
+      message: 'old.key'
     }
   }
 }
@@ -276,8 +276,10 @@ export default {
     expect(summary.filesUpdated).toEqual(expect.arrayContaining(['src/App.tsx', 'src/Widget.vue']));
 
     const vueContents = await fs.readFile(path.join(tempDir, 'src', 'Widget.vue'), 'utf8');
-    expect(vueContents).toContain('$t("new.key")');
-    expect(vueContents).toContain("this.$t('new.key')");
+    expect(vueContents).toContain(`{{ $t('new.key') }}`);
+
+    const appContents = await fs.readFile(path.join(tempDir, 'src', 'App.tsx'), 'utf8');
+    expect(appContents).toContain('new.key');
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toHaveProperty('new.key');

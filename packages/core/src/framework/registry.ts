@@ -64,3 +64,17 @@ export class AdapterRegistry {
     return results;
   }
 }
+
+/**
+ * Creates a default adapter registry with React and Vue adapters.
+ */
+export function createDefaultRegistry(config: import('../config.js').I18nConfig, workspaceRoot: string): AdapterRegistry {
+  const registry = new AdapterRegistry();
+  // Import here to avoid circular dependencies
+  const { ReactAdapter } = require('../framework/ReactAdapter.js');
+  const { VueAdapter } = require('../framework/adapters/vue.js');
+  
+  registry.register(new ReactAdapter(config, workspaceRoot));
+  registry.register(new VueAdapter(config, workspaceRoot));
+  return registry;
+}

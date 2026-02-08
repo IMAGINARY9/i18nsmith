@@ -1,0 +1,419 @@
+{
+  "type": "sync-preview",
+  "version": 1,
+  "command": "i18nsmith sync --diff --auto-rename-suspicious --preview-output preview.json",
+  "args": [
+    "sync",
+    "--diff",
+    "--auto-rename-suspicious",
+    "--preview-output",
+    "preview.json"
+  ],
+  "timestamp": "2026-02-08T16:49:09.709Z",
+  "summary": {
+    "filesScanned": 1,
+    "references": [
+      {
+        "key": "Hello World",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 9,
+          "column": 12
+        }
+      },
+      {
+        "key": "Welcome to our app!",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 10,
+          "column": 11
+        }
+      },
+      {
+        "key": "Click Here",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 11,
+          "column": 20
+        }
+      },
+      {
+        "key": "Save",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 12,
+          "column": 16
+        }
+      },
+      {
+        "key": "proper.namespaced.key",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 15,
+          "column": 11
+        }
+      },
+      {
+        "key": "buttons.submit",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 16,
+          "column": 16
+        }
+      }
+    ],
+    "missingKeys": [
+      {
+        "key": "Hello World",
+        "references": [
+          {
+            "key": "Hello World",
+            "filePath": "src/BadKeys.tsx",
+            "position": {
+              "line": 9,
+              "column": 12
+            }
+          }
+        ],
+        "suspicious": true
+      },
+      {
+        "key": "Welcome to our app!",
+        "references": [
+          {
+            "key": "Welcome to our app!",
+            "filePath": "src/BadKeys.tsx",
+            "position": {
+              "line": 10,
+              "column": 11
+            }
+          }
+        ],
+        "suspicious": true
+      },
+      {
+        "key": "Click Here",
+        "references": [
+          {
+            "key": "Click Here",
+            "filePath": "src/BadKeys.tsx",
+            "position": {
+              "line": 11,
+              "column": 20
+            }
+          }
+        ],
+        "suspicious": true
+      },
+      {
+        "key": "Save",
+        "references": [
+          {
+            "key": "Save",
+            "filePath": "src/BadKeys.tsx",
+            "position": {
+              "line": 12,
+              "column": 16
+            }
+          }
+        ],
+        "suspicious": true
+      },
+      {
+        "key": "buttons.submit",
+        "references": [
+          {
+            "key": "buttons.submit",
+            "filePath": "src/BadKeys.tsx",
+            "position": {
+              "line": 16,
+              "column": 16
+            }
+          }
+        ],
+        "suspicious": false
+      }
+    ],
+    "unusedKeys": [
+      {
+        "key": "common.badkeys.buttons-submit.3b94a6",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "common.badkeys.click-here.788c1e",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "common.badkeys.hello-world.66bf53",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "common.badkeys.save.a495bf",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "common.badkeys.welcome-to-our-app.a53bf0",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "common.title",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "The Quick Brown Fox",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      },
+      {
+        "key": "When to use this feature:",
+        "locales": [
+          "en",
+          "fr"
+        ]
+      }
+    ],
+    "localeStats": [],
+    "localePreview": [],
+    "diffs": [],
+    "localeDiffs": [],
+    "placeholderIssues": [],
+    "emptyValueViolations": [],
+    "dynamicKeyWarnings": [],
+    "suspiciousKeys": [
+      {
+        "key": "Hello World",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 9,
+          "column": 12
+        },
+        "reason": "contains-spaces"
+      },
+      {
+        "key": "Welcome to our app!",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 10,
+          "column": 11
+        },
+        "reason": "contains-spaces"
+      },
+      {
+        "key": "Click Here",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 11,
+          "column": 20
+        },
+        "reason": "contains-spaces"
+      },
+      {
+        "key": "Save",
+        "filePath": "src/BadKeys.tsx",
+        "position": {
+          "line": 12,
+          "column": 16
+        },
+        "reason": "single-word-no-namespace"
+      }
+    ],
+    "validation": {
+      "interpolations": false,
+      "emptyValuePolicy": "warn"
+    },
+    "assumedKeys": [],
+    "write": false,
+    "actionableItems": [
+      {
+        "kind": "suspicious-keys",
+        "severity": "warn",
+        "message": "4 suspicious keys detected (contains spaces or special chars) — auto-insert skipped until keys are renamed.",
+        "details": {
+          "count": 4,
+          "policy": "skip",
+          "keys": [
+            "Hello World",
+            "Welcome to our app!",
+            "Click Here",
+            "Save"
+          ],
+          "fallbackLiterals": []
+        }
+      },
+      {
+        "kind": "missing-key",
+        "severity": "error",
+        "key": "Hello World",
+        "filePath": "src/BadKeys.tsx",
+        "message": "Key \"Hello World\" referenced 1 time but missing from source locale",
+        "details": {
+          "referenceCount": 1
+        }
+      },
+      {
+        "kind": "missing-key",
+        "severity": "error",
+        "key": "Welcome to our app!",
+        "filePath": "src/BadKeys.tsx",
+        "message": "Key \"Welcome to our app!\" referenced 1 time but missing from source locale",
+        "details": {
+          "referenceCount": 1
+        }
+      },
+      {
+        "kind": "missing-key",
+        "severity": "error",
+        "key": "Click Here",
+        "filePath": "src/BadKeys.tsx",
+        "message": "Key \"Click Here\" referenced 1 time but missing from source locale",
+        "details": {
+          "referenceCount": 1
+        }
+      },
+      {
+        "kind": "missing-key",
+        "severity": "error",
+        "key": "Save",
+        "filePath": "src/BadKeys.tsx",
+        "message": "Key \"Save\" referenced 1 time but missing from source locale",
+        "details": {
+          "referenceCount": 1
+        }
+      },
+      {
+        "kind": "missing-key",
+        "severity": "error",
+        "key": "buttons.submit",
+        "filePath": "src/BadKeys.tsx",
+        "message": "Key \"buttons.submit\" referenced 1 time but missing from source locale",
+        "details": {
+          "referenceCount": 1
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.badkeys.buttons-submit.3b94a6",
+        "message": "Key \"common.badkeys.buttons-submit.3b94a6\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.badkeys.click-here.788c1e",
+        "message": "Key \"common.badkeys.click-here.788c1e\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.badkeys.hello-world.66bf53",
+        "message": "Key \"common.badkeys.hello-world.66bf53\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.badkeys.save.a495bf",
+        "message": "Key \"common.badkeys.save.a495bf\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.badkeys.welcome-to-our-app.a53bf0",
+        "message": "Key \"common.badkeys.welcome-to-our-app.a53bf0\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "common.title",
+        "message": "Key \"common.title\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "The Quick Brown Fox",
+        "message": "Key \"The Quick Brown Fox\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      },
+      {
+        "kind": "unused-key",
+        "severity": "warn",
+        "key": "When to use this feature:",
+        "message": "Key \"When to use this feature:\" is present in locales (en, fr) but not referenced in code",
+        "details": {
+          "locales": [
+            "en",
+            "fr"
+          ]
+        }
+      }
+    ],
+    "renameDiffs": [
+      {
+        "path": "/Users/arturlavrov/Documents/GitHub/i18nsmith/packages/cli/src/fixtures/suspicious-keys/src/BadKeys.tsx",
+        "relativePath": "src/BadKeys.tsx",
+        "diff": "Index: src/BadKeys.tsx\n===================================================================\n--- src/BadKeys.tsx\n+++ src/BadKeys.tsx\n@@ -5,12 +5,12 @@\n   \n   return (\n     <div>\n       {/* These are bad keys - text as key */}\n-      <h1>{t('Hello World')}</h1>\n-      <p>{t('Welcome to our app!')}</p>\n-      <a href=\"#\">{t('Click Here')}</a>\n-      <button>{t('Save')}</button>\n+      <h1>{t('common.badkeys.hello-world.66bf53')}</h1>\n+      <p>{t('common.badkeys.welcome-to-our-app.a53bf0')}</p>\n+      <a href=\"#\">{t('common.badkeys.click-here.788c1e')}</a>\n+      <button>{t('common.badkeys.save.a495bf')}</button>\n       \n       {/* These are good keys */}\n       <p>{t('proper.namespaced.key')}</p>\n       <button>{t('buttons.submit')}</button>\n",
+        "changes": 8
+      }
+    ]
+  }
+}

@@ -416,7 +416,11 @@ export function activate(context: vscode.ExtensionContext) {
       );
     }),
     vscode.commands.registerCommand("i18nsmith.init", async () => {
-      await cliService.runCliCommand('i18nsmith init', { interactive: true });
+      const autoScaffold = vscode.workspace
+        .getConfiguration("i18nsmith")
+        .get<boolean>("autoScaffold", false);
+      const command = autoScaffold ? "i18nsmith init --scaffold" : "i18nsmith init";
+      await cliService.runCliCommand(command, { interactive: true });
     }),
     vscode.commands.registerCommand("i18nsmith.transformFile", async () => {
       const editor = vscode.window.activeTextEditor;

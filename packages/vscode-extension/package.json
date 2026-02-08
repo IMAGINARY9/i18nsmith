@@ -228,6 +228,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable verbose logging to the i18nsmith Output channel for debugging Syncer/Transformer operations"
+        },
+        "i18nsmith.autoScaffold": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run scaffold-adapter after successful init when detection confidence is high"
         }
       }
     },

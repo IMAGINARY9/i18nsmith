@@ -554,12 +554,15 @@ export function registerSync(program: Command) {
 
         // Handle --auto-rename-suspicious
         if (options.autoRenameSuspicious && summary.suspiciousKeys.length > 0) {
-          await handleAutoRenameSuspicious(
+          const renameDiffs = await handleAutoRenameSuspicious(
             summary,
             options,
             config,
             projectRoot
           );
+          if (renameDiffs && renameDiffs.length > 0) {
+            summary.renameDiffs = renameDiffs;
+          }
         }
 
         // Handle --rewrite-shape
@@ -857,7 +860,7 @@ async function handleAutoRenameSuspicious(
   options: SyncCommandOptions,
   config: Awaited<ReturnType<typeof loadConfig>>,
   projectRoot: string
-) {
+): Promise<any[] | undefined> {
   console.log(chalk.blue("\n📝 Auto-rename suspicious keys analysis:"));
 
   // Get existing keys from locale data to check for conflicts
@@ -1007,6 +1010,23 @@ async function handleAutoRenameSuspicious(
     console.log(
       chalk.gray("  Run with --write to apply safe proposals automatically.")
     );
+  }
+
+  // Generate diffs for preview mode
+  if (options.diff && report.safeProposals.length > 0) {
+    const mappings = report.safeProposals.map((proposal) => ({
+      from: proposal.originalKey,
+      to: proposal.proposedKey,
+    }));
+
+    const renamer = new KeyRenamer(config, { workspaceRoot: projectRoot });
+    const diffSummary = await renamer.renameBatch(mappings, {
+      write: false,
+      diff: true,
+      allowConflicts: true,
+    });
+
+    return diffSummary.diffs;
   }
 }
 

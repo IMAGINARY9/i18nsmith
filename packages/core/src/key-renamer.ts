@@ -7,7 +7,9 @@ import { LocaleFileStats, LocaleStore } from './locale-store.js';
 import { ActionableItem } from './actionable.js';
 import { createUnifiedDiff, SourceFileDiffEntry, LocaleDiffEntry, buildLocaleDiffs } from './diff-utils.js';
 import { createDefaultProject } from './project-factory.js';
-import { AdapterRegistry } from './framework/registry.js';
+import { AdapterRegistry, createDefaultRegistry } from './framework/registry.js';
+import { ReactAdapter } from './framework/ReactAdapter.js';
+import { VueAdapter } from './framework/adapters/vue.js';
 import { Scanner, TransformCandidate } from './index.js';
 import MagicString from 'magic-string';
 
@@ -114,7 +116,11 @@ export class KeyRenamer {
     this.translationIdentifier = options.translationIdentifier ?? this.config.sync?.translationIdentifier ?? 't';
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
-    this.registry = options.registry ?? new AdapterRegistry();
+    this.registry = options.registry ?? this.createDefaultRegistry();
+  }
+
+  private createDefaultRegistry(): AdapterRegistry {
+    return createDefaultRegistry(this.config, this.workspaceRoot);
   }
 
   public async rename(oldKey: string, newKey: string, options: KeyRenameOptions = {}): Promise<KeyRenameSummary> {
@@ -186,10 +192,8 @@ export class KeyRenamer {
     const filesToModify = new Map<string, TransformCandidate[]>();
 
     // First pass: identify files to modify and count occurrences using adapters
-    const scanner = new Scanner(this.config, {
+    const scanner = await Scanner.create(this.config, {
       workspaceRoot: this.workspaceRoot,
-      project: this.project,
-      registry: this.registry,
     });
     const scanSummary = scanner.scan({
       targets: undefined, // scan all files
@@ -263,8 +267,35 @@ export class KeyRenamer {
     // Generate diffs before saving
     const diffs: SourceFileDiffEntry[] = [];
     if (generateDiffs) {
-      // TODO: Implement diff generation using adapter mutation results
-      // For now, diffs are not generated
+      for (const [filePath, candidates] of filesToModify) {
+        try {
+          const adapter = this.registry.getForFile(filePath);
+          if (!adapter) continue;
+          
+          const originalContent = await fs.readFile(filePath, 'utf8');
+          
+          const result = adapter.mutate(filePath, originalContent, candidates, {
+            config: this.config,
+            workspaceRoot: this.workspaceRoot,
+            translationAdapter: { module: '@i18nsmith/core', hookName: this.translationIdentifier },
+          });
+          
+          if (result.didMutate) {
+            const diff = createUnifiedDiff(
+              filePath,
+              originalContent,
+              result.content,
+              this.workspaceRoot
+            );
+            if (diff) {
+              diffs.push(diff);
+            }
+          }
+        } catch (error) {
+          // Skip diff generation for this file if there's an error
+          console.warn(`Failed to generate diff for ${filePath}:`, error);
+        }
+      }
     }
 
     const mappingSummaries: KeyRenameMappingSummary[] = mappings.map((mapping) => {
