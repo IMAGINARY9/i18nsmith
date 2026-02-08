@@ -7,7 +7,7 @@ describe('projectFactory', () => {
     const project = createScannerProject();
     const options = project.getCompilerOptions();
     expect(options.allowJs).toBe(true);
-    expect(options.jsx).toBe(JsxEmit.React);
+    expect(options.jsx).toBe(JsxEmit.Preserve);
   });
 
   it('merges override options shallowly', () => {

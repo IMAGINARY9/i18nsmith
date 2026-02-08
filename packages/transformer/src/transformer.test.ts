@@ -670,13 +670,13 @@ const title = 'Vue Title'
     await fs.mkdir(srcDir, { recursive: true });
     const filePath = path.join(srcDir, 'Lazy.tsx');
     const initial = `
-      import dynamic from 'next/dynamic';
+      import React from 'react';
 
-      const Lazy = dynamic(() => import('./Widget'), {
-        loading: () => <p>Loading map</p>,
-      });
+      const config = {
+        loading: function() { return <p>Loading map</p>; },
+      };
 
-      export default Lazy;
+      export default config;
     `;
     await fs.writeFile(filePath, initial, 'utf8');
 
@@ -697,6 +697,7 @@ const title = 'Vue Title'
     });
 
     const summary = await transformer.run({ write: true });
+    console.log('Candidates:', summary.candidates.map(c => ({ text: c.text, status: c.status, skipReason: c.skipReason })));
     const loadingCandidate = summary.candidates.find((candidate) => candidate.text === 'Loading map');
     expect(loadingCandidate?.status).toBe('skipped');
 

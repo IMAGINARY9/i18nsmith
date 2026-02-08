@@ -281,13 +281,13 @@ describe('E2E Fixture Tests', () => {
   const renameMap = parseRenameMap(mapContents);
   const helloKey = renameMap['Hello World'];
   expect(helloKey).toBeDefined();
-  const submitKey = renameMap['buttons.submit'];
-  expect(submitKey).toBeDefined();
+  const saveKey = renameMap['Save'];
+  expect(saveKey).toBeDefined();
 
   expect(enLocale).toHaveProperty(helloKey!);
   expect(frLocale).toHaveProperty(helloKey!);
-  expect(enLocale).toHaveProperty(submitKey!);
-  expect(frLocale).toHaveProperty(submitKey!);
+  expect(enLocale).toHaveProperty(saveKey!);
+  expect(frLocale).toHaveProperty(saveKey!);
 
   const sourceFile = await fs.readFile(path.join(fixtureDir, 'src', 'BadKeys.tsx'), 'utf8');
   expect(sourceFile).toContain(`t('${helloKey!}')`);

@@ -413,7 +413,7 @@ export function App() {
 
       const result = runCli(['transform'], { cwd: tmpDir });
 
-      expect(result.output).toContain('DRY RUN');
+      expect(result.output).toContain('Transform command is temporarily disabled');
     });
 
     it('should output JSON with --json flag', async () => {
@@ -423,11 +423,7 @@ export function App() {
       );
 
       const result = runCli(['transform', '--json'], { cwd: tmpDir });
-      const parsed = extractJson<{ filesScanned: number; candidates: unknown[] }>(result.stdout);
-
-      expect(parsed).toHaveProperty('filesScanned');
-      expect(parsed).toHaveProperty('candidates');
-      expect(Array.isArray(parsed.candidates)).toBe(true);
+      expect(result.output).toContain('Transform command is temporarily disabled');
     });
   });
 

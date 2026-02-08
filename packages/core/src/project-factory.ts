@@ -10,7 +10,7 @@ const SCANNER_OPTIONS: ProjectOptions = {
   skipFileDependencyResolution: true,
   compilerOptions: {
     allowJs: true,
-    jsx: JsxEmit.React,
+    jsx: JsxEmit.Preserve,
   },
 };
 

@@ -19,10 +19,10 @@ import {
   SourceFileDiffEntry,
   generateValueFromKey,
   AdapterRegistry,
-  ReactAdapter,
-  VueAdapter,
   FrameworkAdapter,
   AdapterDependencyCheck,
+  createDefaultRegistry,
+  createUnifiedDiff,
 } from '@i18nsmith/core';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '@i18nsmith/core';
 import {
@@ -89,9 +89,7 @@ export class Transformer {
     this.sourceLocale = config.sourceLanguage ?? 'en';
     this.targetLocales = (config.targetLanguages ?? []).filter(Boolean);
     this.translationAdapter = this.normalizeTranslationAdapter(config.translationAdapter);
-    this.registry = new AdapterRegistry();
-    this.registry.register(new ReactAdapter(this.config, this.workspaceRoot));
-    this.registry.register(new VueAdapter(this.config, this.workspaceRoot));
+    this.registry = createDefaultRegistry(config, this.workspaceRoot);
   }
 
 
@@ -277,9 +275,12 @@ export class Transformer {
           }
 
           // Handle diffs if needed
-          if (generateDiffs && result.edits.length > 0) {
-            // Generate source diffs from adapter edits
-            // This would need to be implemented based on result.edits
+          if (generateDiffs && result.didMutate) {
+            // Generate source diffs from original and mutated content
+            const diffEntry = createUnifiedDiff(filePath, content, result.content, this.workspaceRoot);
+            if (diffEntry) {
+              sourceDiffs.push(diffEntry);
+            }
           }
         } else {
           // No mutations applied
@@ -351,8 +352,11 @@ export class Transformer {
 
     return {
       filesScanned: scanSummary.filesScanned,
-      filesChanged: Array.from(changedFiles),
-      candidates: preparedCandidates,
+      filesChanged: Array.from(changedFiles).map(filePath => path.relative(this.workspaceRoot, filePath)),
+      candidates: preparedCandidates.map(candidate => ({
+        ...candidate,
+        filePath: path.relative(this.workspaceRoot, candidate.filePath),
+      })),
       candidateStats,
       skippedReasons: Object.keys(skippedReasons).length ? skippedReasons : undefined,
       localeStats,
@@ -435,6 +439,18 @@ export class Transformer {
     const result: TransformCandidate[] = [];
 
     for (const candidate of candidates) {
+      // If candidate was already skipped by the scanner, mark it as skipped
+      if (candidate.skipReason) {
+        result.push({
+          ...candidate,
+          suggestedKey: '',
+          hash: '',
+          status: 'skipped',
+          reason: candidate.skipReason,
+        });
+        continue;
+      }
+
       const generated = this.keyGenerator.generate(candidate.text, this.buildContext(candidate));
       let status: CandidateStatus = 'pending';
       let reason: string | undefined;

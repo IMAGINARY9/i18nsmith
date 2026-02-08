@@ -20,7 +20,7 @@ export type {
 } from './types.js';
 
 // Export registry
-export { AdapterRegistry } from './registry.js';
+export { AdapterRegistry, createDefaultRegistry } from './registry.js';
 
 // Export adapters
 export { ReactAdapter } from './ReactAdapter.js';

@@ -6,7 +6,7 @@
     "declaration": true,
     "declarationMap": true,
     // "composite": true, // Temporarily disabled - old architecture to be replaced by framework adapters
-    "noEmit": true // Prevent emitting files while disabled
+    "noEmit": false // Re-enabled for framework migration completion
   },
   "include": ["src/**/*"],
   "references": [

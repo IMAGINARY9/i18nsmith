@@ -160,6 +160,46 @@ export function isHexColor(text: string): boolean {
 }
 
 /**
+ * Decode HTML entities in a string.
+ * Handles both named entities (&amp;, &lt;, etc.) and numeric entities (&#10;, &#xA;, etc.)
+ */
+export function decodeHtmlEntities(text: string): string {
+  if (!text) return text;
+  
+  // Handle numeric character references (decimal and hexadecimal)
+  let decoded = text
+    .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/gi, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+  
+  // Handle common named entities
+  const entityMap: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&apos;': "'",
+    '&nbsp;': ' ',
+    '&copy;': '©',
+    '&reg;': '®',
+    '&trade;': '™',
+    '&hellip;': '…',
+    '&mdash;': '—',
+    '&ndash;': '–',
+    '&lsquo;': "'",
+    '&rsquo;': "'",
+    '&ldquo;': '"',
+    '&rdquo;': '"',
+  };
+  
+  for (const [entity, char] of Object.entries(entityMap)) {
+    decoded = decoded.replace(new RegExp(entity, 'g'), char);
+  }
+  
+  return decoded;
+}
+
+/**
  * Check if a string is an HTML entity.
  */
 export function isHtmlEntity(text: string): boolean {

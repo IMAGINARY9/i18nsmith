@@ -55,6 +55,7 @@ export interface ScanCandidate {
   text: string;
   context?: string;
   forced?: boolean;
+  skipReason?: SkipReason;
   /**
    * Optional fields populated by downstream tooling (e.g., transformer)
    * to keep key suggestions close to the source candidate.
@@ -202,7 +203,27 @@ export class Scanner {
           config: this.config,
           workspaceRoot: this.workspaceRoot,
         });
-        candidates.push(...fileCandidates);
+        
+        // Separate candidates with skipReason from regular candidates
+        const regularCandidates = fileCandidates.filter(c => !c.skipReason);
+        const skippedCandidates = fileCandidates.filter(c => c.skipReason);
+        
+        candidates.push(...regularCandidates);
+        candidates.push(...skippedCandidates);
+        
+        // Add skipped candidates to buckets
+        for (const candidate of skippedCandidates) {
+          buckets.skipped.push({
+            text: candidate.text,
+            reason: candidate.skipReason!,
+            location: {
+              filePath: candidate.filePath,
+              line: candidate.position.line,
+              column: candidate.position.column,
+            },
+          });
+        }
+        
         // Note: adapters don't have getSkippedCandidates method like old parsers
         // Skipped candidates are handled internally by adapters if needed
         filesExamined.push(this.getRelativePath(filePath));
@@ -212,20 +233,28 @@ export class Scanner {
         if (error instanceof Error && error.stack) {
           console.warn(error.stack);
         }
-  }
-    }
-
-    const dedupeCandidates = this.config.extraction?.dedupeCandidates ?? true;
+      }
+    }    const dedupeCandidates = this.config.extraction?.dedupeCandidates ?? true;
     const uniqueCandidates = dedupeCandidates
       ? Array.from(new Map(candidates.map(candidate => [candidate.id, candidate])).values())
       : candidates;
 
     for (const candidate of uniqueCandidates) {
-      const bucket = this.getConfidenceBucket(candidate);
-      if (bucket === "high") {
+      const result = this.getConfidenceBucket(candidate);
+      if (result.bucket === "high") {
         buckets.highConfidence.push(candidate);
-      } else {
+      } else if (result.bucket === "review") {
         buckets.needsReview.push(candidate);
+      } else if (result.bucket === "skip") {
+        buckets.skipped.push({
+          text: candidate.text,
+          reason: result.reason || "empty",
+          location: {
+            filePath: candidate.filePath,
+            line: candidate.position.line,
+            column: candidate.position.column,
+          },
+        });
       }
     }
 
@@ -260,9 +289,13 @@ export class Scanner {
     return summary;
   }
 
-  private getConfidenceBucket(candidate: ScanCandidate): "high" | "review" {
+  private getConfidenceBucket(candidate: ScanCandidate): { bucket: "high" | "review" | "skip", reason?: SkipReason } {
+    if (candidate.skipReason) {
+      return { bucket: "skip", reason: candidate.skipReason };
+    }
+
     if (candidate.forced) {
-      return "review";
+      return { bucket: "review" };
     }
 
     const letters = candidate.text.match(LETTER_REGEX_GLOBAL) || [];
@@ -273,6 +306,16 @@ export class Scanner {
     const minLetterCount = this.config.extraction?.minLetterCount ?? 2;
     const minLetterRatio = this.config.extraction?.minLetterRatio ?? 0.25;
 
+    // Check for non-sentence (too short)
+    if (letterCount < minLetterCount) {
+      return { bucket: "skip", reason: "non_sentence" };
+    }
+
+    // Check for insufficient letter ratio
+    if (letterRatio < minLetterRatio) {
+      return { bucket: "skip", reason: "insufficient_letters" };
+    }
+
     const elevatedCountThreshold = Math.max(
       minLetterCount * 2,
       minLetterCount + 3
@@ -280,21 +323,21 @@ export class Scanner {
     const elevatedRatioThreshold = Math.min(0.85, minLetterRatio + 0.35);
 
     if (letterCount >= elevatedCountThreshold) {
-      return "high";
+      return { bucket: "high" };
     }
 
     if (
       letterRatio >= elevatedRatioThreshold &&
       letterCount >= minLetterCount
     ) {
-      return "high";
+      return { bucket: "high" };
     }
 
     if (letterCount >= minLetterCount + 2 && letterRatio >= minLetterRatio) {
-      return "high";
+      return { bucket: "high" };
     }
 
-    return "review";
+    return { bucket: "review" };
   }
 
   private getGlobPatterns(): GlobPatterns {

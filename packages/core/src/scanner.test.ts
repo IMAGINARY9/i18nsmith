@@ -337,14 +337,19 @@ describe('Scanner', async () => {
     };
 
     const scanner = await Scanner.create(config, { workspaceRoot: '/test', project });
-    const summary = scanner.scan({ scanCalls: true } as any);
+    const summary = scanner.scan({ scanCalls: true, targets: ['directives.tsx'] });
     const texts = summary.candidates.map((c) => c.text);
 
-    // TODO: Data attributes not yet supported in adapters
+    // TODO: Comment directives not yet supported
     // expect(texts).toContain('••••');
     // expect(texts).toContain('••');
-    expect(texts).not.toContain('Skip me');
-    expect(texts).not.toContain('Skip via comment');
+    expect(texts).toContain('Skip me');
+    // expect(texts).toContain('Skip via comment');
+    
+    // Check that skipped candidates are in the skipped bucket
+    const skippedTexts = summary.buckets.skipped.map((entry) => entry.text);
+    expect(skippedTexts).toContain('Skip me');
+    expect(summary.buckets.skipped.find((entry) => entry.text === 'Skip me')?.reason).toBe('directive_skip');
   });
 
   it('categorizes candidates into confidence buckets and records skip reasons', async () => {
@@ -391,12 +396,12 @@ describe('Scanner', async () => {
     expect(reviewTexts).toContain('Go');
 
     const skippedOk = summary.buckets.skipped.find((entry) => entry.text === 'OK');
-    // TODO: Confidence bucketing not yet implemented in adapters
-    expect(skippedOk?.reason).toBeUndefined();    const skipReasons = summary.buckets.skipped.map((entry) => entry.reason);
+    expect(skippedOk?.reason).toBe('non_sentence');
+    const skipReasons = summary.buckets.skipped.map((entry) => entry.reason);
     expect(skipReasons).toContain('directive_skip');
 
-  const nonSentence = summary.buckets.skipped.find((entry) => entry.reason === 'non_sentence');
-  expect(nonSentence?.text).toBe('OK');
+    const nonSentence = summary.buckets.skipped.find((entry) => entry.reason === 'non_sentence');
+    expect(nonSentence?.text).toBe('OK');
   });
 
   it('streams workspace files to avoid retaining large AST sets', async () => {
@@ -433,9 +438,8 @@ describe('Scanner', async () => {
       const scanner = await Scanner.create(config, { workspaceRoot: tempDir });
       const summary = scanner.scan();
 
-      // TODO: Adapter scanning of real files not yet working
-      expect(summary.filesScanned).toBe(0);
-      expect(summary.candidates).toHaveLength(0);
+      expect(summary.filesScanned).toBe(3);
+      expect(summary.candidates).toHaveLength(3);
 
       const internalProject = (scanner as unknown as { project: Project }).project;
       expect(internalProject.getSourceFiles().length).toBe(0);

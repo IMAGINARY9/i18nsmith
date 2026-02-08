@@ -290,8 +290,68 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private extractFromScript(scriptBody: any[], content: string, filePath: string, candidates: ScanCandidate[]): void {
-    // For now, skip script extraction - focus on template
-    // This could be extended later to extract from JavaScript/TypeScript in <script> blocks
+    // Extract string literals from variable declarations and assignments in script
+    for (const node of scriptBody) {
+      this.walkScript(node, content, filePath, candidates);
+    }
+  }
+
+  private walkScript(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+    if (!node) return;
+
+    switch (node.type) {
+      case 'VariableDeclaration':
+        for (const declaration of node.declarations) {
+          if (declaration.init && declaration.init.type === 'Literal' && typeof declaration.init.value === 'string') {
+            this.extractScriptStringLiteral(declaration.init, content, filePath, candidates);
+          }
+        }
+        break;
+      case 'AssignmentExpression':
+        if (node.right && node.right.type === 'Literal' && typeof node.right.value === 'string') {
+          this.extractScriptStringLiteral(node.right, content, filePath, candidates);
+        }
+        break;
+      // Walk child nodes
+      default:
+        if (node.body && Array.isArray(node.body)) {
+          for (const child of node.body) {
+            this.walkScript(child, content, filePath, candidates);
+          }
+        } else if (node.consequent) {
+          this.walkScript(node.consequent, content, filePath, candidates);
+        } else if (node.alternate) {
+          this.walkScript(node.alternate, content, filePath, candidates);
+        }
+        break;
+    }
+  }
+
+  private extractScriptStringLiteral(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+    const text = node.value;
+    if (!text || typeof text !== 'string' || !this.shouldExtractText(text)) {
+      return;
+    }
+
+    // Calculate line and column from offset
+    const lines = content.slice(0, node.range[0]).split('\n');
+    const line = lines.length;
+    const column = lines[lines.length - 1].length;
+
+    const candidate: ScanCandidate = {
+      id: `${filePath}:${line}`,
+      kind: 'jsx-expression' as CandidateKind,
+      filePath,
+      text,
+      position: {
+        line,
+        column,
+      },
+      suggestedKey: this.generateKey(text),
+      hash: this.hashText(text),
+    };
+
+    candidates.push(candidate);
   }
 
   private walkTemplate(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
@@ -457,7 +517,7 @@ export class VueAdapter implements FrameworkAdapter {
     // For Vue attributes, we need to replace the entire attribute with dynamic binding
     // e.g., placeholder="value" becomes :placeholder="$t('key')"
     const attrName = candidate.context || 'value';
-    const translationCall = `:${attrName}="$t('${candidate.suggestedKey}')")`;
+    const translationCall = `:${attrName}="$t('${candidate.suggestedKey}')"`;
 
     // We need to find the full attribute range, not just the value
     // This is a simplified approach - in a real implementation, we'd need AST positions
@@ -497,7 +557,7 @@ export class VueAdapter implements FrameworkAdapter {
             end: endPos,
             replacement: candidate.kind === 'jsx-text'
               ? `{{ $t('${candidate.suggestedKey}') }}`
-              : `:$t('${candidate.suggestedKey}')`
+              : `:${candidate.context || 'value'}="$t('${candidate.suggestedKey}')"`
           });
         }
       }
