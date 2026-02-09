@@ -14,6 +14,12 @@ src/
 # Local node modules and build artifacts
 node_modules/
 dist/**/*.map
+.tmp-vsix/
+
+# Exclude bundled CLI and dev-only assets from the published VSIX
+cli-bundle/
+scripts/
+test-fixtures/
 
 # TS config used for building in the monorepo (not needed in VSIX)
 tsconfig*.json

@@ -39,6 +39,9 @@ tmp-transformer-*
 # Ignore packaged VSIX artifacts
 *.vsix
 
+# Temporary VSIX staging output created during local packaging
+.tmp-vsix/
+
 # i18nsmith artifacts
 .i18nsmith/
 .i18nsmith-backup/
