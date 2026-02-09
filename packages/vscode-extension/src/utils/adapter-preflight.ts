@@ -68,23 +68,29 @@ export function runAdapterPreflightCheck(): MissingDep[] {
  *    hoisting where the direct folder might not exist).
  */
 function isPackageAvailable(packageName: string, workspaceRoot: string): boolean {
-  // Check direct node_modules path
-  if (fs.existsSync(path.join(workspaceRoot, 'node_modules', packageName))) {
-    return true;
+  const roots = listAncestorRoots(workspaceRoot);
+
+  // Check node_modules in workspace root and ancestors
+  for (const root of roots) {
+    if (fs.existsSync(path.join(root, 'node_modules', packageName))) {
+      return true;
+    }
   }
 
-  // Check package.json (covers pnpm hoisted layouts)
-  try {
-    const pkgPath = path.join(workspaceRoot, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      if (deps[packageName]) {
-        return true;
+  // Check package.json in workspace root and ancestors (covers pnpm hoisted layouts)
+  for (const root of roots) {
+    try {
+      const pkgPath = path.join(root, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        if (deps[packageName]) {
+          return true;
+        }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
 
   return false;
@@ -92,7 +98,24 @@ function isPackageAvailable(packageName: string, workspaceRoot: string): boolean
 
 /** Detect the project's package manager. */
 function detectPackageManager(workspaceRoot: string): 'pnpm' | 'yarn' | 'npm' {
-  if (fs.existsSync(path.join(workspaceRoot, 'pnpm-lock.yaml'))) return 'pnpm';
-  if (fs.existsSync(path.join(workspaceRoot, 'yarn.lock'))) return 'yarn';
+  const roots = listAncestorRoots(workspaceRoot);
+  for (const root of roots) {
+    if (fs.existsSync(path.join(root, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (fs.existsSync(path.join(root, 'yarn.lock'))) return 'yarn';
+  }
   return 'npm';
+}
+
+function listAncestorRoots(startDir: string): string[] {
+  const roots: string[] = [];
+  let current = startDir;
+  while (true) {
+    roots.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return roots;
 }

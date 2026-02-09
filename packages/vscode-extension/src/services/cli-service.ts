@@ -23,6 +23,7 @@ export interface CliRunOptions {
   showOutput?: boolean;
   workspaceFolder?: vscode.WorkspaceFolder;
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
   preferredCliPath?: string;
   label?: string;
   timeoutMs?: number;
@@ -164,8 +165,11 @@ export class CliService {
       }
     };
 
+    const env = buildCliEnv(cwd, options.env);
+
     const result = await runResolvedCliCommand(resolved, {
       cwd,
+      env,
       timeoutMs: options.timeoutMs,
       onStdout: (text, child) => {
         stdoutChunks.push(text);
@@ -235,6 +239,27 @@ export class CliService {
   private logVerbose(message: string) {
     this.verboseOutputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
   }
+}
+
+function buildCliEnv(cwd: string, extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...(extraEnv ?? {}) };
+  const nodeModulesPaths = listAncestorRoots(cwd).map((root) => path.join(root, 'node_modules'));
+  const existing = env.NODE_PATH ? env.NODE_PATH.split(path.delimiter).filter(Boolean) : [];
+  const merged = Array.from(new Set([...nodeModulesPaths, ...existing]));
+  env.NODE_PATH = merged.join(path.delimiter);
+  return env;
+}
+
+function listAncestorRoots(startDir: string): string[] {
+  const roots: string[] = [];
+  let current = startDir;
+  while (true) {
+    roots.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return roots;
 }
 
 function createCliProgressTracker(

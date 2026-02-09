@@ -5,6 +5,7 @@ import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
 import { shouldExtractText, generateKey, hashText, compilePatterns, escapeRegExp, type TextFilterConfig } from '../utils/text-filters.js';
+import { buildResolutionPaths, requireFromWorkspace } from '../../utils/dependency-resolution.js';
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
@@ -152,6 +153,8 @@ export class VueAdapter implements FrameworkAdapter {
     }];
   }
 
+
+
   scan(filePath: string, content: string, options?: AdapterScanOptions): ScanCandidate[] {
     const candidates: ScanCandidate[] = [];
     this.activeSkipLog = [];
@@ -233,23 +236,10 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private getVueEslintParser(): any | null {
-    // Try to resolve from the project's workspace root first, then fall back to
-    // the CLI's own node_modules. This is critical when the CLI is installed
-    // globally or in a monorepo — the project's vue-eslint-parser lives in the
-    // project's node_modules, not the CLI's.
-    const resolveFrom = [this.workspaceRoot, path.join(this.workspaceRoot, 'node_modules')];
     try {
-      const require = createRequire(import.meta.url);
-      const resolved = require.resolve('vue-eslint-parser', { paths: resolveFrom });
-      return require(resolved);
+      return requireFromWorkspace('vue-eslint-parser', this.workspaceRoot);
     } catch {
-      // Fall back to default resolution (CLI's own node_modules)
-      try {
-        const require = createRequire(import.meta.url);
-        return require('vue-eslint-parser');
-      } catch {
-        return null;
-      }
+      return null;
     }
   }
 

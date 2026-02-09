@@ -4,7 +4,7 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { loadConfigWithMeta } from '@i18nsmith/core';
+import { loadConfigWithMeta, buildResolutionPaths, isPackageResolvable } from '@i18nsmith/core';
 import { Transformer } from '@i18nsmith/transformer';
 import type { TransformProgress, TransformSummary } from '@i18nsmith/transformer';
 import { printLocaleDiffs, writeLocaleDiffPatches } from '../utils/diff-utils.js';
@@ -241,12 +241,10 @@ export function registerTransform(program: Command) {
 
         // Proactively check if Vue files are targeted but the parser is missing
         const includesVue = config.include?.some(pattern => pattern.includes('.vue')) ?? false;
+        
         let isVueParserAvailable = false;
         try {
-          const require = createRequire(import.meta.url);
-          const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-          require.resolve('vue-eslint-parser', { paths: [projectRoot, moduleDir] });
-          isVueParserAvailable = true;
+          isVueParserAvailable = isPackageResolvable('vue-eslint-parser', projectRoot);
         } catch {
           isVueParserAvailable = false;
         }

@@ -40,4 +40,84 @@ describe('PreviewApplyController preflight integration', () => {
     const res = await controller.callApply({ command: 'i18nsmith sync --apply-preview foo', progressTitle: 'x', successMessage: 's', scannerTrigger: 'sync' });
     expect(res).toBe(false);
   });
+
+  it('installs dependencies and retries operation when user chooses "Install & Retry"', async () => {
+    const controller = new DummyController(fakeServices as any);
+    const missing = [{ adapter: 'vue', dependency: 'vue-eslint-parser', installHint: 'npm i -D vue-eslint-parser' }];
+    
+    // Mock the preflight check to return missing dependencies
+    vi.spyOn(adapterPreflight, 'runAdapterPreflightCheck').mockReturnValue(missing as any);
+    
+    // Mock user choosing "Install & Retry"
+    vi.spyOn(vscode.window, 'showWarningMessage' as any).mockResolvedValueOnce('Install & Retry');
+    
+    // Mock successful installation
+    const installSpy = vi.spyOn(controller as any, 'installDependencies').mockResolvedValue(true);
+    
+    // Mock the retry callback
+    const retryCallback = vi.fn().mockResolvedValue(undefined);
+    
+    const res = await controller.callApply({ 
+      command: 'i18nsmith sync --apply-preview foo', 
+      progressTitle: 'x', 
+      successMessage: 's', 
+      scannerTrigger: 'sync' 
+    });
+    
+    // Should have attempted to install dependencies
+    expect(installSpy).toHaveBeenCalledWith(['npm i -D vue-eslint-parser'], expect.any(Object));
+    
+    // Should not have proceeded with the original command since we mocked preflight to return missing deps
+    // The retry logic is tested separately in handleMissingDependencies
+  });
+
+  it('handleMissingDependencies calls retry callback after successful install', async () => {
+    const controller = new DummyController(fakeServices as any);
+    const missing = [{ adapter: 'vue', dependency: 'vue-eslint-parser', installHint: 'npm i -D vue-eslint-parser' }];
+    
+    // Mock user choosing "Install & Retry"
+    vi.spyOn(vscode.window, 'showWarningMessage' as any).mockResolvedValueOnce('Install & Retry');
+    
+    // Mock successful installation
+    const installSpy = vi.spyOn(controller as any, 'installDependencies').mockResolvedValue(true);
+    
+    // Mock the retry callback
+    const retryCallback = vi.fn().mockResolvedValue(undefined);
+    
+    const result = await (controller as any).handleMissingDependencies(missing, { uri: { fsPath: '/tmp/project' } }, retryCallback);
+    
+    // Should have attempted to install dependencies
+    expect(installSpy).toHaveBeenCalledWith(['npm i -D vue-eslint-parser'], expect.any(Object));
+    
+    // Should have called the retry callback
+    expect(retryCallback).toHaveBeenCalled();
+    
+    // Should return false (don't proceed with current operation, let retry handle it)
+    expect(result).toBe(false);
+  });
+
+  it('handleMissingDependencies does not call retry when install fails', async () => {
+    const controller = new DummyController(fakeServices as any);
+    const missing = [{ adapter: 'vue', dependency: 'vue-eslint-parser', installHint: 'npm i -D vue-eslint-parser' }];
+    
+    // Mock user choosing "Install & Retry"
+    vi.spyOn(vscode.window, 'showWarningMessage' as any).mockResolvedValueOnce('Install & Retry');
+    
+    // Mock failed installation
+    const installSpy = vi.spyOn(controller as any, 'installDependencies').mockResolvedValue(false);
+    
+    // Mock the retry callback
+    const retryCallback = vi.fn().mockResolvedValue(undefined);
+    
+    const result = await (controller as any).handleMissingDependencies(missing, { uri: { fsPath: '/tmp/project' } }, retryCallback);
+    
+    // Should have attempted to install dependencies
+    expect(installSpy).toHaveBeenCalledWith(['npm i -D vue-eslint-parser'], expect.any(Object));
+    
+    // Should NOT have called the retry callback
+    expect(retryCallback).not.toHaveBeenCalled();
+    
+    // Should return false (don't proceed)
+    expect(result).toBe(false);
+  });
 });

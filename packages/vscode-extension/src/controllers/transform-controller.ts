@@ -42,40 +42,10 @@ export class TransformController extends PreviewApplyController implements vscod
       const { runAdapterPreflightCheck } = await import('../utils/adapter-preflight');
       const missing = runAdapterPreflightCheck();
       if (missing.length) {
-        const choice = await vscode.window.showWarningMessage(
-          'Missing framework adapter dependencies detected. Install required packages or scaffold the adapter before proceeding.',
-          'Show details',
-          'Install dependencies',
-          'Scaffold adapter',
-          'Continue anyway',
-          'Cancel'
-        );
-        if (!choice || choice === 'Cancel') return;
-        if (choice === 'Show details') {
-          this.services.cliOutputChannel.show();
-          this.services.cliOutputChannel.appendLine('Missing framework adapter dependencies:');
-          for (const m of missing) {
-            this.services.cliOutputChannel.appendLine(` - ${m.adapter}: ${m.dependency}`);
-            this.services.cliOutputChannel.appendLine(`   Install: ${m.installHint}`);
-          }
-          return;
-        }
-        if (choice === 'Install dependencies') {
-          const workspaceRoot = workspaceFolder.uri.fsPath;
-          const unique = Array.from(new Set(missing.map((m) => m.installHint)));
-          const terminal = vscode.window.createTerminal({ name: 'i18nsmith install', cwd: workspaceRoot });
-          terminal.show();
-          for (const cmd of unique) terminal.sendText(cmd, true);
-          vscode.window.showInformationMessage('Installing dependencies in the integrated terminal. Re-run when complete.');
-          return;
-        }
-        if (choice === 'Scaffold adapter') {
-          const info = await this.services.frameworkDetectionService.detectFramework(workspaceFolder.uri.fsPath).catch(() => null);
-          const adapter = info?.adapter ?? 'react-i18next';
-          await this.services.cliService.runCliCommand(`i18nsmith scaffold-adapter --type ${adapter} --install-deps`, { interactive: true, workspaceFolder });
-          return;
-        }
-        // Continue anyway -> proceed with transform
+        const proceed = await this.handleMissingDependencies(missing, workspaceFolder, async () => {
+          await this.runTransform(options);
+        });
+        if (!proceed) return;
       }
     } catch (e) {
       // Ignore preflight errors and continue
@@ -102,6 +72,9 @@ export class TransformController extends PreviewApplyController implements vscod
       const errorMsg = previewError instanceof Error ? previewError.message : String(previewError);
       // Intercept preflight/dependency errors from the CLI and offer actionable Install button
       if (errorMsg.includes('missing dependencies') || errorMsg.includes('Preflight check failed')) {
+        this.setRetryHandler(async () => {
+          await this.runTransform(options);
+        });
         await this.showMissingDependencyError(errorMsg, workspaceFolder);
         return;
       }

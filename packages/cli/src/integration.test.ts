@@ -413,7 +413,8 @@ export function App() {
 
       const result = runCli(['transform'], { cwd: tmpDir });
 
-      expect(result.output).toContain('Transform command is temporarily disabled');
+      expect(result.output).toContain('Planning transform (dry-run)');
+      expect(result.exitCode).toBe(0);
     });
 
     it('should output JSON with --json flag', async () => {
@@ -423,7 +424,8 @@ export function App() {
       );
 
       const result = runCli(['transform', '--json'], { cwd: tmpDir });
-      expect(result.output).toContain('Transform command is temporarily disabled');
+      expect(result.output).toContain('Planning transform (dry-run)');
+      expect(result.exitCode).toBe(0);
     });
   });
 
