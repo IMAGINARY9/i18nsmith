@@ -45,3 +45,4 @@ jobs:
       - name: Run tests for extension
         run: pnpm --filter i18nsmith-vscode test
         continue-on-error: true
+

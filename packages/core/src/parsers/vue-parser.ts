@@ -47,8 +47,8 @@ export class VueParser implements Parser {
 
     try {
       // Lazy load vue-eslint-parser to avoid import issues when not available
-      let parse: any;
-      const require = createRequire(import.meta.url);
+    let parse: any;
+    const require = createRequire(path.join(process.cwd(), 'package.json'));
       
       if (workspaceRoot) {
         try {

@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs/promises';
+import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig, DEFAULT_INCLUDE } from './config.js';
@@ -19,8 +20,8 @@ let _vueParserMissingWarned = false;
 function getVueEslintParser(): any | null {
   if (_cachedVueParser !== undefined) return _cachedVueParser;
   try {
-    // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-    _cachedVueParser = eval('require')('vue-eslint-parser');
+    const require = createRequire(path.join(process.cwd(), 'package.json'));
+    _cachedVueParser = require('vue-eslint-parser');
     return _cachedVueParser;
   } catch {
     _cachedVueParser = null;

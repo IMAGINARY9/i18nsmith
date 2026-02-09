@@ -7,16 +7,17 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
 import { createDefaultProject } from './project-factory.js';
 import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
 
-// Lazy runtime loader for the optional `vue-eslint-parser`. We intentionally
-// use `eval('require')` to prevent bundlers from statically hoisting the
-// require call. The loader caches the result so we only try once per
-// workspaceRoot (to handle multiple projects in a single process).
+// Lazy runtime loader for the optional `vue-eslint-parser`. Use createRequire
+// so ESM builds can resolve the dependency without eval. The loader caches the
+// result so we only try once per workspaceRoot (to handle multiple projects in
+// a single process).
 let _cachedVueParserRef: any | undefined;
 let _cachedVueParserRoot: string | undefined;
 let _vueParserMissingWarned = false;
@@ -30,22 +31,20 @@ function getVueEslintParser(workspaceRoot?: string): any | null {
   if (_cachedVueParserRef !== undefined) return _cachedVueParserRef;
   // Try to resolve from the project's workspace root first, then fall back
   // to the CLI's own node_modules.
+  const require = createRequire(path.join(process.cwd(), 'package.json'));
   if (workspaceRoot) {
     try {
-      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      const resolved = eval('require').resolve('vue-eslint-parser', {
+      const resolved = require.resolve('vue-eslint-parser', {
         paths: [workspaceRoot, path.join(workspaceRoot, 'node_modules')],
       });
-      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      _cachedVueParserRef = eval('require')(resolved);
+      _cachedVueParserRef = require(resolved);
       return _cachedVueParserRef;
     } catch {
       // Fall through to default resolution
     }
   }
   try {
-    // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-    _cachedVueParserRef = eval('require')('vue-eslint-parser');
+    _cachedVueParserRef = require('vue-eslint-parser');
     return _cachedVueParserRef;
   } catch {
     _cachedVueParserRef = null;

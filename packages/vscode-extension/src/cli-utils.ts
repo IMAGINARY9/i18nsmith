@@ -118,7 +118,6 @@ function findExtensionBundledCli(): string {
     const extensionPath = extension.extensionPath;
     const candidates = [
       path.join(extensionPath, '..', 'cli', 'dist', 'index.js'),
-      path.join(extensionPath, 'node_modules', '@i18nsmith', 'cli', 'dist', 'index.js'),
     ];
     for (const candidate of candidates) {
       try {

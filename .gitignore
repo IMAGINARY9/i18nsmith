@@ -42,6 +42,9 @@ tmp-transformer-*
 # Temporary VSIX staging output created during local packaging
 .tmp-vsix/
 
+# Extension-local CLI bundle artifacts (generated during development)
+packages/vscode-extension/cli-bundle/
+
 # i18nsmith artifacts
 .i18nsmith/
 .i18nsmith-backup/
