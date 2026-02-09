@@ -4,6 +4,13 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+### Fix
+- Enhance preflight checks for missing Vue dependencies and add actionable error notifications in sync and transform controllers.
+
+## [0.4.1] - 2026-02-09
+### Fix
+- Minor fixes: preflight check improvements and actionable error notifications.
+
 ## [0.4.0] - 2026-02-09
 
 ### Features
