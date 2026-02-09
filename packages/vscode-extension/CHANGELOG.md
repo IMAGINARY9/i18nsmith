@@ -4,8 +4,12 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
-### Fix
-- Enhance preflight checks for missing Vue dependencies and add actionable error notifications in sync and transform controllers.
+### Enhancement
+- Enhance Vue adapter and CLI preflight checks; add dependency installation prompts.
+
+## [0.4.2] - 2026-02-09
+### Enhancement
+- Minor enhancements: Vue adapter improvements and dependency installation prompts.
 
 ## [0.4.1] - 2026-02-09
 ### Fix
