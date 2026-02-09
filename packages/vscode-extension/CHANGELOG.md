@@ -4,6 +4,24 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-09
+
+### Features
+- **Vue.js Support**: Complete Vue.js integration with AST-based parsing, template detection, and transformation capabilities.
+- **Multi-Framework Architecture**: Implemented framework registry and adapter system supporting Vue, React, and TypeScript.
+- **Enhanced Sync Command**: Added auto-renaming, diff generation, and improved locale file updates with preview output.
+- **Preflight Checks**: Added adapter preflight validation before transform/sync/apply operations.
+- **Dynamic Key Whitelist**: Implemented quick action and command for whitelisting dynamic keys.
+- **Parser Abstraction Layer**: Refactored parsers with abstraction for better extensibility (TypeScript, Vue parsers).
+- **Framework Detection**: Enhanced project intelligence with automatic framework detection and scaffolding.
+- **Extension Hardening**: Improved error handling, CodeLens refresh, and ghost command fixes.
+
+### Enhancements
+- Improved Vue adapter with diagnostics and runtime detection.
+- Enhanced extraction configuration with translatable attributes.
+- Better candidate extraction and offset handling in parsers.
+- Added comprehensive tests for new features and adapters.
+
 ## [0.3.3] - 2025-12-21
 ### Fix
 - Prepare release 0.3.3: minor fixes and packaging updates.
