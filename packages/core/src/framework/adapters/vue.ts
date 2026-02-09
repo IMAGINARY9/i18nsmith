@@ -1,4 +1,5 @@
 import path from 'path';
+import { createRequire } from 'module';
 import MagicString from 'magic-string';
 import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../../scanner.js';
@@ -238,15 +239,14 @@ export class VueAdapter implements FrameworkAdapter {
     // project's node_modules, not the CLI's.
     const resolveFrom = [this.workspaceRoot, path.join(this.workspaceRoot, 'node_modules')];
     try {
-      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      const resolved = eval('require').resolve('vue-eslint-parser', { paths: resolveFrom });
-      // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-      return eval('require')(resolved);
+      const require = createRequire(import.meta.url);
+      const resolved = require.resolve('vue-eslint-parser', { paths: resolveFrom });
+      return require(resolved);
     } catch {
       // Fall back to default resolution (CLI's own node_modules)
       try {
-        // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-        return eval('require')('vue-eslint-parser');
+        const require = createRequire(import.meta.url);
+        return require('vue-eslint-parser');
       } catch {
         return null;
       }

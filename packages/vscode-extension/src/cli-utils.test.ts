@@ -15,6 +15,9 @@ vi.mock('vscode', () => {
         },
       })),
     },
+    extensions: {
+      getExtension: vi.fn(() => undefined),
+    },
   };
 });
 

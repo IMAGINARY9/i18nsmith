@@ -42,6 +42,7 @@ export class TypeScriptParser implements Parser {
     translationIdentifier: string,
     workspaceRoot?: string
   ): ParseResult {
+    console.log(`[DEBUG] TypeScriptParser.parseFile called for ${filePath}, identifier: ${translationIdentifier}`);
     const references: TranslationReference[] = [];
     const dynamicKeyWarnings: DynamicKeyWarning[] = [];
 

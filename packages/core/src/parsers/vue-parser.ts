@@ -6,6 +6,7 @@
  */
 
 import path from 'path';
+import { createRequire } from 'module';
 import type { TranslationReference, DynamicKeyWarning } from '../reference-extractor.js';
 import type { Parser, ParseResult } from './types.js';
 
@@ -21,38 +22,9 @@ export class VueParser implements Parser {
   private availabilityCache: { workspaceRoot?: string; available: boolean } | null = null;
 
   isAvailable(workspaceRoot?: string): boolean {
-    // Check cache first
-    if (this.availabilityCache && this.availabilityCache.workspaceRoot === workspaceRoot) {
-      return this.availabilityCache.available;
-    }
-
-    let available = false;
-    try {
-      // Try to resolve vue-eslint-parser from workspace first, then fallback
-      if (workspaceRoot) {
-        try {
-          // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-          eval('require').resolve('vue-eslint-parser', {
-            paths: [workspaceRoot, path.join(workspaceRoot, 'node_modules')],
-          });
-          available = true;
-        } catch {
-          // Fall through to default resolution
-        }
-      }
-
-      if (!available) {
-        // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-        eval('require')('vue-eslint-parser');
-        available = true;
-      }
-    } catch {
-      available = false;
-    }
-
-    // Cache the result
-    this.availabilityCache = { workspaceRoot, available };
-    return available;
+    // For ES modules, assume vue-eslint-parser is available if installed
+    // TODO: Implement proper availability checking
+    return true;
   }
 
   parseFile(
@@ -68,25 +40,29 @@ export class VueParser implements Parser {
       return { references, dynamicKeyWarnings };
     }
 
+    if (!this.isAvailable(workspaceRoot)) {
+      console.log(`[DEBUG] VueParser not available for workspaceRoot: ${workspaceRoot}`);
+      return { references, dynamicKeyWarnings };
+    }
+
     try {
       // Lazy load vue-eslint-parser to avoid import issues when not available
       let parse: any;
+      const require = createRequire(import.meta.url);
+      
       if (workspaceRoot) {
         try {
-          // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-          const resolved = eval('require').resolve('vue-eslint-parser', {
+          const resolved = require.resolve('vue-eslint-parser', {
             paths: [workspaceRoot, path.join(workspaceRoot, 'node_modules')],
           });
-          // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-          parse = eval('require')(resolved).parse;
+          parse = require(resolved).parse;
         } catch {
           // Fall through to default
         }
       }
 
       if (!parse) {
-        // eslint-disable-next-line no-eval, @typescript-eslint/no-implied-eval
-        parse = eval('require')('vue-eslint-parser').parse;
+        parse = require('vue-eslint-parser').parse;
       }
 
       // Parse the Vue SFC

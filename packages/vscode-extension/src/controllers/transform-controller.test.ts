@@ -39,7 +39,8 @@ describe('TransformController', () => {
               candidates: [
                 { status: 'pending', filePath: 'test.ts', text: 't("hello")' },
                 { status: 'existing', filePath: 'test2.ts', text: 't("world")' },
-                { status: 'skipped', filePath: 'test3.ts', text: 'console.log("skip")' }
+                { status: 'applied', filePath: 'test3.ts', text: '"applied"' },
+                { status: 'skipped', filePath: 'test4.ts', text: 'console.log("skip")' }
               ]
             }
           }
@@ -90,7 +91,7 @@ describe('TransformController', () => {
   it('should filter transformable candidates from preview', async () => {
     await transformController.runTransform();
     expect(mockServices.logVerbose).toHaveBeenCalledWith(
-      expect.stringContaining('2 transformable candidates')
+      expect.stringContaining('3 transformable candidates')
     );
   });
 });

@@ -1,5 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta } from '@i18nsmith/core';
@@ -241,8 +243,9 @@ export function registerTransform(program: Command) {
         const includesVue = config.include?.some(pattern => pattern.includes('.vue')) ?? false;
         let isVueParserAvailable = false;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          require.resolve('vue-eslint-parser', { paths: [projectRoot, __dirname] });
+          const require = createRequire(import.meta.url);
+          const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+          require.resolve('vue-eslint-parser', { paths: [projectRoot, moduleDir] });
           isVueParserAvailable = true;
         } catch {
           isVueParserAvailable = false;

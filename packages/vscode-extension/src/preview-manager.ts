@@ -45,10 +45,7 @@ export class PreviewManager {
     const previewPath = path.join(previewDir, `${kind}-preview-${Date.now()}.json`);
     const commandParts = ['i18nsmith', kind, ...args, '--preview-output', quoteCliArg(previewPath)].filter(Boolean);
     const humanReadable = commandParts.join(' ').trim();
-    if (label) {
-      this.output.appendLine(`\n[${label}]`);
-    }
-    this.output.appendLine(`$ ${humanReadable}`);
+    // cliService will render the label, avoid duplicate output here
 
     try {
       const stdoutChunks: string[] = [];
@@ -59,15 +56,9 @@ export class PreviewManager {
         label,
         onStdout: (text) => {
           stdoutChunks.push(text);
-          if (text.trim()) {
-            this.output.appendLine(text.trim());
-          }
         },
         onStderr: (text) => {
           stderrChunks.push(text);
-          if (text.trim()) {
-            this.output.appendLine(`[stderr] ${text.trim()}`);
-          }
         },
         suppressNotifications: true,
         skipReportRefresh: true,

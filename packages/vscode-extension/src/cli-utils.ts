@@ -36,6 +36,11 @@ export function resolveCliCommand(raw: string, options: ResolveOptions = {}): Re
     resolvedCliPath = findWorkspaceLocalCli(options.workspaceRoot);
   }
 
+  // If still unresolved, try to locate a bundled CLI from the extension (dev host / packaged)
+  if (!resolvedCliPath && targetsI18nsmith) {
+    resolvedCliPath = findExtensionBundledCli();
+  }
+
   const commandLine = buildCommandLine(trimmed, resolvedCliPath);
   const tokens = splitCommandLine(commandLine);
   const command = tokens.shift() ?? '';
@@ -103,6 +108,32 @@ function findWorkspaceLocalCli(workspaceRoot: string): string {
     }
   }
 
+  return '';
+}
+
+function findExtensionBundledCli(): string {
+  try {
+    const extension = vscode.extensions.getExtension('ArturLavrov.i18nsmith-vscode');
+    if (!extension) return '';
+    const extensionPath = extension.extensionPath;
+    const candidates = [
+      path.join(extensionPath, '..', 'cli', 'dist', 'index.js'),
+      path.join(extensionPath, 'node_modules', '@i18nsmith', 'cli', 'dist', 'index.js'),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          if (!/[\n\r`$;&|<>]/.test(candidate)) {
+            return candidate;
+          }
+        }
+      } catch {
+        // continue
+      }
+    }
+  } catch {
+    // ignore
+  }
   return '';
 }
 

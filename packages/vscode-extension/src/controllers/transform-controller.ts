@@ -99,7 +99,8 @@ export class TransformController extends PreviewApplyController implements vscod
 
     const preview = previewResult.payload.summary;
     const transformable = preview.candidates.filter(
-      (candidate: TransformCandidate) => candidate.status === 'pending' || candidate.status === 'existing'
+      (candidate: TransformCandidate) =>
+        candidate.status === 'pending' || candidate.status === 'existing' || candidate.status === 'applied'
     );
 
     this.services.logVerbose(`runTransform: Preview complete - ${transformable.length} transformable candidates`);
