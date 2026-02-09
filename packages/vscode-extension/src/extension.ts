@@ -515,11 +515,13 @@ function refreshQuickActionsModel(
   options: { silent?: boolean } = {}
 ): QuickActionBuildOutput {
   const report = diagnosticsManager?.getReport?.() ?? null;
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const model = buildQuickActionModel({
     report,
     hasSelection: getQuickActionSelectionState(),
     scanResult: lastScanResult,
     detectedAdapter,
+    workspaceRoot,
   });
 
   if (quickActionsProvider) {

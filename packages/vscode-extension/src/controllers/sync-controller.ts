@@ -113,13 +113,24 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       args.push(...options.extraArgs);
     }
 
-    const previewResult = await this.runPreview<SyncSummary>({
-      kind: 'sync',
-      args,
-      workspaceFolder,
-      label,
-      progressTitle: 'i18nsmith: Analyzing sync…',
-    });
+    let previewResult;
+    try {
+      previewResult = await this.runPreview<SyncSummary>({
+        kind: 'sync',
+        args,
+        workspaceFolder,
+        label,
+        progressTitle: 'i18nsmith: Analyzing sync…',
+      });
+    } catch (previewError) {
+      const errorMsg = previewError instanceof Error ? previewError.message : String(previewError);
+      if (errorMsg.includes('missing dependencies') || errorMsg.includes('Preflight check failed')) {
+        await this.showMissingDependencyError(errorMsg, workspaceFolder);
+        return;
+      }
+      vscode.window.showErrorMessage(`Sync failed: ${errorMsg.length > 200 ? errorMsg.slice(0, 200) + '…' : errorMsg}`);
+      return;
+    }
 
     const summary = previewResult.payload.summary;
     
@@ -239,15 +250,26 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       args.push(...options.extraArgs.filter((a) => a !== '--validate-interpolations'));
     }
 
-    const previewResult = await this.runPreview<SyncSummary>({
-      kind: 'sync',
-      args,
-      workspaceFolder,
-      label: options.targets?.length
-        ? `Validate placeholders (${options.targets.length} target${options.targets.length === 1 ? '' : 's'})`
-        : 'Validate placeholders',
-      progressTitle: 'i18nsmith: Validating placeholders…',
-    });
+    let previewResult;
+    try {
+      previewResult = await this.runPreview<SyncSummary>({
+        kind: 'sync',
+        args,
+        workspaceFolder,
+        label: options.targets?.length
+          ? `Validate placeholders (${options.targets.length} target${options.targets.length === 1 ? '' : 's'})`
+          : 'Validate placeholders',
+        progressTitle: 'i18nsmith: Validating placeholders…',
+      });
+    } catch (previewError) {
+      const errorMsg = previewError instanceof Error ? previewError.message : String(previewError);
+      if (errorMsg.includes('missing dependencies') || errorMsg.includes('Preflight check failed')) {
+        await this.showMissingDependencyError(errorMsg, workspaceFolder);
+        return;
+      }
+      vscode.window.showErrorMessage(`Validation failed: ${errorMsg.length > 200 ? errorMsg.slice(0, 200) + '…' : errorMsg}`);
+      return;
+    }
 
     const summary = previewResult.payload.summary;
     const issues = (summary as unknown as { placeholderIssues?: PlaceholderIssueSummary[] }).placeholderIssues;

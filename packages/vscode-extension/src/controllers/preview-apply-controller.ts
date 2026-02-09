@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ServiceContainer } from '../services/container';
 import type { PreviewRunResult } from '../preview-manager';
 import type { CliRunOptions } from '../services/cli-service';
@@ -147,5 +149,48 @@ export abstract class PreviewApplyController {
     }
 
     return true;
+  }
+
+  /**
+   * Show an actionable error notification when the CLI reports missing adapter
+   * dependencies. Parses the error text to extract package names and offers
+   * "Install" and "Show Output" buttons.
+   */
+  protected async showMissingDependencyError(errorMsg: string, workspaceFolder: vscode.WorkspaceFolder): Promise<void> {
+    // Extract dependency names from "- dep: install hint" lines
+    const depLines = errorMsg.match(/- ([\w@/-]+):/g);
+    const depNames = depLines
+      ? depLines.map(line => line.replace(/^- /, '').replace(/:$/, ''))
+      : [];
+
+    const summary = depNames.length
+      ? `Missing dependencies: ${depNames.join(', ')}`
+      : 'Missing framework adapter dependencies detected.';
+
+    const choice = await vscode.window.showErrorMessage(
+      summary,
+      'Install dependencies',
+      'Show details'
+    );
+
+    if (choice === 'Install dependencies') {
+      const root = workspaceFolder.uri.fsPath;
+      const pm = fs.existsSync(path.join(root, 'pnpm-lock.yaml')) ? 'pnpm' :
+                 fs.existsSync(path.join(root, 'yarn.lock')) ? 'yarn' : 'npm';
+      const packages = depNames.length ? depNames.join(' ') : 'vue-eslint-parser';
+      const cmd = pm === 'npm'
+        ? `npm install --save-dev ${packages}`
+        : `${pm} add -D ${packages}`;
+      const terminal = vscode.window.createTerminal({ name: 'i18nsmith install', cwd: root });
+      terminal.show();
+      terminal.sendText(cmd, true);
+      vscode.window.showInformationMessage(
+        'Installing dependencies in the terminal. Re-run the command when complete.'
+      );
+    } else if (choice === 'Show details') {
+      this.services.cliOutputChannel.show();
+      this.services.cliOutputChannel.appendLine('--- Missing adapter dependencies ---');
+      this.services.cliOutputChannel.appendLine(errorMsg);
+    }
   }
 }

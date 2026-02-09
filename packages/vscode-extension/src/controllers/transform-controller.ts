@@ -89,13 +89,25 @@ export class TransformController extends PreviewApplyController implements vscod
 
     this.services.logVerbose(`runTransform: Starting preview for ${label}`);
 
-    const previewResult = await this.runPreview<TransformSummary>({
-      kind: 'transform',
-      args,
-      workspaceFolder,
-      label: `transform preview (${label})`,
-      progressTitle: 'i18nsmith: Analyzing transform candidates…',
-    });
+    let previewResult;
+    try {
+      previewResult = await this.runPreview<TransformSummary>({
+        kind: 'transform',
+        args,
+        workspaceFolder,
+        label: `transform preview (${label})`,
+        progressTitle: 'i18nsmith: Analyzing transform candidates…',
+      });
+    } catch (previewError) {
+      const errorMsg = previewError instanceof Error ? previewError.message : String(previewError);
+      // Intercept preflight/dependency errors from the CLI and offer actionable Install button
+      if (errorMsg.includes('missing dependencies') || errorMsg.includes('Preflight check failed')) {
+        await this.showMissingDependencyError(errorMsg, workspaceFolder);
+        return;
+      }
+      vscode.window.showErrorMessage(`Transform failed: ${errorMsg.length > 200 ? errorMsg.slice(0, 200) + '…' : errorMsg}`);
+      return;
+    }
 
     const preview = previewResult.payload.summary;
     const transformable = preview.candidates.filter(

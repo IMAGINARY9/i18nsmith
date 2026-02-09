@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import type { SuspiciousKeyWarning } from '@i18nsmith/core';
 import type { CheckReport } from './diagnostics';
 import { summarizeReportIssues } from './report-utils';
@@ -32,6 +33,8 @@ export interface QuickActionBuildRequest {
   scanResult?: ScanResult | null;
   /** Detected adapter type from FrameworkDetectionService (e.g. "react-i18next", "vue-i18n") */
   detectedAdapter?: string;
+  /** Absolute path to the workspace root — used to detect whether i18n.config.json exists on disk */
+  workspaceRoot?: string;
 }
 
 export interface QuickActionMetadata {
@@ -93,8 +96,19 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const scanResult = request.scanResult;
 
   // Check if scan failed due to missing config
-  const hasConfigError = scanResult && !scanResult.success && 
-    scanResult.error?.includes('Config file not found');
+  const scanErrorIndicatesNoConfig = scanResult && !scanResult.success && 
+    (scanResult.error?.includes('Config file not found') ||
+     scanResult.error?.includes('i18nsmith init') ||
+     scanResult.error?.includes('config') && scanResult.error?.includes('not found'));
+
+  // Also check if the config file simply doesn't exist on disk
+  // This covers the case before any scan completes and when the scan error text
+  // doesn't match exactly (e.g. ANSI codes, different locale, etc.)
+  const configMissingOnDisk = request.workspaceRoot
+    ? !fs.existsSync(path.join(request.workspaceRoot, 'i18n.config.json'))
+    : false;
+
+  const hasConfigError = scanErrorIndicatesNoConfig || (configMissingOnDisk && !report);
 
   if (hasConfigError) {
     // Show only initialize config action when no config is found
