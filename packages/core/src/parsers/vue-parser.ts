@@ -6,7 +6,6 @@
  */
 
 import path from 'path';
-import { createRequire } from 'module';
 import { isPackageResolvable, requireFromWorkspace } from '../utils/dependency-resolution.js';
 import type { TranslationReference, DynamicKeyWarning } from '../reference-extractor.js';
 import type { Parser, ParseResult } from './types.js';

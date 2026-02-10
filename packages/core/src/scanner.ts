@@ -30,7 +30,8 @@ export type SkipReason =
   | "no_letters"
   | "insufficient_letters"
   | "non_sentence"
-  | "directive_skip";
+  | "directive_skip"
+  | "html_in_script_string";
 
 export interface SkippedCandidate {
   text?: string;

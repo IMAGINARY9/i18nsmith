@@ -1,11 +1,9 @@
-import path from 'path';
-import { createRequire } from 'module';
 import MagicString from 'magic-string';
 import type { I18nConfig } from '../../config.js';
-import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../../scanner.js';
+import type { ScanCandidate, CandidateKind, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
-import { shouldExtractText, generateKey, hashText, compilePatterns, escapeRegExp, type TextFilterConfig } from '../utils/text-filters.js';
-import { buildResolutionPaths, requireFromWorkspace } from '../../utils/dependency-resolution.js';
+import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig } from '../utils/text-filters.js';
+import { requireFromWorkspace } from '../../utils/dependency-resolution.js';
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
@@ -189,18 +187,44 @@ export class VueAdapter implements FrameworkAdapter {
         return candidates;
       }
 
-      const ast = vueEslintParser.parse(content, {
-        sourceType: 'module',
-        ecmaVersion: 2020,
-        sourceFile: filePath,
-      });
+      let ast: any;
+      try {
+        ast = vueEslintParser.parse(content, {
+          sourceType: 'module',
+          ecmaVersion: 2020,
+          sourceFile: filePath,
+        });
+      } catch {
+        // Full parse failed — likely because <script lang="ts"> uses TypeScript
+        // syntax that espree can't handle. Retry with `parser: false` which
+        // tells vue-eslint-parser to parse only the <template> and skip <script>.
+        // This still gives us a correct template AST for text extraction.
+        try {
+          ast = vueEslintParser.parse(content, {
+            sourceType: 'module',
+            ecmaVersion: 2020,
+            sourceFile: filePath,
+            parser: false,
+          });
+        } catch {
+          // Even template-only parsing failed — fall back to regex extraction
+          ast = null;
+        }
+      }
+
+      if (!ast) {
+        this.extractFromContent(content, filePath, candidates);
+        this.lastSkipped = this.activeSkipLog ?? [];
+        this.activeSkipLog = undefined;
+        return candidates;
+      }
 
       // Extract candidates from template
       if (ast.templateBody) {
         this.extractFromTemplate(ast.templateBody, content, filePath, candidates);
       }
 
-      // Extract candidates from script (if TypeScript)
+      // Extract candidates from script body (only available when full parse succeeded)
       if (ast.body) {
         this.extractFromScript(ast.body, content, filePath, candidates);
       }
@@ -209,7 +233,7 @@ export class VueAdapter implements FrameworkAdapter {
       this.activeSkipLog = undefined;
       return candidates;
     } catch (error) {
-      // If parsing fails, fall back to content-based extraction
+      // Unexpected error — fall back to content-based extraction
       this.extractFromContent(content, filePath, candidates);
       this.lastSkipped = this.activeSkipLog ?? [];
       this.activeSkipLog = undefined;
@@ -268,39 +292,58 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private extractFromContent(content: string, filePath: string, candidates: ScanCandidate[]): void {
-    // Simple fallback extraction - look for quoted strings in template-like content
+    // Simple fallback extraction - look for text content in template HTML.
+    // This is used when vue-eslint-parser is not available at all.
     const lines = content.split('\n');
+
+    // Determine template boundaries so we don't extract from <script>/<style>
+    let inTemplate = false;
+    let inScriptOrStyle = false;
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      // Look for template content between > and < or in attributes
+
+      if (/<template[\s>]/i.test(line)) inTemplate = true;
+      if (/<\/template>/i.test(line)) inTemplate = false;
+      if (/<script[\s>]/i.test(line) || /<style[\s>]/i.test(line)) inScriptOrStyle = true;
+      if (/<\/script>/i.test(line) || /<\/style>/i.test(line)) inScriptOrStyle = false;
+
+      if (!inTemplate || inScriptOrStyle) continue;
+
+      // Match text content between > and <
       const templateMatches = line.match(/>([^<]+)</g);
-      if (templateMatches) {
-        for (const match of templateMatches) {
-          const text = match.slice(1, -1).trim();
-          // Skip Vue template expressions ({{ ... }}) and translation calls ($t, t)
-          if (/^\{\{.*\}\}$/.test(text) || /\$?t\s*\(/.test(text)) {
-            continue;
-          }
-          // Skip text that is entirely a mustache expression or whitespace
-          const withoutMustache = text.replace(/\{\{[^}]*\}\}/g, '').trim();
-          if (!withoutMustache) {
-            continue;
-          }
-          if (this.shouldExtractText(withoutMustache)) {
-            const candidate: ScanCandidate = {
-              id: `${filePath}:${i + 1}`,
-              kind: 'jsx-text' as CandidateKind,
-              filePath,
-              text: withoutMustache,
-              position: {
-                line: i + 1,
-                column: line.indexOf(text),
-              },
-              suggestedKey: this.generateKey(withoutMustache),
-              hash: this.hashText(withoutMustache),
-            };
-            candidates.push(candidate);
-          }
+      if (!templateMatches) continue;
+
+      for (const match of templateMatches) {
+        const text = match.slice(1, -1).trim();
+        if (!text) continue;
+
+        // Skip text that contains Vue template interpolations ({{ ... }}).
+        // Mixed content like "Main: {{ expr }}" needs compound i18n with named
+        // parameters — simple text extraction would produce broken output.
+        if (/\{\{/.test(text)) {
+          continue;
+        }
+
+        // Skip existing translation calls ($t, t)
+        if (/\$?t\s*\(/.test(text)) {
+          continue;
+        }
+
+        if (this.shouldExtractText(text)) {
+          const candidate: ScanCandidate = {
+            id: `${filePath}:${i + 1}`,
+            kind: 'jsx-text' as CandidateKind,
+            filePath,
+            text,
+            position: {
+              line: i + 1,
+              column: line.indexOf(text),
+            },
+            suggestedKey: this.generateKey(text),
+            hash: this.hashText(text),
+          };
+          candidates.push(candidate);
         }
       }
     }
@@ -357,7 +400,15 @@ export class VueAdapter implements FrameworkAdapter {
       return;
     }
 
-    // Calculate line and column from offset
+    // Skip strings that contain HTML markup — these are typically innerHTML
+    // assignments or template strings that need manual i18n handling.
+    // Embedding $t() / {{ }} in an innerHTML string is a runtime error;
+    // the user must refactor to use a computed property or v-html binding.
+    if (this.isHtmlString(text)) {
+      return;
+    }
+
+    // Calculate line and column from offset (node.range covers the full quoted literal)
     const lines = content.slice(0, node.range[0]).split('\n');
     const line = lines.length;
     const column = lines[lines.length - 1].length;
@@ -383,28 +434,44 @@ export class VueAdapter implements FrameworkAdapter {
 
     switch (node.type) {
       case 'VText':
-        this.extractTextNode(node, content, filePath, candidates);
+        // VText is handled by the parent VElement (see below) with sibling context
         break;
       case 'VElement':
         this.extractElementAttributes(node, content, filePath, candidates);
-        // Walk children
+        // Process children with sibling awareness: VText nodes adjacent to
+        // VExpressionContainers are fragments of compound expressions
+        // (e.g. "ID: {{ id }} | Images: {{ count }}") and should be skipped.
         if (node.children) {
+          const hasExpressionChild = node.children.some((c: any) => c.type === 'VExpressionContainer');
           for (const child of node.children) {
-            this.walkTemplate(child, content, filePath, candidates);
+            if (child.type === 'VText') {
+              this.extractTextNode(child, content, filePath, candidates, hasExpressionChild);
+            } else {
+              this.walkTemplate(child, content, filePath, candidates);
+            }
           }
         }
         break;
       case 'VExpressionContainer':
-        // Skip expressions for now
+        // Skip expressions — they're JS code, not translatable text
         break;
     }
   }
 
-  private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean): void {
     const rawText = content.slice(node.range[0], node.range[1]);
     const trimmedText = rawText.trim();
 
     if (!this.shouldExtractText(trimmedText)) return;
+
+    // If this text node is a sibling of a {{ }} expression container,
+    // it's a fragment of a compound expression like "ID: {{ id }}".
+    // These fragments (e.g. "ID:", "| Images:") are not standalone
+    // translatable strings — they need i18n with named interpolation
+    // parameters which is a different, more complex transformation.
+    if (hasAdjacentExpression) {
+      return;
+    }
 
     const candidate: ScanCandidate = {
       id: `${filePath}:${node.loc.start.line}`,
@@ -497,12 +564,53 @@ export class VueAdapter implements FrameworkAdapter {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  /**
+   * Detect if a string literal contains HTML markup, making it unsuitable
+   * for simple $t() replacement. Strings like:
+   *   `'<span class="foo">text</span>'` (innerHTML assignments)
+   *   `'<i class="icon"></i><br>...'`
+   * need manual refactoring (e.g. v-html with computed, or component-based).
+   *
+   * Also catches strings that already contain Vue template syntax ({{ }})
+   * or $t() calls — these are already "internationalized" strings that
+   * just happen to be inside JS (e.g. innerHTML = '{{ $t("key") }}'),
+   * which is broken at runtime and should be flagged rather than extracted.
+   */
+  private isHtmlString(text: string): boolean {
+    // Contains HTML tags
+    if (/<[a-z][a-z0-9-]*[\s>]/i.test(text)) {
+      return true;
+    }
+    // Contains Vue template interpolation {{ }}
+    if (/\{\{.*\}\}/.test(text)) {
+      return true;
+    }
+    // Contains existing $t() or t() calls
+    if (/\$?t\s*\(/.test(text)) {
+      return true;
+    }
+    return false;
+  }
+
   private applyCandidate(candidate: TransformCandidate, content: string, magicString: MagicString): boolean {
     // Calculate byte positions from line/column
     const startPos = this.lineColumnToBytePosition(content, candidate.position.line, candidate.position.column);
     if (startPos === -1) return false;
 
-    const endPos = startPos + candidate.text.length;
+    let endPos: number;
+    if (candidate.kind === 'jsx-expression') {
+      // For script string literals the position points to the opening quote.
+      // The raw range includes the quotes, so we need to account for them.
+      // Detect the quote character and find the matching close.
+      const quoteChar = content[startPos];
+      if (quoteChar === '\'' || quoteChar === '"' || quoteChar === '`') {
+        endPos = startPos + candidate.text.length + 2; // +2 for opening and closing quotes
+      } else {
+        endPos = startPos + candidate.text.length;
+      }
+    } else {
+      endPos = startPos + candidate.text.length;
+    }
 
     // For Vue files, we need to handle different types of content based on the candidate kind
     switch (candidate.kind) {
@@ -563,7 +671,7 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private transformExpression(candidate: TransformCandidate, startPos: number, endPos: number, magicString: MagicString): boolean {
-    // For expressions, wrap with $t()
+    // Replace string literal with $t() call
     const translationCall = `$t('${candidate.suggestedKey}')`;
     magicString.overwrite(startPos, endPos, translationCall);
     return true;
