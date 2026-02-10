@@ -61,6 +61,11 @@ export class SmartScanner implements vscode.Disposable {
   private lastFailureNotifiedAt = 0;
   private missingConfigNotified = false;
   private readonly failureNotificationCooldownMs = 5 * 60 * 1000;
+  private scannerDisabled = false;
+  private consecutiveFailures = 0;
+  private circuitOpen = false;
+  private circuitBreakerNotified = false;
+  private readonly circuitBreakerThreshold = 3;
   
   private _state: ScanState = 'idle';
   private _lastResult: ScanResult | null = null;
@@ -107,6 +112,7 @@ export class SmartScanner implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration('i18nsmith');
     this.scanOnSave = config.get<boolean>('scanOnSave', true);
     this.scanOnActivation = config.get<boolean>('scanOnActivation', true);
+    this.scannerDisabled = config.get<boolean>('disabled', false);
   }
 
   /**
@@ -220,6 +226,28 @@ export class SmartScanner implements vscode.Disposable {
       return this.currentScan;
     }
 
+    if (this.scannerDisabled) {
+      this.log('[Scanner] Scanner disabled for this workspace. Skipping scan.');
+      const result = this.buildDisabledResult();
+      this._lastResult = result;
+      this.setState('idle');
+      this.scanCompleteEmitter.fire(result);
+      return result;
+    }
+
+    if (this.circuitOpen && !['manual', 'config-change'].includes(trigger)) {
+      this.log('[Scanner] Circuit breaker open. Skipping background scan.');
+      const result = this.buildCircuitOpenResult();
+      this._lastResult = result;
+      this.setState('idle');
+      this.scanCompleteEmitter.fire(result);
+      return result;
+    }
+
+    if (['manual', 'config-change'].includes(trigger)) {
+      this.resetCircuitBreaker();
+    }
+
     const configStatus = this.getConfigStatus();
     if (!configStatus.hasConfig) {
       const result = this.buildConfigMissingResult(configStatus.error ?? 'Config file not found');
@@ -241,13 +269,16 @@ export class SmartScanner implements vscode.Disposable {
         this._lastResult = result;
         this.setState(result.success ? 'success' : 'error');
         this.scanCompleteEmitter.fire(result);
+        this.updateFailureState(result);
         if (!result.success && this.shouldNotifyFailure(result)) {
           this.lastFailureNotifiedAt = Date.now();
           vscode.window
-            .showWarningMessage('i18nsmith background scan failed', 'Show Output')
+            .showWarningMessage('i18nsmith background scan failed', 'Show Output', "Don't show again")
             .then((choice) => {
               if (choice === 'Show Output') {
                 this.showOutput();
+              } else if (choice === "Don't show again") {
+                this.disableScannerForWorkspace();
               }
             });
         }
@@ -517,13 +548,95 @@ export class SmartScanner implements vscode.Disposable {
     };
   }
 
+  private buildDisabledResult(): ScanResult {
+    const summary = emptyReportMetrics();
+    return {
+      success: true,
+      timestamp: new Date(),
+      issueCount: summary.issueCount,
+      severityCounts: summary.severityCounts,
+      dominantSeverity: summary.dominantSeverity,
+      suggestionCount: summary.suggestionCount,
+      suggestionSeverityCounts: summary.suggestionSeverityCounts,
+      suggestionDominantSeverity: summary.suggestionDominantSeverity,
+      statusLevel: summary.statusLevel,
+      statusReasons: ['Scanner disabled for this workspace'],
+      warningCount: summary.warningCount,
+    };
+  }
+
+  private buildCircuitOpenResult(): ScanResult {
+    const summary = emptyReportMetrics();
+    return {
+      success: false,
+      timestamp: new Date(),
+      issueCount: summary.issueCount,
+      severityCounts: summary.severityCounts,
+      dominantSeverity: summary.dominantSeverity,
+      suggestionCount: summary.suggestionCount,
+      suggestionSeverityCounts: summary.suggestionSeverityCounts,
+      suggestionDominantSeverity: summary.suggestionDominantSeverity,
+      statusLevel: summary.statusLevel,
+      statusReasons: ['Background scans paused after repeated failures'],
+      warningCount: summary.warningCount,
+      error: 'Background scans paused after repeated failures',
+    };
+  }
+
+  private resetCircuitBreaker() {
+    this.consecutiveFailures = 0;
+    this.circuitOpen = false;
+    this.circuitBreakerNotified = false;
+  }
+
+  private updateFailureState(result: ScanResult) {
+    if (result.success) {
+      this.resetCircuitBreaker();
+      return;
+    }
+
+    if (this.isConfigMissingError(result.error ?? '')) {
+      return;
+    }
+
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= this.circuitBreakerThreshold) {
+      this.circuitOpen = true;
+      if (!this.circuitBreakerNotified) {
+        this.circuitBreakerNotified = true;
+        vscode.window.showWarningMessage(
+          'i18nsmith background scans paused after repeated failures. Run a manual scan to retry.',
+          'Show Output'
+        ).then((choice) => {
+          if (choice === 'Show Output') {
+            this.showOutput();
+          }
+        });
+      }
+    }
+  }
+
+  private disableScannerForWorkspace() {
+    const config = vscode.workspace.getConfiguration('i18nsmith');
+    config.update('disabled', true, vscode.ConfigurationTarget.Workspace);
+    this.scannerDisabled = true;
+    this.log('[Scanner] Disabled background scans for this workspace.');
+  }
+
+  private isConfigMissingError(error: string): boolean {
+    return (
+      error.includes('Config file not found') ||
+      error.includes('Invalid i18n.config.json')
+    );
+  }
+
   private shouldNotifyFailure(result: ScanResult): boolean {
     const error = result.error ?? '';
-    const isConfigMissing =
-      error.includes('Config file not found') ||
-      error.includes('Invalid i18n.config.json');
+    if (this.scannerDisabled || this.circuitOpen) {
+      return false;
+    }
 
-    if (isConfigMissing) {
+    if (this.isConfigMissingError(error)) {
       return false;
     }
 

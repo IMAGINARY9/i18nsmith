@@ -651,6 +651,10 @@ export function registerInit(program: Command) {
         return;
       }
 
+      if (mergeDecision?.strategy) {
+        config.mergeStrategy = mergeDecision.strategy;
+      }
+
       const configPath = path.join(workspaceRoot, 'i18n.config.json');
 
       try {

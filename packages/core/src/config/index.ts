@@ -14,6 +14,7 @@ export type {
   TranslationAdapterConfig,
   TranslationConfig,
   KeyGenerationConfig,
+  MergeStrategy,
   SyncConfig,
   DiagnosticsConfig,
   DiagnosticsAdapterHintConfig,

@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveCliCommand } from './cli-utils';
 
+const fsMocks = vi.hoisted(() => {
+  return {
+    existsSync: vi.fn((..._args: unknown[]) => false),
+    statSync: vi.fn(() => ({ isFile: () => true })),
+  };
+});
+
+vi.mock('fs', () => fsMocks);
+
 const settings: { cliPath?: string } = {};
 
 vi.mock('vscode', () => {
@@ -24,13 +33,15 @@ vi.mock('vscode', () => {
 describe('resolveCliCommand', () => {
   beforeEach(() => {
     settings.cliPath = '';
+    fsMocks.existsSync.mockReturnValue(false);
+    fsMocks.statSync.mockReturnValue({ isFile: () => true });
   });
 
   it('returns npx invocation when no cliPath is configured', () => {
     const resolved = resolveCliCommand('i18nsmith sync --json');
     expect(resolved.command).toBe('npx');
-    expect(resolved.args).toEqual(['i18nsmith@latest', 'sync', '--json']);
-    expect(resolved.display).toBe('npx i18nsmith@latest sync --json');
+    expect(resolved.args).toEqual(['i18nsmith', 'sync', '--json']);
+    expect(resolved.display).toBe('npx i18nsmith sync --json');
     expect(resolved.source).toBe('npx-pass-through');
   });
 
@@ -49,6 +60,17 @@ describe('resolveCliCommand', () => {
     const resolved = resolveCliCommand('i18nsmith sync');
     expect(resolved.command).toBe('npx');
     expect(resolved.source).toBe('npx-pass-through');
+  });
+
+  it('uses global i18nsmith when available on PATH', () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = '/usr/local/bin';
+  fsMocks.existsSync.mockImplementation((...args: unknown[]) => args[0] === '/usr/local/bin/i18nsmith');
+    const resolved = resolveCliCommand('i18nsmith check --json');
+    expect(resolved.command).toBe('/usr/local/bin/i18nsmith');
+    expect(resolved.args).toEqual(['check', '--json']);
+    expect(resolved.source).toBe('global');
+    process.env.PATH = originalPath;
   });
 
   it('passes through non-i18nsmith commands untouched', () => {

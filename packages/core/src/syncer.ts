@@ -8,6 +8,7 @@ import {
   DEFAULT_PLACEHOLDER_FORMATS,
   DEFAULT_EMPTY_VALUE_MARKERS,
   SuspiciousKeyPolicy,
+  MergeStrategy,
 } from './config.js';
 import { createDefaultProject } from './project-factory.js';
 import { createBackup, BackupResult } from './backup.js';
@@ -180,6 +181,7 @@ export class Syncer {
   private readonly keyValidator: KeyValidator;
   private readonly extractor: ReferenceExtractor;
   private readonly parserRegistry: ParserRegistry;
+  private readonly mergeStrategy?: MergeStrategy;
 
   constructor(private readonly config: I18nConfig, options: SyncerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -214,6 +216,7 @@ export class Syncer {
     this.emptyValueMarkers = new Set(emptyMarkers.map((marker) => marker.toLowerCase()));
     this.suspiciousKeyPolicy = syncOptions.suspiciousKeyPolicy ?? 'skip';
     this.keyValidator = new KeyValidator(this.suspiciousKeyPolicy);
+  this.mergeStrategy = config.mergeStrategy;
     this.defaultAssumedKeys = syncOptions.dynamicKeyAssumptions ?? [];
     const globPatterns = syncOptions.dynamicKeyGlobs ?? [];
     this.dynamicKeyGlobMatchers = globPatterns
@@ -392,8 +395,8 @@ export class Syncer {
       await this.applyMissingKeys(missingKeysToApply);
       await this.applyUnusedKeys(unusedKeysToApply);
       // Seed keys from source to target locales if configured
-      if (this.config.seedTargetLocales) {
-        await this.seedSourceToTargets(localeData);
+      if (this.shouldSeedTargets()) {
+        await this.seedSourceToTargets(localeData, this.shouldOverwriteTargets());
       }
       
       // Ensure all target locale files exist (create empty files if missing)
@@ -903,10 +906,11 @@ export class Syncer {
   }
 
   private async applyMissingKeys(missingKeys: MissingKeyRecord[]) {
+    const shouldSeedTargets = this.shouldSeedTargets();
     for (const record of missingKeys) {
       const defaultValue = record.recoveredValue ?? buildDefaultSourceValue(record.key);
       await this.localeStore.upsert(this.sourceLocale, record.key, defaultValue);
-      if (this.config.seedTargetLocales) {
+      if (shouldSeedTargets) {
         const seedValue = this.config.sync?.seedValue ?? '';
         for (const locale of this.targetLocales) {
           await this.localeStore.upsert(locale, record.key, seedValue);
@@ -927,7 +931,7 @@ export class Syncer {
    * Seeds keys from source locale to target locales if they are missing.
    * This ensures target locales have the same structure as the source.
    */
-  private async seedSourceToTargets(localeData: Map<string, Record<string, string>>) {
+  private async seedSourceToTargets(localeData: Map<string, Record<string, string>>, overwriteExisting = false) {
     const seedValue = this.config.sync?.seedValue ?? '';
     const sourceData = localeData.get(this.sourceLocale) ?? {};
     const sourceKeys = Object.keys(sourceData);
@@ -935,11 +939,22 @@ export class Syncer {
     for (const locale of this.targetLocales) {
       const targetData = localeData.get(locale) ?? {};
       for (const key of sourceKeys) {
-        if (!(key in targetData)) {
+        if (overwriteExisting || !(key in targetData)) {
           await this.localeStore.upsert(locale, key, seedValue);
         }
       }
     }
+  }
+
+  private shouldSeedTargets(): boolean {
+    if (this.mergeStrategy === 'keep-source' || this.mergeStrategy === 'overwrite') {
+      return true;
+    }
+    return Boolean(this.config.seedTargetLocales);
+  }
+
+  private shouldOverwriteTargets(): boolean {
+    return this.mergeStrategy === 'overwrite';
   }
 
   /**

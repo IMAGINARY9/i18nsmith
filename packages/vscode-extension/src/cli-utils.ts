@@ -10,7 +10,7 @@ export interface ResolvedCliCommand {
   /** Argument array for spawn/execFile */
   args: string[];
   /** Indicates whether we used a configured cliPath */
-  source: 'configured-cli' | 'workspace-local' | 'npx-pass-through' | 'external';
+  source: 'configured-cli' | 'workspace-local' | 'global' | 'npx-pass-through' | 'external';
 }
 
 interface ResolveOptions {
@@ -30,15 +30,33 @@ export function resolveCliCommand(raw: string, options: ResolveOptions = {}): Re
   const targetsI18nsmith = trimmed.startsWith('i18nsmith');
 
   let resolvedCliPath = configuredPath || preferredCliPath;
+  let resolvedSource: ResolvedCliCommand['source'] | null = resolvedCliPath
+    ? configuredPath
+      ? 'configured-cli'
+      : 'workspace-local'
+    : null;
 
   // If no configured CLI path and targeting i18nsmith, try to auto-detect workspace-local CLI
   if (!resolvedCliPath && targetsI18nsmith && options.workspaceRoot) {
     resolvedCliPath = findWorkspaceLocalCli(options.workspaceRoot);
+    if (resolvedCliPath) {
+      resolvedSource = 'workspace-local';
+    }
   }
 
   // If still unresolved, try to locate a bundled CLI from the extension (dev host / packaged)
   if (!resolvedCliPath && targetsI18nsmith) {
     resolvedCliPath = findExtensionBundledCli();
+    if (resolvedCliPath) {
+      resolvedSource = 'workspace-local';
+    }
+  }
+
+  if (!resolvedCliPath && targetsI18nsmith) {
+    resolvedCliPath = findGlobalCliOnPath();
+    if (resolvedCliPath) {
+      resolvedSource = 'global';
+    }
   }
 
   const commandLine = buildCommandLine(trimmed, resolvedCliPath);
@@ -51,9 +69,7 @@ export function resolveCliCommand(raw: string, options: ResolveOptions = {}): Re
     args: tokens,
     source: targetsI18nsmith
       ? resolvedCliPath
-        ? configuredPath
-          ? 'configured-cli'
-          : 'workspace-local'
+        ? (resolvedSource ?? 'workspace-local')
         : 'npx-pass-through'
       : 'external',
   };
@@ -132,6 +148,33 @@ function findExtensionBundledCli(): string {
     }
   } catch {
     // ignore
+  }
+  return '';
+}
+
+function findGlobalCliOnPath(): string {
+  const pathValue = process.env.PATH ?? '';
+  if (!pathValue) {
+    return '';
+  }
+  const candidateNames = process.platform === 'win32'
+    ? ['i18nsmith.cmd', 'i18nsmith.exe', 'i18nsmith']
+    : ['i18nsmith'];
+  const pathEntries = pathValue.split(path.delimiter).filter(Boolean);
+
+  for (const entry of pathEntries) {
+    for (const name of candidateNames) {
+      const candidate = path.join(entry, name);
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          if (!/[\n\r`$;&|<>]/.test(candidate)) {
+            return candidate;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
   return '';
 }

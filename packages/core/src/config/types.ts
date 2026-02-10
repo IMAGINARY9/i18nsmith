@@ -80,6 +80,8 @@ export interface SyncConfig {
   seedValue?: string;
 }
 
+export type MergeStrategy = 'keep-source' | 'overwrite' | 'interactive';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Diagnostics Configuration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -195,6 +197,14 @@ export interface I18nConfig {
    * Whether to seed target locale files with empty values (default: false)
    */
   seedTargetLocales?: boolean;
+
+  /**
+   * Merge strategy to apply when syncing or initializing locales.
+   * - 'keep-source': preserve existing values and append missing keys
+   * - 'overwrite': replace target values with placeholders
+   * - 'interactive': prompt before applying changes (CLI)
+   */
+  mergeStrategy?: MergeStrategy;
 
   sync?: SyncConfig;
 

@@ -219,6 +219,11 @@
           "default": true,
           "description": "Run a background scan when the extension activates"
         },
+        "i18nsmith.disabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable background scans and warnings for this workspace"
+        },
         "i18nsmith.showCodeLens": {
           "type": "boolean",
           "default": true,

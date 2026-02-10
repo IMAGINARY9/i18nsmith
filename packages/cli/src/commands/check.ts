@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadConfigWithMeta, CheckRunner, isPackageResolvable } from '@i18nsmith/core';
-import type { CheckSummary } from '@i18nsmith/core';
+import type { CheckSummary, I18nConfig } from '@i18nsmith/core';
 import { printLocaleDiffs } from '../utils/diff-utils.js';
 import { getDiagnosisExitSignal } from '../utils/diagnostics-exit.js';
 import { CHECK_EXIT_CODES } from '../utils/exit-codes.js';
@@ -164,24 +164,16 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
       ];
     }
     const parserWarnings: ParserWarning[] = [];
-    const includesVue = config.include?.some((pattern) => pattern.includes('.vue')) ?? false;
-    if (includesVue) {
-      let vueParserAvailable = false;
-      try {
-        vueParserAvailable = isPackageResolvable('vue-eslint-parser', projectRoot);
-      } catch {
-        vueParserAvailable = false;
-      }
-
-      if (!vueParserAvailable) {
-        parserWarnings.push({
-          dependency: 'vue-eslint-parser',
-          message: 'Vue files detected but "vue-eslint-parser" is not installed. Results may be incomplete.',
-          installHint: 'npm install --save-dev vue-eslint-parser',
-        });
-        console.log(chalk.yellow('⚠️  Vue files detected but "vue-eslint-parser" is not installed.'));
-        console.log(chalk.yellow('   Some Vue template references may be skipped.'));
-      }
+    const parserStatus = buildParserStatus(config, projectRoot);
+    const vueStatus = parserStatus.vue;
+    if (vueStatus?.required && !vueStatus.available) {
+      parserWarnings.push({
+        dependency: 'vue-eslint-parser',
+        message: 'Vue files detected but "vue-eslint-parser" is not installed. Results may be incomplete.',
+        installHint: 'npm install --save-dev vue-eslint-parser',
+      });
+      console.log(chalk.yellow('⚠️  Vue files detected but "vue-eslint-parser" is not installed.'));
+      console.log(chalk.yellow('   Some Vue template references may be skipped.'));
     }
 
     const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
@@ -211,8 +203,8 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
     }
 
     const payload = localeAudit
-      ? { ...summary, audit: localeAudit, ...(parserWarnings.length ? { parserWarnings } : {}) }
-      : { ...summary, ...(parserWarnings.length ? { parserWarnings } : {}) };
+      ? { ...summary, audit: localeAudit, parserStatus, ...(parserWarnings.length ? { parserWarnings } : {}) }
+      : { ...summary, parserStatus, ...(parserWarnings.length ? { parserWarnings } : {}) };
 
     if (options.report) {
       const outputPath = path.resolve(process.cwd(), options.report);
@@ -275,4 +267,54 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     throw new CliError(`Check failed: ${message}`);
   }
+}
+
+type ParserStatusEntry = {
+  available: boolean;
+  required: boolean;
+};
+
+type ParserStatusMap = Record<string, ParserStatusEntry>;
+
+function buildParserStatus(config: I18nConfig, projectRoot: string): ParserStatusMap {
+  const includePatterns = config.include ?? [];
+  const requiresVue = includesExtension(includePatterns, '.vue');
+  const requiresTypeScript =
+    includesExtension(includePatterns, '.ts') ||
+    includesExtension(includePatterns, '.tsx') ||
+    includesExtension(includePatterns, '.js') ||
+    includesExtension(includePatterns, '.jsx');
+
+  let vueAvailable = false;
+  try {
+    vueAvailable = isPackageResolvable('vue-eslint-parser', projectRoot);
+  } catch {
+    vueAvailable = false;
+  }
+
+  return {
+    typescript: { available: true, required: requiresTypeScript },
+    vue: { available: vueAvailable, required: requiresVue },
+  };
+}
+
+function includesExtension(patterns: string[], extension: string): boolean {
+  const ext = extension.toLowerCase();
+  const extToken = ext.startsWith('.') ? ext.slice(1) : ext;
+  const extRegex = new RegExp(`\\.${extToken}(?:\\b|\\}|,|$)`, 'i');
+
+  return patterns.some((pattern) => {
+    const normalized = pattern.toLowerCase();
+    if (normalized.includes(ext)) {
+      return true;
+    }
+    const braceMatch = normalized.match(/\{([^}]+)\}/);
+    if (braceMatch) {
+      const entries = braceMatch[1].split(',').map((value) => value.trim());
+      if (entries.includes(extToken)) {
+        return true;
+      }
+    }
+    return extRegex.test(normalized);
+  });
 }

@@ -299,6 +299,10 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
   const translatableAttributes = ensureUniqueStrings(extractionConfig.translatableAttributes);
   const nonTranslatableAttributes = ensureUniqueStrings(extractionConfig.nonTranslatableAttributes);
   const attributeSuffixes = ensureUniqueStrings(extractionConfig.attributeSuffixes);
+  const mergeStrategy =
+    typeof parsed.mergeStrategy === 'string' && ['keep-source', 'overwrite', 'interactive'].includes(parsed.mergeStrategy)
+      ? (parsed.mergeStrategy as 'keep-source' | 'overwrite' | 'interactive')
+      : undefined;
 
   const normalized: I18nConfig = {
     version: (parsed.version ?? 1) as 1,
@@ -347,6 +351,7 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
       shortHashLen,
     },
     seedTargetLocales: typeof parsed.seedTargetLocales === 'boolean' ? parsed.seedTargetLocales : false,
+    mergeStrategy,
     sync: {
       translationIdentifier,
       validateInterpolations,

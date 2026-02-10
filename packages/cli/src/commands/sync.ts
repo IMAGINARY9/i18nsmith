@@ -350,6 +350,11 @@ export function registerSync(program: Command) {
         if (options.exclude?.length) {
           config.exclude = options.exclude;
         }
+
+        if (!options.interactive && config.mergeStrategy === 'interactive') {
+          options.interactive = true;
+          console.log(chalk.gray('Using interactive merge strategy from i18n.config.json.'));
+        }
         // Merge --assume-globs with config
         if (options.assumeGlobs?.length) {
           config.sync = config.sync ?? {};

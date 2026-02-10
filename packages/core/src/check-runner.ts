@@ -96,10 +96,13 @@ export class CheckRunner {
 
     // Build actionable items from all sources
     const hardcodedItems = scan.candidates.map((c) => candidateToActionable(c));
+    const referenceGapItem = buildReferenceGapItem(diagnostics, sync);
+    const gapItems = referenceGapItem ? [referenceGapItem] : [];
     const actionableItems = [
       ...diagnostics.actionableItems,
       ...sync.actionableItems,
       ...hardcodedItems,
+      ...gapItems,
     ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
     const suggestedCommands = buildSuggestedCommands(
@@ -129,6 +132,32 @@ export class CheckRunner {
       timestamp: new Date().toISOString(),
     };
   }
+}
+
+function buildReferenceGapItem(
+  diagnostics: DiagnosisReport,
+  sync: SyncSummary
+): ActionableItem | null {
+  const identifierCount = diagnostics.translationUsage?.identifierOccurrences ?? 0;
+  const referenceCount = sync.references.length;
+
+  if (identifierCount === 0) {
+    return null;
+  }
+
+  if (referenceCount === 0 || identifierCount >= referenceCount * 3) {
+    return {
+      kind: 'diagnostics-reference-gap',
+      severity: 'warn',
+      message: `Detected ${identifierCount} translation identifiers but only ${referenceCount} references were parsed. Results may be incomplete (missing parser or unsupported syntax).`,
+      details: {
+        identifierOccurrences: identifierCount,
+        parsedReferences: referenceCount,
+      },
+    };
+  }
+
+  return null;
 }
 
 /**

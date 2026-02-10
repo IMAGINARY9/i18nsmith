@@ -94,6 +94,56 @@ export default Component;
     expect(enContents).not.toHaveProperty('new.key');
   });
 
+  it('mergeStrategy keep-source seeds missing keys without overwriting existing values', async () => {
+    await writeFixtures();
+    const syncer = new Syncer(
+      {
+        ...baseConfig,
+        seedTargetLocales: false,
+        mergeStrategy: 'keep-source',
+        sync: {
+          ...baseConfig.sync,
+          seedValue: '[TODO]',
+        },
+      },
+      { workspaceRoot: tempDir }
+    );
+
+    await syncer.run({ write: true });
+
+    const targetLocale = JSON.parse(
+      await fs.readFile(path.join(tempDir, 'locales', 'es.json'), 'utf8')
+    );
+
+    expect(targetLocale['existing.key']).toBe('Existente');
+    expect(targetLocale['new.key']).toBe('[TODO]');
+  });
+
+  it('mergeStrategy overwrite replaces target values with seed values', async () => {
+    await writeFixtures();
+    const syncer = new Syncer(
+      {
+        ...baseConfig,
+        seedTargetLocales: false,
+        mergeStrategy: 'overwrite',
+        sync: {
+          ...baseConfig.sync,
+          seedValue: '[TODO]',
+        },
+      },
+      { workspaceRoot: tempDir }
+    );
+
+    await syncer.run({ write: true });
+
+    const targetLocale = JSON.parse(
+      await fs.readFile(path.join(tempDir, 'locales', 'es.json'), 'utf8')
+    );
+
+    expect(targetLocale['existing.key']).toBe('[TODO]');
+    expect(targetLocale['new.key']).toBe('[TODO]');
+  });
+
   it('applies fixes when run with write flag', async () => {
     await writeFixtures();
     const syncer = new Syncer(baseConfig, { workspaceRoot: tempDir });
