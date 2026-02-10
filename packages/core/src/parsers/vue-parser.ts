@@ -7,6 +7,7 @@
 
 import path from 'path';
 import { createRequire } from 'module';
+import { isPackageResolvable, requireFromWorkspace } from '../utils/dependency-resolution.js';
 import type { TranslationReference, DynamicKeyWarning } from '../reference-extractor.js';
 import type { Parser, ParseResult } from './types.js';
 
@@ -22,9 +23,23 @@ export class VueParser implements Parser {
   private availabilityCache: { workspaceRoot?: string; available: boolean } | null = null;
 
   isAvailable(workspaceRoot?: string): boolean {
-    // For ES modules, assume vue-eslint-parser is available if installed
-    // TODO: Implement proper availability checking
-    return true;
+    // Only short-circuit when we previously confirmed availability.
+    // If the parser was missing, re-check so newly installed deps are detected.
+    if (
+      this.availabilityCache &&
+      this.availabilityCache.workspaceRoot === workspaceRoot &&
+      this.availabilityCache.available
+    ) {
+      return true;
+    }
+
+    const available = workspaceRoot
+      ? isPackageResolvable('vue-eslint-parser', workspaceRoot)
+      : false;
+
+    this.availabilityCache = { workspaceRoot, available };
+
+    return available;
   }
 
   parseFile(
@@ -40,30 +55,11 @@ export class VueParser implements Parser {
       return { references, dynamicKeyWarnings };
     }
 
-    if (!this.isAvailable(workspaceRoot)) {
-      console.log(`[DEBUG] VueParser not available for workspaceRoot: ${workspaceRoot}`);
-      return { references, dynamicKeyWarnings };
-    }
-
     try {
       // Lazy load vue-eslint-parser to avoid import issues when not available
-    let parse: any;
-    const require = createRequire(path.join(process.cwd(), 'package.json'));
-      
-      if (workspaceRoot) {
-        try {
-          const resolved = require.resolve('vue-eslint-parser', {
-            paths: [workspaceRoot, path.join(workspaceRoot, 'node_modules')],
-          });
-          parse = require(resolved).parse;
-        } catch {
-          // Fall through to default
-        }
-      }
-
-      if (!parse) {
-        parse = require('vue-eslint-parser').parse;
-      }
+      // Lazy load vue-eslint-parser using robust workspace resolution
+      const parserModule = requireFromWorkspace('vue-eslint-parser', workspaceRoot || process.cwd());
+      const parse = parserModule.parse;
 
       // Parse the Vue SFC
       const ast = parse(content, {
@@ -88,7 +84,7 @@ export class VueParser implements Parser {
       // This allows the system to continue with other files
       console.warn(`Failed to parse Vue file ${filePath}:`, error);
     }
-
+    
     return { references, dynamicKeyWarnings };
   }
 

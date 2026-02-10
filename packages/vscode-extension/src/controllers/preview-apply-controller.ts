@@ -132,17 +132,16 @@ export abstract class PreviewApplyController {
       ? `Missing dependencies: ${depNames.join(', ')}`
       : 'Missing framework adapter dependencies detected.';
 
-  const retry = this.pendingRetry;
-  this.pendingRetry = undefined;
-  const installLabel = retry ? 'Install & Retry' : 'Install dependencies';
+    const retry = this.pendingRetry;
+    this.pendingRetry = undefined;
+    const installLabel = retry ? 'Install & Retry' : 'Install';
     const choice = await vscode.window.showErrorMessage(
       summary,
       installLabel,
-      'Install only',
-      'Show details'
+      'Details'
     );
 
-    if (choice === installLabel || choice === 'Install only') {
+    if (choice === installLabel) {
       const installCommands = this.buildInstallCommands(depNames, workspaceFolder);
       const success = await this.installDependencies(installCommands, workspaceFolder);
       if (success && choice === installLabel && retry) {
@@ -151,7 +150,7 @@ export abstract class PreviewApplyController {
       return;
     }
 
-    if (choice === 'Show details') {
+    if (choice === 'Details') {
       this.services.cliOutputChannel.show();
       this.services.cliOutputChannel.appendLine('--- Missing adapter dependencies ---');
       this.services.cliOutputChannel.appendLine(errorMsg);
@@ -166,20 +165,17 @@ export abstract class PreviewApplyController {
     const details = missing.map(m => `• ${m.adapter}: ${m.dependency}\n    Install: ${m.installHint}`).join('\n');
     const hasRetry = Boolean(retry);
     const choice = await vscode.window.showWarningMessage(
-      'i18nsmith: Missing framework adapter dependencies detected. Install required packages or scaffold the adapter before proceeding.',
+      'i18nsmith: Missing framework adapter dependencies. Install required packages to continue.',
       ...(hasRetry ? ['Install & Retry'] : []),
-      'Install only',
-      'Show details',
-      'Scaffold adapter',
-      'Continue anyway',
-      'Cancel'
+      'Install',
+      'Details'
     );
 
-    if (!choice || choice === 'Cancel') {
+    if (!choice) {
       return false;
     }
 
-    if (choice === 'Show details') {
+    if (choice === 'Details') {
       try {
         this.services.cliOutputChannel.show();
         this.services.cliOutputChannel.appendLine('Missing framework adapter dependencies:');
@@ -193,7 +189,7 @@ export abstract class PreviewApplyController {
       return false;
     }
 
-    if (choice === 'Install & Retry' || choice === 'Install only') {
+    if (choice === 'Install & Retry' || choice === 'Install') {
       const installCommands = Array.from(new Set(missing.map((m) => m.installHint)));
       const success = await this.installDependencies(installCommands, workspaceFolder);
       if (success && choice === 'Install & Retry' && retry) {
@@ -202,19 +198,7 @@ export abstract class PreviewApplyController {
       return false;
     }
 
-    if (choice === 'Scaffold adapter') {
-      const info = await this.services.frameworkDetectionService
-        .detectFramework(workspaceFolder.uri.fsPath)
-        .catch(() => null);
-      const adapter = info?.adapter ?? 'react-i18next';
-      await this.services.cliService.runCliCommand(
-        `i18nsmith scaffold-adapter --type ${adapter} --install-deps`,
-        { interactive: true, workspaceFolder }
-      );
-      return false;
-    }
-
-    return choice === 'Continue anyway';
+    return false;
   }
 
   protected buildInstallCommands(depNames: string[], workspaceFolder: vscode.WorkspaceFolder): string[] {

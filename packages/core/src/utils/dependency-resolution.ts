@@ -29,7 +29,7 @@ export function isPackageResolvable(packageName: string, workspaceRoot: string):
     const resolveFrom = buildResolutionPaths(workspaceRoot);
     require.resolve(packageName, { paths: resolveFrom });
     return true;
-  } catch {
+  } catch (e: any) {
     return false;
   }
 }
@@ -43,6 +43,13 @@ export function requireFromWorkspace(packageName: string, workspaceRoot: string)
   try {
     // Use require.resolve with paths to find the package in workspace context
     const resolved = require.resolve(packageName, { paths: resolveFrom });
+    
+    // Clear the cache for this module to ensure fresh loading in case it was
+    // previously cached as a failure or older version.
+    // This is important for long-running processes (like VS Code extension)
+    // where the user might install dependencies while the process is running.
+    delete require.cache[resolved];
+    
     return require(resolved);
   } catch {
     // Fall back to default resolution
