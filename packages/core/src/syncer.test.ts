@@ -574,7 +574,7 @@ export default Component;
       `import { useTranslation } from 'react-i18next';
 const Component = () => {
   const { t } = useTranslation();
-  return <p>{t('common.save')}</p>;
+  return <p>{t('save')}</p>;
 };`,
       'utf8'
     );
@@ -582,7 +582,7 @@ const Component = () => {
     // Create locale file with key === value pattern
     await fs.writeFile(
       path.join(tempDir, 'locales', 'en.json'),
-      JSON.stringify({ 'common.save': 'common.save' }, null, 2)
+  JSON.stringify({ save: 'save' }, null, 2)
     );
     await fs.writeFile(
       path.join(tempDir, 'locales', 'es.json'),
@@ -596,6 +596,6 @@ const Component = () => {
       (w) => w.reason === 'key-equals-value'
     );
     expect(keyEqualsValueWarnings.length).toBeGreaterThan(0);
-    expect(keyEqualsValueWarnings[0].key).toBe('common.save');
+  expect(keyEqualsValueWarnings[0].key).toBe('save');
   });
 });

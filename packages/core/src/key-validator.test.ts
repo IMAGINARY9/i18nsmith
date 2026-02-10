@@ -68,8 +68,7 @@ describe('KeyValidator', () => {
   describe('analyzeWithValue', () => {
     it('detects key-equals-value pattern', () => {
       const validator = new KeyValidator();
-      // Use a namespaced key so single-word check doesn't fire first
-      const result = validator.analyzeWithValue('common.submit', 'Submit');
+      const result = validator.analyzeWithValue('submit', 'Submit');
       expect(result.suspicious).toBe(true);
       expect(result.reason).toBe('key-equals-value');
       expect(result.keyEqualsValue).toBe(true);
@@ -77,8 +76,15 @@ describe('KeyValidator', () => {
 
     it('detects normalized key-equals-value', () => {
       const validator = new KeyValidator();
-      const result = validator.analyzeWithValue('common.submit-button', 'Submit Button');
+      const result = validator.analyzeWithValue('submit-button', 'Submit Button');
       expect(result.keyEqualsValue).toBe(true);
+    });
+
+    it('does not flag namespaced key-value matches by default', () => {
+      const validator = new KeyValidator();
+      const result = validator.analyzeWithValue('common.submit', 'Submit');
+      expect(result.keyEqualsValue).toBe(false);
+      expect(result.suspicious).toBe(false);
     });
 
     it('does not flag different key and value', () => {

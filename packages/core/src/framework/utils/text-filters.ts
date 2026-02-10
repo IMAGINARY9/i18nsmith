@@ -13,6 +13,7 @@ const URL_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
 const BOOLEAN_LITERAL_PATTERN = /^(true|false|null|undefined)$/i;
 const CODE_FRAGMENT_PATTERN = /(&&|\|\||===|!==|=>|\breturn\b|\bconst\b|\blet\b|\bvar\b|\bif\b|\belse\b)/;
 const CSS_CLASS_PATTERN = /^(?:[\w:./\-\[\]]+\s+)+[\w:./\-\[\]]+$/i;
+const CSS_CLASS_SIGNAL = /[-:\[\]/\d]/;
 
 /**
  * Result of text filtering analysis
@@ -83,7 +84,7 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
   }
 
   // Skip Tailwind/CSS-like class strings
-  if (CSS_CLASS_PATTERN.test(text.trim())) {
+  if (CSS_CLASS_PATTERN.test(text.trim()) && CSS_CLASS_SIGNAL.test(text)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 

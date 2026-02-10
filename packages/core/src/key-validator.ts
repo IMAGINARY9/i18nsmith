@@ -113,12 +113,14 @@ export class KeyValidator {
 
     if (value !== undefined) {
       const keyEqualsValue = this.isKeyEqualsValue(key, value);
-      if (keyEqualsValue && !baseAnalysis.suspicious) {
-        return {
-          suspicious: true,
-          reason: 'key-equals-value',
-          keyEqualsValue: true,
-        };
+      if (keyEqualsValue) {
+        if (!baseAnalysis.suspicious || baseAnalysis.reason === 'single-word-no-namespace') {
+          return {
+            suspicious: true,
+            reason: 'key-equals-value',
+            keyEqualsValue: true,
+          };
+        }
       }
       return { ...baseAnalysis, keyEqualsValue };
     }

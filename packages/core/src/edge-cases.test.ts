@@ -132,13 +132,12 @@ describe('Edge Cases', () => {
     });
 
     it('flags key === value as suspicious', () => {
-      const analysis = validator.analyzeWithValue('common.save', 'common.save');
+      const analysis = validator.analyzeWithValue('save', 'save');
       expect(analysis.keyEqualsValue).toBe(true);
     });
 
     it('flags key segment === value as suspicious', () => {
-      // When the last segment of the key matches the value
-      const analysis = validator.analyzeWithValue('buttons.save', 'Save');
+      const analysis = validator.analyzeWithValue('save', 'Save');
       expect(analysis.keyEqualsValue).toBe(true);
     });
 
@@ -147,8 +146,13 @@ describe('Edge Cases', () => {
       // and converting to lowercase, so "saveChanges" -> "savechanges" and
       // "Save Changes" -> "save changes" (with space) are NOT equal
       // This test uses a value that would match after normalization
-      const analysis = validator.analyzeWithValue('common.save', 'Save');
+      const analysis = validator.analyzeWithValue('save', 'Save');
       expect(analysis.keyEqualsValue).toBe(true);
+    });
+
+    it('does not flag namespaced key-value matches by default', () => {
+      const analysis = validator.analyzeWithValue('common.save', 'Save');
+      expect(analysis.keyEqualsValue).toBe(false);
     });
 
     it('allows key with meaningful different value', () => {
