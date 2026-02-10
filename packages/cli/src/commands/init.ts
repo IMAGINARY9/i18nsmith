@@ -3,7 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
-import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore, ProjectIntelligenceService, type ProjectIntelligence, type SuggestedConfig, Scanner, KeyGenerator } from '@i18nsmith/core';
+import { diagnoseWorkspace, I18nConfig, TranslationConfig, ensureGitignore, ProjectIntelligenceService, type ProjectIntelligence, type SuggestedConfig, Scanner, KeyGenerator, LocaleStore, createBackup } from '@i18nsmith/core';
 import { scaffoldTranslationContext, scaffoldI18next } from '../utils/scaffold.js';
 import { hasDependency, readPackageJson } from '../utils/pkg.js';
 import { detectPackageManager, installDependencies } from '../utils/package-manager.js';
@@ -679,6 +679,8 @@ export function registerInit(program: Command) {
           console.log(chalk.yellow('Could not create source locale file automatically.'));
         }
 
+        await applyMergeStrategy(mergeDecision, config, workspaceRoot);
+
         if (answers.scaffoldAdapter && answers.scaffoldAdapterPath) {
           try {
             await scaffoldTranslationContext(answers.scaffoldAdapterPath, answers.sourceLanguage, {
@@ -814,5 +816,92 @@ async function maybePromptMergeStrategy(
     console.warn(chalk.gray(`Skipping merge diagnostics: ${(error as Error).message}`));
     return { strategy: null, aborted: false };
   }
+}
+
+async function applyMergeStrategy(
+  mergeDecision: MergeDecision | null,
+  config: I18nConfig,
+  workspaceRoot: string
+): Promise<void> {
+  const strategy = mergeDecision?.strategy;
+  if (!strategy || strategy === 'keep-source') {
+    return;
+  }
+
+  const localesDirPath = path.join(workspaceRoot, config.localesDir || 'locales');
+  const localeStore = new LocaleStore(localesDirPath, {
+    format: config.locales?.format ?? 'auto',
+    delimiter: config.locales?.delimiter ?? '.',
+    sortKeys: config.locales?.sortKeys ?? 'alphabetical',
+  });
+
+  const sourceLocale = config.sourceLanguage ?? 'en';
+  let sourceData: Record<string, string> = {};
+  try {
+    sourceData = await localeStore.get(sourceLocale);
+  } catch {
+    sourceData = {};
+  }
+
+  const sourceKeys = Object.keys(sourceData);
+  if (!sourceKeys.length) {
+    console.log(chalk.yellow('No source locale keys found to apply merge strategy.'));
+    return;
+  }
+
+  const targetLocales = (config.targetLanguages ?? []).filter(Boolean);
+  if (!targetLocales.length) {
+    return;
+  }
+
+  let localesToOverwrite = targetLocales;
+  if (strategy === 'interactive' && process.stdout.isTTY) {
+    const { locales } = await inquirer.prompt<{ locales: string[] }>([
+      {
+        type: 'checkbox',
+        name: 'locales',
+        message: 'Select target locales to overwrite with placeholders',
+        choices: targetLocales,
+        default: targetLocales,
+      },
+    ]);
+    localesToOverwrite = locales?.length ? locales : [];
+    if (!localesToOverwrite.length) {
+      console.log(chalk.gray('No locales selected. Skipping merge overwrite.'));
+      return;
+    }
+  }
+
+  try {
+    const backup = await createBackup(localesDirPath, workspaceRoot, {}, `init --merge ${strategy}`);
+    if (backup) {
+      console.log(chalk.blue(`\n📦 ${backup.summary}`));
+    }
+  } catch (error) {
+    console.log(chalk.yellow(`Could not create backup: ${(error as Error).message}`));
+  }
+
+  const seedValue = config.sync?.seedValue ?? '[TODO]';
+  for (const locale of localesToOverwrite) {
+    let existingData: Record<string, string> = {};
+    try {
+      existingData = await localeStore.get(locale);
+    } catch {
+      existingData = {};
+    }
+    for (const key of Object.keys(existingData)) {
+      await localeStore.remove(locale, key);
+    }
+    for (const key of sourceKeys) {
+      await localeStore.upsert(locale, key, seedValue);
+    }
+  }
+
+  await localeStore.flush();
+  console.log(
+    chalk.green(
+      `Merge strategy "${strategy}" applied to locales: ${localesToOverwrite.join(', ')}`
+    )
+  );
 }
 
