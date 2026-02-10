@@ -72,8 +72,8 @@ function buildCommandLine(raw: string, cliPath?: string): string {
     return rest ? `${cmd} ${rest}` : cmd;
   }
   // Prefer local version if available, otherwise npx will fetch latest
-  // Use explicit package@latest so users get the latest CLI when no local CLI is present
-  return rest ? `npx i18nsmith@latest ${rest}` : 'npx i18nsmith@latest';
+  // Use npx without @latest to allow the local npx cache to be reused
+  return rest ? `npx i18nsmith ${rest}` : 'npx i18nsmith';
 }
 
 function sanitizeCliPath(value: string | undefined): string {
