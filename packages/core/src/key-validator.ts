@@ -227,6 +227,12 @@ export class KeyValidator {
    * Check if key is identical or nearly identical to its value.
    */
   private isKeyEqualsValue(key: string, value: string): boolean {
+    // Only flag raw keys without namespaces to avoid false positives
+    // for structured keys like "common.generic.yes".
+    if (key.includes('.')) {
+      return false;
+    }
+
     // Direct equality check (key literally used as value)
     if (key === value) {
       return true;

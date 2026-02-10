@@ -9,6 +9,10 @@ const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const HTML_ENTITY_PATTERN = /^&[a-z][a-z0-9-]*;$/i;
 const REPEATED_SYMBOL_PATTERN = /^([^\p{L}\d\s])\1{1,}$/u;
 const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const URL_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
+const BOOLEAN_LITERAL_PATTERN = /^(true|false|null|undefined)$/i;
+const CODE_FRAGMENT_PATTERN = /(&&|\|\||===|!==|=>|\breturn\b|\bconst\b|\blet\b|\bvar\b|\bif\b|\belse\b)/;
+const CSS_CLASS_PATTERN = /^(?:[\w:./\-\[\]]+\s+)+[\w:./\-\[\]]+$/i;
 
 /**
  * Result of text filtering analysis
@@ -61,6 +65,26 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
   // Skip HTML entities
   if (HTML_ENTITY_PATTERN.test(text)) {
     return { shouldExtract: false, skipReason: 'html-entity' };
+  }
+
+  // Skip obvious URLs and scheme-like values
+  if (URL_PATTERN.test(text.trim())) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  // Skip boolean-ish literals
+  if (BOOLEAN_LITERAL_PATTERN.test(text.trim())) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  // Skip code fragments / expressions
+  if (CODE_FRAGMENT_PATTERN.test(text)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  // Skip Tailwind/CSS-like class strings
+  if (CSS_CLASS_PATTERN.test(text.trim())) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
   // Skip repeated symbols

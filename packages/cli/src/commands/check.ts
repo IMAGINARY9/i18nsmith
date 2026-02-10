@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { loadConfigWithMeta, CheckRunner } from '@i18nsmith/core';
+import { loadConfigWithMeta, CheckRunner, isPackageResolvable } from '@i18nsmith/core';
 import type { CheckSummary } from '@i18nsmith/core';
 import { printLocaleDiffs } from '../utils/diff-utils.js';
 import { getDiagnosisExitSignal } from '../utils/diagnostics-exit.js';
@@ -37,6 +37,12 @@ interface CheckCommandOptions {
   auditDuplicates?: boolean;
   auditInconsistent?: boolean;
   auditOrphaned?: boolean;
+}
+
+interface ParserWarning {
+  dependency: string;
+  message: string;
+  installHint: string;
 }
 
 const collectAssumedKeys = (value: string, previous: string[]) => {
@@ -157,6 +163,27 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
         ...options.assumeGlobs,
       ];
     }
+    const parserWarnings: ParserWarning[] = [];
+    const includesVue = config.include?.some((pattern) => pattern.includes('.vue')) ?? false;
+    if (includesVue) {
+      let vueParserAvailable = false;
+      try {
+        vueParserAvailable = isPackageResolvable('vue-eslint-parser', projectRoot);
+      } catch {
+        vueParserAvailable = false;
+      }
+
+      if (!vueParserAvailable) {
+        parserWarnings.push({
+          dependency: 'vue-eslint-parser',
+          message: 'Vue files detected but "vue-eslint-parser" is not installed. Results may be incomplete.',
+          installHint: 'npm install --save-dev vue-eslint-parser',
+        });
+        console.log(chalk.yellow('⚠️  Vue files detected but "vue-eslint-parser" is not installed.'));
+        console.log(chalk.yellow('   Some Vue template references may be skipped.'));
+      }
+    }
+
     const runner = new CheckRunner(config, { workspaceRoot: projectRoot });
     const summary = await runner.run({
       assumedKeys: options.assume,
@@ -183,7 +210,9 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
       );
     }
 
-    const payload = localeAudit ? { ...summary, audit: localeAudit } : summary;
+    const payload = localeAudit
+      ? { ...summary, audit: localeAudit, ...(parserWarnings.length ? { parserWarnings } : {}) }
+      : { ...summary, ...(parserWarnings.length ? { parserWarnings } : {}) };
 
     if (options.report) {
       const outputPath = path.resolve(process.cwd(), options.report);
@@ -196,6 +225,13 @@ export async function runCheck(options: CheckCommandOptions): Promise<void> {
       console.log(JSON.stringify(payload, null, 2));
     } else {
       printCheckSummary(summary);
+      if (parserWarnings.length) {
+        console.log(chalk.yellow('\nParser warnings'));
+        parserWarnings.forEach((warning) => {
+          console.log(`  • ${warning.message}`);
+          console.log(chalk.gray(`    Install: ${warning.installHint}`));
+        });
+      }
       if (options.diff) {
         printLocaleDiffs(summary.sync.diffs);
       }

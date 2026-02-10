@@ -43,6 +43,9 @@ const DEFAULT_TRANSLATABLE_ATTRIBUTES = new Set([
  */
 const DEFAULT_NON_TRANSLATABLE_ATTRIBUTES = new Set([
   'class',
+  'classname',
+  'className',
+  'class-name',
   'id',
   'name',
   'type',
@@ -58,6 +61,22 @@ const DEFAULT_NON_TRANSLATABLE_ATTRIBUTES = new Set([
   'data-test',
   'data-cy',
   'role',
+  'as',
+  'format',
+  'mode',
+  'sizes',
+  'loading',
+  'xmlns',
+  'viewbox',
+  'd',
+  'aria-hidden',
+  'aria-checked',
+  'aria-selected',
+  'aria-expanded',
+  'aria-current',
+  'aria-controls',
+  'aria-describedby',
+  'aria-labelledby',
   'tabindex',
   'target',
   'rel',
@@ -440,6 +459,10 @@ export class VueAdapter implements FrameworkAdapter {
   private isTranslatableAttribute(attrName: string): boolean {
     const lowerAttr = attrName.toLowerCase();
 
+    if (this.nonTranslatableAttributes.has(lowerAttr)) {
+      return false;
+    }
+
     // Check if explicitly translatable
     if (this.translatableAttributes.has(lowerAttr)) return true;
 
@@ -450,8 +473,7 @@ export class VueAdapter implements FrameworkAdapter {
       }
     }
 
-    // Check if not in non-translatable list
-    return !this.nonTranslatableAttributes.has(lowerAttr);
+    return false;
   }
 
   private shouldExtractText(text: string): boolean {
