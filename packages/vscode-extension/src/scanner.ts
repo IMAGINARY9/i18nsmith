@@ -58,6 +58,9 @@ export class SmartScanner implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private debounceTimer: NodeJS.Timeout | undefined;
   private currentScan: Promise<ScanResult> | null = null;
+  private lastFailureNotifiedAt = 0;
+  private missingConfigNotified = false;
+  private readonly failureNotificationCooldownMs = 5 * 60 * 1000;
   
   private _state: ScanState = 'idle';
   private _lastResult: ScanResult | null = null;
@@ -217,6 +220,19 @@ export class SmartScanner implements vscode.Disposable {
       return this.currentScan;
     }
 
+    const configStatus = this.getConfigStatus();
+    if (!configStatus.hasConfig) {
+      const result = this.buildConfigMissingResult(configStatus.error ?? 'Config file not found');
+      this._lastResult = result;
+      this.setState('error');
+      this.scanCompleteEmitter.fire(result);
+      if (!this.missingConfigNotified && configStatus.error === 'Config file not found') {
+        this.missingConfigNotified = true;
+        this.log('[Scanner] Config file not found. Skipping background scan.');
+      }
+      return result;
+    }
+
     this.log(`[Scanner] Starting scan (trigger: ${trigger})`);
     this.setState('scanning');
 
@@ -225,7 +241,8 @@ export class SmartScanner implements vscode.Disposable {
         this._lastResult = result;
         this.setState(result.success ? 'success' : 'error');
         this.scanCompleteEmitter.fire(result);
-        if (!result.success) {
+        if (!result.success && this.shouldNotifyFailure(result)) {
+          this.lastFailureNotifiedAt = Date.now();
           vscode.window
             .showWarningMessage('i18nsmith background scan failed', 'Show Output')
             .then((choice) => {
@@ -458,6 +475,59 @@ export class SmartScanner implements vscode.Disposable {
 
   private log(message: string) {
     this.outputChannel.appendLine(message);
+  }
+
+  private getConfigStatus(): { hasConfig: boolean; error?: string } {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return { hasConfig: false, error: 'No workspace folder found' };
+    }
+
+    const configPath = path.join(workspaceFolder.uri.fsPath, 'i18n.config.json');
+    if (!fs.existsSync(configPath)) {
+      return { hasConfig: false, error: 'Config file not found' };
+    }
+
+    try {
+      const raw = fs.readFileSync(configPath, 'utf8');
+      JSON.parse(raw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { hasConfig: false, error: `Invalid i18n.config.json: ${message}` };
+    }
+
+    return { hasConfig: true };
+  }
+
+  private buildConfigMissingResult(error: string): ScanResult {
+    const summary = emptyReportMetrics();
+    return {
+      success: false,
+      timestamp: new Date(),
+      issueCount: summary.issueCount,
+      severityCounts: summary.severityCounts,
+      dominantSeverity: summary.dominantSeverity,
+      suggestionCount: summary.suggestionCount,
+      suggestionSeverityCounts: summary.suggestionSeverityCounts,
+      suggestionDominantSeverity: summary.suggestionDominantSeverity,
+      statusLevel: summary.statusLevel,
+      statusReasons: summary.statusReasons,
+      warningCount: summary.warningCount,
+      error,
+    };
+  }
+
+  private shouldNotifyFailure(result: ScanResult): boolean {
+    const error = result.error ?? '';
+    const isConfigMissing =
+      error.includes('Config file not found') ||
+      error.includes('Invalid i18n.config.json');
+
+    if (isConfigMissing) {
+      return false;
+    }
+
+    return Date.now() - this.lastFailureNotifiedAt >= this.failureNotificationCooldownMs;
   }
 
   /**
