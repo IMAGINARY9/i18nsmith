@@ -2,10 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Minimal vscode mock for tests
 vi.mock('vscode', () => ({
   window: { showWarningMessage: vi.fn(), createTerminal: vi.fn() },
-  workspace: { workspaceFolders: [{ uri: { fsPath: '/tmp/project' } }] },
+  workspace: {
+    workspaceFolders: [{ uri: { fsPath: '/tmp/project' } }],
+    textDocuments: [],
+  },
+}));
+vi.mock('../utils/vue-ast', () => ({
+  clearVueAstCacheFor: vi.fn(),
 }));
 import * as vscode from 'vscode';
 import * as adapterPreflight from '../utils/adapter-preflight';
+import * as vueAst from '../utils/vue-ast';
 import { PreviewApplyController } from './preview-apply-controller';
 vi.mock('../utils/vue-parser-check', () => ({ checkAndPromptForVueParser: vi.fn().mockResolvedValue(true) }));
 
@@ -16,18 +23,21 @@ class DummyController extends PreviewApplyController {
 }
 
 describe('PreviewApplyController preflight integration', () => {
-  const fakeServices: any = {
-    cliService: { runCliCommand: vi.fn().mockResolvedValue({ success: true }) },
-    cliOutputChannel: { show: vi.fn(), appendLine: vi.fn() },
-    reportWatcher: { refresh: vi.fn() },
-    hoverProvider: { clearCache: vi.fn() },
-    smartScanner: { scan: vi.fn() },
-    frameworkDetectionService: { detectFramework: vi.fn().mockResolvedValue({ adapter: 'react-i18next' }) },
-    logVerbose: vi.fn(),
-  };
+  let fakeServices: any;
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    (vscode.workspace as any).textDocuments = [];
+      fakeServices = {
+        cliService: { runCliCommand: vi.fn().mockResolvedValue({ success: true }) },
+        cliOutputChannel: { show: vi.fn(), appendLine: vi.fn() },
+        reportWatcher: { refresh: vi.fn() },
+        hoverProvider: { clearCache: vi.fn() },
+        smartScanner: { scan: vi.fn() },
+        frameworkDetectionService: { detectFramework: vi.fn().mockResolvedValue({ adapter: 'react-i18next' }) },
+        dependencyCacheManager: { notifyInstalled: vi.fn() },
+        logVerbose: vi.fn(),
+      };
   });
 
 
@@ -119,5 +129,21 @@ describe('PreviewApplyController preflight integration', () => {
     
     // Should return false (don't proceed)
     expect(result).toBe(false);
+  });
+
+  it('notifies dependency cache manager after successful install', async () => {
+    const controller = new DummyController(fakeServices as any);
+    const notifySpy = vi.spyOn(fakeServices.dependencyCacheManager, 'notifyInstalled');
+
+    // Mock cliService to succeed
+    fakeServices.cliService.runCliCommand.mockResolvedValue({ success: true });
+
+    // Call installDependencies directly
+    const result = await (controller as any).installDependencies(['npm i -D vue-eslint-parser'], {
+      uri: { fsPath: '/tmp/project' },
+    } as any);
+
+    expect(result).toBe(true);
+    expect(notifySpy).toHaveBeenCalledWith(['vue-eslint-parser'], '/tmp/project');
   });
 });

@@ -13,6 +13,7 @@ import { DiffPreviewService } from "./diff-preview";
 import { ConfigurationService } from "./configuration-service";
 import { FrameworkDetectionService } from "./framework-detection-service";
 import { OutputChannelService } from "./output-channel-service";
+import { DependencyCacheManager } from "./dependency-cache-manager";
 
 export class ServiceContainer implements vscode.Disposable {
   // Set to true when a preview UI (diff/plan) was shown to the user.
@@ -36,6 +37,7 @@ export class ServiceContainer implements vscode.Disposable {
   public readonly diffPreviewService: DiffPreviewService;
   public readonly configurationService: ConfigurationService;
   public readonly frameworkDetectionService: FrameworkDetectionService;
+  public readonly dependencyCacheManager: DependencyCacheManager;
 
   constructor(context: vscode.ExtensionContext) {
     this.outputChannelService = new OutputChannelService(context);
@@ -82,6 +84,30 @@ export class ServiceContainer implements vscode.Disposable {
     context.subscriptions.push(this.previewPlanService);
     this.diffPreviewService = new DiffPreviewService(this.diffPeekProvider);
     this.frameworkDetectionService = new FrameworkDetectionService();
+    this.dependencyCacheManager = new DependencyCacheManager();
+    this.registerDependencyInvalidators();
+  }
+
+  private registerDependencyInvalidators(): void {
+    // Register Vue parser invalidation
+    this.dependencyCacheManager.register('vue-eslint-parser', (workspaceRoot: string) => {
+      // Clear AST cache for all open documents
+      for (const document of vscode.workspace.textDocuments) {
+        if (document.languageId === 'vue') {
+          // Import here to avoid circular dependency
+          import('../utils/vue-ast').then(({ clearVueAstCacheFor }) => {
+            clearVueAstCacheFor(document);
+          });
+        }
+      }
+      // Clear require cache for the parser module
+      try {
+        const resolved = require.resolve('vue-eslint-parser', { paths: [workspaceRoot] });
+        delete require.cache[resolved];
+      } catch {
+        // ignore if not resolvable
+      }
+    });
   }
 
   public logVerbose(message: string) {

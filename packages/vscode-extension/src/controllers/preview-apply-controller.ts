@@ -229,6 +229,7 @@ export abstract class PreviewApplyController {
   }
 
   protected async installDependencies(commands: string[], workspaceFolder: vscode.WorkspaceFolder): Promise<boolean> {
+    const installedPackages: string[] = [];
     for (const cmd of commands) {
       const result = await this.services.cliService.runCliCommand(cmd, {
         workspaceFolder,
@@ -238,7 +239,44 @@ export abstract class PreviewApplyController {
       if (!result?.success) {
         return false;
       }
+      // Extract package names from the command (e.g., 'npm install --save-dev vue-eslint-parser' -> ['vue-eslint-parser'])
+      const packages = this.extractPackageNamesFromCommand(cmd);
+      installedPackages.push(...packages);
     }
+    // Notify cache manager of installed packages
+    this.services.dependencyCacheManager.notifyInstalled(installedPackages, workspaceFolder.uri.fsPath);
     return true;
+  }
+
+  private extractPackageNamesFromCommand(command: string): string[] {
+    // Parse npm/pnpm/yarn install commands to extract package names
+    const parts = command.split(/\s+/);
+    const packages: string[] = [];
+    let inInstall = false;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part === 'npm' || part === 'pnpm' || part === 'yarn') {
+        // Start of package manager command
+        continue;
+      }
+      if (part === 'install' || part === 'add' || part === 'i') {
+        inInstall = true;
+        continue;
+      }
+      if (part.startsWith('-')) {
+        // Skip flags
+        if (part === '--save-dev' || part === '-D' || part === '--save' || part === '-S' || part === '--dev') {
+          continue;
+        }
+        if (part.startsWith('--')) {
+          i++; // skip next part if it's a --flag value
+        }
+        continue;
+      }
+      if (inInstall && part && !part.includes('=')) {
+        packages.push(part);
+      }
+    }
+    return packages;
   }
 }
