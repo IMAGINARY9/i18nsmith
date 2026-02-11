@@ -17,6 +17,9 @@ packages/*/build/
 *.tsbuildinfo
 packages/*/*.tsbuildinfo
 
+# Auto-generated version files
+packages/*/src/version.ts
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

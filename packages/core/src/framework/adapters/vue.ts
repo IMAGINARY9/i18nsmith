@@ -3,7 +3,7 @@ import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
 import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig } from '../utils/text-filters.js';
-import { requireFromWorkspace } from '../../utils/dependency-resolution.js';
+import { requireFromWorkspace, isPackageResolvable } from '../../utils/dependency-resolution.js';
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
 const MAX_DIRECTIVE_COMMENT_DEPTH = 4;
@@ -161,7 +161,7 @@ export class VueAdapter implements FrameworkAdapter {
 
   checkDependencies(): Array<{ name: string; available: boolean; installHint: string }> {
     // Check if vue-eslint-parser is available (resolve from workspace root first)
-    const available = this.getVueEslintParser() !== null;
+    const available = isPackageResolvable('vue-eslint-parser', this.workspaceRoot);
 
     return [{
       name: 'vue-eslint-parser',
