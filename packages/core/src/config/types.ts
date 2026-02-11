@@ -126,7 +126,11 @@ export interface I18nConfig {
    * Used to support future, backwards-compatible evolutions of the config file.
    * Defaults to 1 when omitted.
    */
-  version?: 1;
+  configVersion?: number;
+  /**
+   * @deprecated Use configVersion instead.
+   */
+  version?: number;
   /**
    * Source language of the application (default: 'en')
    */
@@ -135,6 +139,10 @@ export interface I18nConfig {
    * Target languages to translate to
    */
   targetLanguages: string[];
+  /**
+   * @deprecated Use targetLanguages (alias from legacy config).
+   */
+  targetLocales?: string[];
   /**
    * Path to the locale files directory
    */
@@ -227,6 +235,12 @@ export interface LoadConfigResult {
   config: I18nConfig;
   configPath: string;
   projectRoot: string;
+  warnings?: DeprecatedConfigWarning[];
+}
+
+export interface DeprecatedConfigWarning {
+  field: string;
+  message: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

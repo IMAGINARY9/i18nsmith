@@ -14,6 +14,8 @@ export * from './suspicious-key-renamer.js';
 export * from './backup.js';
 export * from './gitignore.js';
 export * from './utils/dependency-resolution.js';
+export * from './cache-utils.js';
+export * from './cache-manager.js';
 
 // Framework Support
 export * from './framework/index.js';

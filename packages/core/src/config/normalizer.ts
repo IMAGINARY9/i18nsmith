@@ -16,6 +16,7 @@ import type {
   DiagnosticsConfig,
   DiagnosticsAdapterHintConfig,
   RawLocalesConfig,
+  DeprecatedConfigWarning,
 } from './types.js';
 import {
   DEFAULT_INCLUDE,
@@ -238,7 +239,15 @@ export function normalizeAdapterHint(entry: unknown): DiagnosticsAdapterHintConf
 // Main Config Normalizer
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
+export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { config: I18nConfig; warnings: DeprecatedConfigWarning[] } {
+  const warnings = collectDeprecatedWarnings(parsed);
+
+  const rawConfigVersion = (parsed as any).configVersion ?? parsed.version ?? 1;
+  const targetLocales = ensureStringArray((parsed as any).targetLocales);
+  const resolvedTargetLanguages = ensureStringArray(parsed.targetLanguages).length
+    ? ensureStringArray(parsed.targetLanguages)
+    : targetLocales;
+
   const translationConfig = normalizeTranslationConfig(parsed.translation);
 
   const adapter =
@@ -305,9 +314,10 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
       : undefined;
 
   const normalized: I18nConfig = {
-    version: (parsed.version ?? 1) as 1,
+    configVersion: rawConfigVersion,
+    version: parsed.version,
     sourceLanguage: parsed.sourceLanguage ?? DEFAULT_SOURCE_LANGUAGE,
-    targetLanguages: ensureStringArray(parsed.targetLanguages) ?? [],
+    targetLanguages: resolvedTargetLanguages ?? [],
     localesDir: parsed.localesDir ?? DEFAULT_LOCALES_DIR,
     include: ensureArray(parsed.include, DEFAULT_INCLUDE),
     exclude: ensureArray(parsed.exclude, DEFAULT_EXCLUDE),
@@ -368,5 +378,37 @@ export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
     frameworks: ensureOptionalArray(parsed.frameworks),
   };
 
-  return normalized;
+  return { config: normalized, warnings };
+}
+
+export function normalizeConfig(parsed: Partial<I18nConfig>): I18nConfig {
+  return normalizeConfigWithWarnings(parsed).config;
+}
+
+function collectDeprecatedWarnings(parsed: Partial<I18nConfig>): DeprecatedConfigWarning[] {
+  const warnings: DeprecatedConfigWarning[] = [];
+  const raw = parsed as Record<string, unknown>;
+
+  if (raw.version !== undefined) {
+    warnings.push({
+      field: 'version',
+      message: "'version' is deprecated. Use 'configVersion' instead.",
+    });
+  }
+
+  if (raw.targetLanguages !== undefined) {
+    warnings.push({
+      field: 'targetLanguages',
+      message: "'targetLanguages' is deprecated. Use 'targetLocales' instead.",
+    });
+  }
+
+  if (raw.targetLocales !== undefined) {
+    warnings.push({
+      field: 'targetLocales',
+      message: "'targetLocales' is supported as an alias for 'targetLanguages'.",
+    });
+  }
+
+  return warnings;
 }

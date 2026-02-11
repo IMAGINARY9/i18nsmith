@@ -21,6 +21,7 @@ export type {
   LocalesConfig,
   I18nConfig,
   LoadConfigResult,
+  DeprecatedConfigWarning,
 } from './types.js';
 
 // Re-export defaults
@@ -61,6 +62,7 @@ export {
   normalizeDiagnosticsConfig,
   normalizeAdapterHint,
   normalizeConfig,
+  normalizeConfigWithWarnings,
 } from './normalizer.js';
 
 // Re-export loader functions

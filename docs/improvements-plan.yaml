@@ -582,6 +582,7 @@ deprecated_config:
     # ──────────────────────────────────────────────────────────────────────
     - id: DEPR-1
       title: "Config schema versioning"
+      status: completed
       detail: |
         Add a `configVersion` field to i18n.config.json that tools can check:
         ```json
@@ -631,6 +632,7 @@ deprecated_config:
     # ──────────────────────────────────────────────────────────────────────
     - id: DEPR-2
       title: "Cache invalidation on config change or tool update"
+      status: completed
       detail: |
         Current state:
         - Reference cache lives at node_modules/.cache/i18nsmith/references.json
@@ -703,6 +705,7 @@ deprecated_config:
     # ──────────────────────────────────────────────────────────────────────
     - id: DEPR-3
       title: "Surface deprecation warnings to users"
+      status: completed
       detail: |
         Changes:
         1. CLI: Print yellow warnings at start of any command when deprecated
@@ -760,6 +763,7 @@ text_filter_improvements:
 
   - id: TF-2
     title: "Context-aware filtering system"
+    status: completed
     detail: |
       The current text filter is purely text-based. Many false positives can ONLY
       be eliminated with context (which JSX attribute, which component, etc.).
@@ -832,6 +836,7 @@ implementation_plan:
   phase_3_robustness:
     title: "Long-term robustness"
     priority: P2
+    status: completed
     estimated_effort: "3-4 days"
     depends_on: [phase_2_accuracy]
     items:

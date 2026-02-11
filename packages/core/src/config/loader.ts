@@ -5,7 +5,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { I18nConfig, LoadConfigResult } from './types.js';
-import { normalizeConfig } from './normalizer.js';
+import { normalizeConfigWithWarnings } from './normalizer.js';
 import { assertConfigValid } from './validator.js';
 import { DEFAULT_CONFIG_FILENAME } from './defaults.js';
 import { inferConfig } from './inference.js';
@@ -110,13 +110,20 @@ export async function loadConfigWithMeta(
   const rawConfig = await readConfigFile(resolvedPath);
   const projectRoot = path.dirname(resolvedPath);
   const enriched = await inferConfig(rawConfig, { projectRoot });
-  const config = normalizeConfig(enriched);
+  const { config, warnings } = normalizeConfigWithWarnings(enriched);
   assertConfigValid(config);
+
+  if (warnings.length) {
+    for (const warning of warnings) {
+      console.warn(`[i18nsmith] Deprecated config field '${warning.field}': ${warning.message}`);
+    }
+  }
 
   return {
     config,
     configPath: resolvedPath,
     projectRoot,
+    warnings,
   };
 }
 

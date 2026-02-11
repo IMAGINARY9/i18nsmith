@@ -23,10 +23,10 @@ import {
   type TranslationReference,
   type DynamicKeyReason,
   type DynamicKeyWarning,
-  type ReferenceCacheFile,
 } from './reference-extractor.js';
 import {
   type ReferenceCacheEntry,
+  type ReferenceCacheFile,
   loadReferenceCache,
   saveReferenceCache,
   computeFileFingerprint,
@@ -56,6 +56,7 @@ import {
   matchesAnyGlob,
   collectPatternMatchedKeys,
 } from './syncer/pattern-matcher.js';
+import { hashConfig, getToolVersion } from './cache-utils.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -236,10 +237,12 @@ export class Syncer {
       filePaths = filePaths.filter((filePath) => targetFilter.absolute.has(filePath));
     }
     const parserAvailability = this.getParserAvailability();
+    const configHash = hashConfig(this.config);
+    const toolVersion = getToolVersion();
     const cacheState = await loadReferenceCache(
       this.referenceCachePath,
       this.translationIdentifier,
-      { invalidate: runOptions.invalidateCache, parserAvailability }
+      { invalidate: runOptions.invalidateCache, parserAvailability, configHash, toolVersion }
     );
     const nextCacheEntries: Record<string, ReferenceCacheEntry> = targetFilter
       ? { ...(cacheState?.files ?? {}) }
@@ -420,7 +423,7 @@ export class Syncer {
       this.cacheDir,
       this.translationIdentifier,
       nextCacheEntries,
-      { parserAvailability }
+      { parserAvailability, configHash, toolVersion }
     );
 
     const actionableItems = buildActionableItems({

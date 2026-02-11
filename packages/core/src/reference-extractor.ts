@@ -11,6 +11,7 @@ import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
+import { getToolVersion, hashConfig } from './cache-utils.js';
 import { createDefaultProject } from './project-factory.js';
 import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
 
@@ -99,6 +100,8 @@ interface ReferenceCacheEntry {
 export interface ReferenceCacheFile {
   version: number;
   translationIdentifier: string;
+  configHash: string;
+  toolVersion: string;
   files: Record<string, ReferenceCacheEntry>;
 }
 
@@ -112,7 +115,7 @@ export interface ExtractionResult {
 
 // Bumped from 2 → 3 to invalidate stale caches from before the Vue parser
 // resolution fix (parser was resolved from CLI location instead of project).
-const REFERENCE_CACHE_VERSION = 3;
+const REFERENCE_CACHE_VERSION = 4;
 
 export interface ReferenceExtractorOptions {
   workspaceRoot: string;
@@ -133,6 +136,8 @@ export class ReferenceExtractor {
   private readonly translationIdentifier: string;
   private readonly referenceCachePath: string;
   private readonly parserRegistry: ParserRegistry;
+  private readonly configHash: string;
+  private readonly toolVersion: string;
 
   constructor(
     private readonly config: I18nConfig,
@@ -152,6 +157,8 @@ export class ReferenceExtractor {
       inferredIdentifier ??
       't';
     this.referenceCachePath = path.join(this.cacheDir, 'references.json');
+    this.configHash = hashConfig(config);
+    this.toolVersion = getToolVersion();
   }
 
   /**
@@ -466,6 +473,12 @@ export class ReferenceExtractor {
       if (parsed.translationIdentifier !== this.translationIdentifier) {
         return undefined;
       }
+      if (parsed.configHash !== this.configHash) {
+        return undefined;
+      }
+      if (parsed.toolVersion !== this.toolVersion) {
+        return undefined;
+      }
       if (!parsed.files || typeof parsed.files !== 'object') {
         return undefined;
       }
@@ -479,6 +492,8 @@ export class ReferenceExtractor {
     const payload: ReferenceCacheFile = {
       version: REFERENCE_CACHE_VERSION,
       translationIdentifier: this.translationIdentifier,
+      configHash: this.configHash,
+      toolVersion: this.toolVersion,
       files: entries,
     };
 

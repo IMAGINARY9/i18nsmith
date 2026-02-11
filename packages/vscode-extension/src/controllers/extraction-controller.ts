@@ -51,6 +51,14 @@ export class ExtractionController implements vscode.Disposable {
       return;
     }
 
+    const warnings = (meta as { warnings?: Array<{ message: string }> }).warnings;
+    if (warnings?.length) {
+      const warningList = warnings.map((warning) => warning.message).join('\n');
+      vscode.window.showWarningMessage(
+        `Deprecated i18nsmith config fields detected:\n${warningList}`
+      );
+    }
+
     // Use KeyGenerator to propose a key
     const generator = new KeyGenerator({
       namespace: meta.config.keyGeneration?.namespace,
