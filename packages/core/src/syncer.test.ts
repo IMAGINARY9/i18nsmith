@@ -618,6 +618,34 @@ export default Component;
     invalidateSpy.mockRestore();
   });
 
+  it('expands dynamic key patterns and reports coverage', async () => {
+    const dynamicDir = await fs.mkdtemp(path.join(os.tmpdir(), 'syncer-dynamic-expand-'));
+    await fs.mkdir(path.join(dynamicDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(dynamicDir, 'locales'), { recursive: true });
+    await fs.writeFile(path.join(dynamicDir, 'locales', 'en.json'), JSON.stringify({ 'workingHours.monday': 'Mon' }, null, 2));
+    await fs.writeFile(path.join(dynamicDir, 'locales', 'es.json'), JSON.stringify({}, null, 2));
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: ['es'],
+      localesDir: path.join(dynamicDir, 'locales'),
+      include: ['src/**/*.tsx'],
+      dynamicKeys: {
+        expand: {
+          'workingHours.*': ['monday', 'tuesday'],
+        },
+      },
+    };
+
+    const syncer = new Syncer(config, { workspaceRoot: dynamicDir });
+    const summary = await syncer.run({ write: false });
+
+    const coverage = summary.dynamicKeyCoverage.find((entry) => entry.pattern === 'workingHours.*');
+    expect(coverage?.expandedKeys).toEqual(['workingHours.monday', 'workingHours.tuesday']);
+    expect(coverage?.missingByLocale.en).toEqual(['workingHours.tuesday']);
+    expect(coverage?.missingByLocale.es).toEqual(['workingHours.monday', 'workingHours.tuesday']);
+  });
+
   it('detects key-equals-value patterns in locale files during post-sync audit', async () => {
     await fs.writeFile(
       path.join(tempDir, 'src', 'KeyValue.tsx'),

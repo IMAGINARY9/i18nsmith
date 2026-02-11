@@ -305,6 +305,18 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
 
   const diagnosticsConfig = normalizeDiagnosticsConfig(parsed.diagnostics);
   const extractionConfig = parsed.extraction ?? {};
+  const dynamicKeysConfig = typeof (parsed as any).dynamicKeys === 'object' && (parsed as any).dynamicKeys
+    ? (parsed as any).dynamicKeys
+    : undefined;
+  const dynamicKeyExpandRaw = dynamicKeysConfig?.expand ?? {};
+  const dynamicKeyExpand = Object.fromEntries(
+    Object.entries(dynamicKeyExpandRaw)
+      .filter(([pattern, values]) => typeof pattern === 'string' && pattern.trim().length > 0 && Array.isArray(values))
+      .map(([pattern, values]) => [
+        pattern,
+        (values as unknown[]).filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+      ])
+  );
   const translatableAttributes = ensureUniqueStrings(extractionConfig.translatableAttributes);
   const nonTranslatableAttributes = ensureUniqueStrings(extractionConfig.nonTranslatableAttributes);
   const attributeSuffixes = ensureUniqueStrings(extractionConfig.attributeSuffixes);
@@ -375,6 +387,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
       seedValue: typeof syncConfig.seedValue === 'string' ? syncConfig.seedValue : '',
     },
     diagnostics: diagnosticsConfig,
+    dynamicKeys: Object.keys(dynamicKeyExpand).length ? { expand: dynamicKeyExpand } : undefined,
     frameworks: ensureOptionalArray(parsed.frameworks),
   };
 

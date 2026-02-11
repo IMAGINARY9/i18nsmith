@@ -58,6 +58,10 @@ export interface ScanCandidate {
   forced?: boolean;
   skipReason?: SkipReason;
   /**
+   * Confidence score (0.0 - 1.0) for how likely this is translatable text.
+   */
+  confidenceScore?: number;
+  /**
    * Optional fields populated by downstream tooling (e.g., transformer)
    * to keep key suggestions close to the source candidate.
    */
@@ -242,6 +246,7 @@ export class Scanner {
 
     for (const candidate of uniqueCandidates) {
       const result = this.getConfidenceBucket(candidate);
+      candidate.confidenceScore = result.score;
       if (result.bucket === "high") {
         buckets.highConfidence.push(candidate);
       } else if (result.bucket === "review") {
@@ -290,13 +295,13 @@ export class Scanner {
     return summary;
   }
 
-  private getConfidenceBucket(candidate: ScanCandidate): { bucket: "high" | "review" | "skip", reason?: SkipReason } {
+  private getConfidenceBucket(candidate: ScanCandidate): { bucket: "high" | "review" | "skip", reason?: SkipReason; score: number } {
     if (candidate.skipReason) {
-      return { bucket: "skip", reason: candidate.skipReason };
+      return { bucket: "skip", reason: candidate.skipReason, score: 0 };
     }
 
     if (candidate.forced) {
-      return { bucket: "review" };
+      return { bucket: "review", score: 0.5 };
     }
 
     const letters = candidate.text.match(LETTER_REGEX_GLOBAL) || [];
@@ -309,12 +314,12 @@ export class Scanner {
 
     // Check for non-sentence (too short)
     if (letterCount < minLetterCount) {
-      return { bucket: "skip", reason: "non_sentence" };
+      return { bucket: "skip", reason: "non_sentence", score: 0 };
     }
 
     // Check for insufficient letter ratio
     if (letterRatio < minLetterRatio) {
-      return { bucket: "skip", reason: "insufficient_letters" };
+      return { bucket: "skip", reason: "insufficient_letters", score: 0.2 };
     }
 
     const elevatedCountThreshold = Math.max(
@@ -324,21 +329,20 @@ export class Scanner {
     const elevatedRatioThreshold = Math.min(0.85, minLetterRatio + 0.35);
 
     if (letterCount >= elevatedCountThreshold) {
-      return { bucket: "high" };
+      return { bucket: "high", score: 0.9 };
     }
 
     if (
       letterRatio >= elevatedRatioThreshold &&
       letterCount >= minLetterCount
     ) {
-      return { bucket: "high" };
+      return { bucket: "high", score: 0.85 };
     }
 
     if (letterCount >= minLetterCount + 2 && letterRatio >= minLetterRatio) {
-      return { bucket: "high" };
+      return { bucket: "high", score: 0.8 };
     }
-
-    return { bucket: "review" };
+    return { bucket: "review", score: 0.6 };
   }
 
   private getGlobPatterns(): GlobPatterns {

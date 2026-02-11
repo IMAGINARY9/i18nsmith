@@ -512,6 +512,7 @@ dynamic_keys_issues:
   - id: BUG-6
     title: "No tooling support for populating/validating dynamic key translations"
     severity: medium
+    status: completed
     affects: [sync, check, transform]
     frameworks: [all]
     
@@ -780,6 +781,7 @@ text_filter_improvements:
 
   - id: TF-3
     title: "Add 'confident extraction' scoring"
+    status: completed
     detail: |
       Instead of binary extract/skip, assign a confidence score (0.0-1.0):
       - ≥0.8: auto-extract (high confidence — real user-visible text)
@@ -852,6 +854,7 @@ implementation_plan:
   phase_4_features:
     title: "Dynamic keys and advanced scoring"
     priority: P3
+    status: completed
     estimated_effort: "2-3 days"
     depends_on: [phase_3_robustness]
     items:

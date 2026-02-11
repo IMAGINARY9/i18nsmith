@@ -395,6 +395,15 @@ describe('Scanner', async () => {
     expect(highTexts).toContain('Welcome aboard traveler');
     expect(reviewTexts).toContain('Go');
 
+    const highCandidate = summary.buckets.highConfidence.find(
+      (candidate) => candidate.text === 'Welcome aboard traveler'
+    );
+    const reviewCandidate = summary.buckets.needsReview.find(
+      (candidate) => candidate.text === 'Go'
+    );
+    expect(highCandidate?.confidenceScore ?? 0).toBeGreaterThanOrEqual(0.8);
+    expect(reviewCandidate?.confidenceScore ?? 1).toBeLessThan(0.8);
+
     const skippedOk = summary.buckets.skipped.find((entry) => entry.text === 'OK');
     expect(skippedOk?.reason).toBe('non_sentence');
     const skipReasons = summary.buckets.skipped.map((entry) => entry.reason);

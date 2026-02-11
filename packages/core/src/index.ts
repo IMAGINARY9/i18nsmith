@@ -16,6 +16,7 @@ export * from './gitignore.js';
 export * from './utils/dependency-resolution.js';
 export * from './cache-utils.js';
 export * from './cache-manager.js';
+export * from './dynamic-keys.js';
 
 // Framework Support
 export * from './framework/index.js';

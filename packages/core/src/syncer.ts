@@ -56,6 +56,7 @@ import {
   matchesAnyGlob,
   collectPatternMatchedKeys,
 } from './syncer/pattern-matcher.js';
+import { buildDynamicKeyCoverage, expandDynamicKeys, type DynamicKeyCoverage } from './dynamic-keys.js';
 import { hashConfig, getToolVersion } from './cache-utils.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
@@ -95,6 +96,7 @@ export interface SyncSummary {
   placeholderIssues: PlaceholderIssue[];
   emptyValueViolations: EmptyValueViolation[];
   dynamicKeyWarnings: DynamicKeyWarning[];
+  dynamicKeyCoverage: DynamicKeyCoverage[];
   suspiciousKeys: SuspiciousKeyWarning[];
   validation: SyncValidationState;
   assumedKeys: string[];
@@ -255,6 +257,20 @@ export class Syncer {
     );
 
     const localeData = await this.collectLocaleData();
+    const dynamicKeyCoverage = buildDynamicKeyCoverage(
+      this.config,
+      localeData,
+      this.sourceLocale,
+      this.targetLocales
+    );
+    const expandedDynamicKeys = expandDynamicKeys(this.config);
+    for (const key of expandedDynamicKeys) {
+      keySet.add(key);
+      if (!referencesByKey.has(key)) {
+        referencesByKey.set(key, []);
+      }
+      runtime.assumedKeys.add(key);
+    }
     const patternAssumedKeys = this.collectPatternAssumedKeys(localeData);
     for (const key of patternAssumedKeys) {
       runtime.assumedKeys.add(key);
@@ -453,6 +469,7 @@ export class Syncer {
       placeholderIssues,
       emptyValueViolations,
       dynamicKeyWarnings: scopedDynamicKeyWarnings,
+      dynamicKeyCoverage,
       suspiciousKeys,
       validation: {
         interpolations: runtime.validateInterpolations,

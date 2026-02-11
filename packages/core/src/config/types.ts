@@ -219,6 +219,17 @@ export interface I18nConfig {
   diagnostics?: DiagnosticsConfig;
 
   /**
+   * Dynamic key expansion configuration for runtime-generated keys.
+   */
+  dynamicKeys?: {
+    /**
+     * Map glob-like patterns to enumerated values.
+     * Example: { "workingHours.*": ["monday", "tuesday"] }
+     */
+    expand?: Record<string, string[]>;
+  };
+
+  /**
    * Explicit list of frameworks to enable for extraction.
    * When specified, only these frameworks will be used for scanning files.
    * When omitted, frameworks are auto-detected based on file extensions.
