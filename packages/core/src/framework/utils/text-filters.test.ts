@@ -73,6 +73,63 @@ describe('Text Filters', () => {
       expect(result.skipReason).toBe('no-letters');
     });
 
+    it('should skip CSS class lists', () => {
+      const result = shouldExtractText('flex items-center gap-2 text-sm', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip Tailwind arbitrary values', () => {
+      const result = shouldExtractText('bg-[var(--color-primary)] text-white', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip SVG path data', () => {
+      const result = shouldExtractText('M19 7l-.867 12.142A2 2 0 01 16.138 21H7.862', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip icon identifiers', () => {
+      const result = shouldExtractText('mdi:email-send', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip CSS custom properties', () => {
+      const result = shouldExtractText('--color-muted', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip CSS unit values', () => {
+      const result = shouldExtractText('12px', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip relative URL paths', () => {
+      const result = shouldExtractText('/dashboard/billing', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip screaming snake case constants', () => {
+      const result = shouldExtractText('ORDER_STATUS_UPDATED', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip debug messages starting with emoji', () => {
+      const result = shouldExtractText('✅ Logo updated from server:', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip input types in attribute context', () => {
+      const config: TextFilterConfig = { ...defaultConfig, context: { attribute: 'type' } };
+      const result = shouldExtractText('email', config);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip class attribute values in context', () => {
+      const config: TextFilterConfig = { ...defaultConfig, context: { attribute: 'className' } };
+      const result = shouldExtractText('flex items-center', config);
+      expect(result.shouldExtract).toBe(false);
+    });
+
     it('should skip text matching deny patterns', () => {
       const config = {
         ...defaultConfig,

@@ -188,13 +188,15 @@ export class VueAdapter implements FrameworkAdapter {
       }
 
       let ast: any;
+      let parseError: unknown;
       try {
         ast = vueEslintParser.parse(content, {
           sourceType: 'module',
           ecmaVersion: 2020,
           sourceFile: filePath,
         });
-      } catch {
+      } catch (error) {
+        parseError = error;
         // Full parse failed — likely because <script lang="ts"> uses TypeScript
         // syntax that espree can't handle. Retry with `parser: false` which
         // tells vue-eslint-parser to parse only the <template> and skip <script>.
@@ -206,13 +208,15 @@ export class VueAdapter implements FrameworkAdapter {
             sourceFile: filePath,
             parser: false,
           });
-        } catch {
+        } catch (errorWithTemplateOnly) {
+          parseError = errorWithTemplateOnly;
           // Even template-only parsing failed — fall back to regex extraction
           ast = null;
         }
       }
 
       if (!ast) {
+        this.reportTemplateParseFailure(filePath, content, parseError);
         this.extractFromContent(content, filePath, candidates);
         this.lastSkipped = this.activeSkipLog ?? [];
         this.activeSkipLog = undefined;
@@ -310,6 +314,8 @@ export class VueAdapter implements FrameworkAdapter {
 
       if (!inTemplate || inScriptOrStyle) continue;
 
+  this.extractAttributeCandidatesFromLine(line, filePath, i + 1, candidates);
+
       // Match text content between > and <
       const templateMatches = line.match(/>([^<]+)</g);
       if (!templateMatches) continue;
@@ -322,6 +328,7 @@ export class VueAdapter implements FrameworkAdapter {
         // Mixed content like "Main: {{ expr }}" needs compound i18n with named
         // parameters — simple text extraction would produce broken output.
         if (/\{\{/.test(text)) {
+          this.extractQuotedLiterals(text, filePath, i + 1, candidates, { allowSingleCharacter: false });
           continue;
         }
 
@@ -347,6 +354,140 @@ export class VueAdapter implements FrameworkAdapter {
         }
       }
     }
+  }
+
+  private extractAttributeCandidatesFromLine(line: string, filePath: string, lineNumber: number, candidates: ScanCandidate[]): void {
+    const attributeRegex = /(:?[\w-]+)\s*=\s*("[^"]*"|'[^']*')/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = attributeRegex.exec(line)) !== null) {
+  const rawName = match[1];
+      const quotedValue = match[2];
+  const isBound = rawName.startsWith(':') || rawName.startsWith('v-bind:');
+  const attrName = rawName.replace(/^(?:v-bind:|:)/, '');
+      if (!this.isTranslatableAttribute(attrName)) {
+        continue;
+      }
+
+      const value = quotedValue.slice(1, -1);
+      if (!value || /\$?t\s*\(/.test(value)) {
+        continue;
+      }
+
+      const extractedStrings = isBound
+        ? this.extractStringsFromExpression(value)
+        : [value.trim()];
+      for (const extracted of extractedStrings) {
+        if (!this.shouldExtractText(extracted, { attribute: attrName })) {
+          continue;
+        }
+
+        candidates.push({
+          id: `${filePath}:${lineNumber}:${attrName}:${extracted}`,
+          kind: 'jsx-attribute' as CandidateKind,
+          filePath,
+          text: extracted,
+          position: {
+            line: lineNumber,
+            column: Math.max(line.indexOf(quotedValue), 0),
+          },
+          suggestedKey: this.generateKey(extracted),
+          hash: this.hashText(extracted),
+          context: attrName,
+        });
+      }
+    }
+  }
+
+  private extractStringsFromExpression(value: string): string[] {
+    const results: string[] = [];
+    const hasTemplateLiteral = value.includes('`');
+
+    if (hasTemplateLiteral) {
+      const withoutBackticks = value.replace(/`/g, '');
+      const withoutExpressions = withoutBackticks.replace(/\$\{[^}]*\}/g, '');
+      const cleaned = withoutExpressions.trim();
+      if (cleaned) {
+        results.push(cleaned);
+      }
+      return results;
+    }
+
+  const literalRegex = /(['"])([^"']*?)\1/g;
+    let match: RegExpExecArray | null;
+    while ((match = literalRegex.exec(value)) !== null) {
+      const literal = match[2].trim();
+      if (literal) {
+        results.push(literal);
+      }
+    }
+
+    return results.filter(Boolean);
+  }
+
+  private extractQuotedLiterals(text: string, filePath: string, lineNumber: number, candidates: ScanCandidate[], options?: { allowSingleCharacter?: boolean }): void {
+  const literalRegex = /(['"])([^"']*?)\1/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = literalRegex.exec(text)) !== null) {
+      const literal = match[2].trim();
+      if (!literal) continue;
+      if (!options?.allowSingleCharacter && literal.length === 1) continue;
+      if (!this.shouldExtractText(literal)) continue;
+
+      candidates.push({
+        id: `${filePath}:${lineNumber}:${literal}`,
+        kind: 'jsx-text' as CandidateKind,
+        filePath,
+        text: literal,
+        position: {
+          line: lineNumber,
+          column: Math.max(text.indexOf(match[0]), 0),
+        },
+        suggestedKey: this.generateKey(literal),
+        hash: this.hashText(literal),
+      });
+    }
+  }
+
+  private reportTemplateParseFailure(filePath: string, content: string, error?: unknown): void {
+    const issues = this.findTemplateSyntaxIssues(content);
+    const detail = issues.length ? ` Possible issues: ${issues.join(' | ')}` : '';
+    const errorMessage = error instanceof Error ? ` (${error.message})` : '';
+    console.warn(`[i18nsmith] Failed to parse Vue template for ${filePath}. Falling back to regex extraction${errorMessage}.${detail}`);
+  }
+
+  private findTemplateSyntaxIssues(content: string): string[] {
+    const issues: string[] = [];
+    const templateMatch = content.match(/<template[^>]*>([\s\S]*?)<\/template>/i);
+    const templateBody = templateMatch?.[1] ?? content;
+    const beforeTemplate = templateMatch?.index ? content.slice(0, templateMatch.index) : '';
+    const baseLine = beforeTemplate ? beforeTemplate.split('\n').length : 0;
+
+    const openCount = (templateBody.match(/\{\{/g) ?? []).length;
+    const closeCount = (templateBody.match(/\}\}/g) ?? []).length;
+    if (openCount !== closeCount) {
+      issues.push(`mismatched interpolation braces ({{:${openCount}, }}:${closeCount})`);
+    }
+
+    const lines = templateBody.split('\n');
+    let balance = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const opens = (line.match(/\{\{/g) ?? []).length;
+      const closes = (line.match(/\}\}/g) ?? []).length;
+      balance += opens - closes;
+      if (balance < 0) {
+        issues.push(`unexpected '}}' near line ${baseLine + i + 1}`);
+        balance = 0;
+      }
+    }
+
+    if (balance > 0) {
+      issues.push('unclosed "{{" interpolation');
+    }
+
+    return issues;
   }
 
   private extractFromTemplate(templateBody: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
@@ -462,7 +603,7 @@ export class VueAdapter implements FrameworkAdapter {
     const rawText = content.slice(node.range[0], node.range[1]);
     const trimmedText = rawText.trim();
 
-    if (!this.shouldExtractText(trimmedText)) return;
+  if (!this.shouldExtractText(trimmedText)) return;
 
     // If this text node is a sibling of a {{ }} expression container,
     // it's a fragment of a compound expression like "ID: {{ id }}".
@@ -503,7 +644,7 @@ export class VueAdapter implements FrameworkAdapter {
 
       if (attr.value.type === 'VLiteral' && typeof attr.value.value === 'string') {
         const text = attr.value.value;
-        if (this.shouldExtractText(text)) {
+        if (this.shouldExtractText(text, { attribute: attrName })) {
           const candidate: ScanCandidate = {
             id: `${filePath}:${attr.loc.start.line}`,
             kind: 'jsx-attribute' as CandidateKind,
@@ -543,11 +684,12 @@ export class VueAdapter implements FrameworkAdapter {
     return false;
   }
 
-  private shouldExtractText(text: string): boolean {
+  private shouldExtractText(text: string, context?: { attribute?: string }): boolean {
     const config: TextFilterConfig = {
       allowPatterns: this.allowPatterns,
       denyPatterns: this.denyPatterns,
       skipHexColors: false, // Vue doesn't typically have hex colors in templates
+      context,
     };
     return shouldExtractText(text, config).shouldExtract;
   }

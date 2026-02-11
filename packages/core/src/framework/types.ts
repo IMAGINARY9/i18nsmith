@@ -150,6 +150,8 @@ export interface AdapterMutateOptions {
   workspaceRoot: string;
   /** Translation adapter configuration (module, hookName) */
   translationAdapter: { module: string; hookName: string };
+  /** Mutation mode to tailor adapter behavior */
+  mode?: 'transform' | 'rename';
   /** When false, adapter must fail-fast if dependencies are missing */
   allowFallback?: boolean;
 }

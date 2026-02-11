@@ -12,8 +12,24 @@ const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-
 const URL_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
 const BOOLEAN_LITERAL_PATTERN = /^(true|false|null|undefined)$/i;
 const CODE_FRAGMENT_PATTERN = /(&&|\|\||===|!==|=>|\breturn\b|\bconst\b|\blet\b|\bvar\b|\bif\b|\belse\b)/;
-const CSS_CLASS_PATTERN = /^(?:[\w:./\-\[\]]+\s+)+[\w:./\-\[\]]+$/i;
+const CSS_CLASS_PATTERN = /^(?:[\w:./\-\[\]()'#%,]+\s+)+[\w:./\-\[\]()'#%,]+$/i;
 const CSS_CLASS_SIGNAL = /[-:\[\]/\d]/;
+const SVG_PATH_PATTERN = /^[MmLlHhVvCcSsQqTtAaZz\d\s.,\-]+$/;
+const ICON_IDENTIFIER_PATTERN = /^[a-z][\w-]*:[a-z][\w-]*$/i;
+const CSS_CUSTOM_PROP_PATTERN = /^--[\w-]+$/;
+const CSS_UNIT_PATTERN = /^\d+(\.\d+)?(px|em|rem|vh|vw|%|s|ms|fr)$/i;
+const CSS_SHORTHAND_PATTERN = /^[\d.]+(px|em|rem|%)(\s+[\d.]+(px|em|rem|%))*$/i;
+const RELATIVE_PATH_PATTERN = /^\/[\w\-./]+(\?[\w=&]*)?$/;
+const CONSTANT_PATTERN = /^(?=.*_)[A-Z0-9_]+$/;
+const DEBUG_MESSAGE_PATTERN = /^(?:[\u2700-\u27BF]|\p{Emoji_Presentation})/u;
+const EVENT_NAME_PATTERN = /^on[A-Z]\w+$/;
+const INPUT_TYPE_PATTERN = /^(text|email|password|number|tel|url|date|time|hidden|submit|button|checkbox|radio|file|range|color|search)$/i;
+const TAILWIND_SIGNAL_PATTERNS = [
+  /\b(flex|grid|block|inline|hidden|absolute|relative|fixed|sticky)\b/i,
+  /\b(bg|text|border|rounded|shadow|ring|outline|p|m|w|h|gap|space)-/i,
+  /\b(hover|focus|active|disabled|dark|sm|md|lg|xl|2xl):/i,
+  /\bvar\(--/i,
+];
 
 /**
  * Result of text filtering analysis
@@ -35,6 +51,10 @@ export interface TextFilterConfig {
   denyPatterns: RegExp[];
   /** Whether to skip hex color values */
   skipHexColors?: boolean;
+  /** Optional context for smarter filtering */
+  context?: {
+    attribute?: string;
+  };
 }
 
 /**
@@ -48,13 +68,16 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'empty' };
   }
 
+  const trimmedText = text.trim();
+  const attributeContext = config.context?.attribute?.toLowerCase();
+
   // Skip if matches deny patterns
-  if (config.denyPatterns.some(pattern => pattern.test(text))) {
+  if (config.denyPatterns.some(pattern => pattern.test(trimmedText))) {
     return { shouldExtract: false, skipReason: 'deny-pattern' };
   }
 
   // Allow if matches allow patterns (if any are specified)
-  if (config.allowPatterns.length > 0 && !config.allowPatterns.some(pattern => pattern.test(text))) {
+  if (config.allowPatterns.length > 0 && !config.allowPatterns.some(pattern => pattern.test(trimmedText))) {
     return { shouldExtract: false, skipReason: 'allow-pattern-mismatch' };
   }
 
@@ -64,47 +87,125 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
   }
 
   // Skip HTML entities
-  if (HTML_ENTITY_PATTERN.test(text)) {
+  if (HTML_ENTITY_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'html-entity' };
   }
 
   // Skip obvious URLs and scheme-like values
-  if (URL_PATTERN.test(text.trim())) {
+  if (URL_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (RELATIVE_PATH_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
   // Skip boolean-ish literals
-  if (BOOLEAN_LITERAL_PATTERN.test(text.trim())) {
+  if (BOOLEAN_LITERAL_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
   // Skip code fragments / expressions
-  if (CODE_FRAGMENT_PATTERN.test(text)) {
+  if (CODE_FRAGMENT_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
   // Skip Tailwind/CSS-like class strings
-  if (CSS_CLASS_PATTERN.test(text.trim()) && CSS_CLASS_SIGNAL.test(text)) {
+  if (isLikelyCssClassList(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (CSS_CUSTOM_PROP_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 20) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (CSS_UNIT_PATTERN.test(trimmedText) || CSS_SHORTHAND_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (ICON_IDENTIFIER_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (CONSTANT_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (DEBUG_MESSAGE_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (EVENT_NAME_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
   // Skip repeated symbols
-  if (REPEATED_SYMBOL_PATTERN.test(text)) {
+  if (REPEATED_SYMBOL_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'repeated-symbols' };
   }
 
   // Skip hex colors (optional, some frameworks may want to translate color names)
-  if (config.skipHexColors && HEX_COLOR_PATTERN.test(text)) {
+  if (config.skipHexColors && HEX_COLOR_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'hex-color' };
   }
 
   // Must contain at least one letter
   LETTER_REGEX_GLOBAL.lastIndex = 0;
-  if (!LETTER_REGEX_GLOBAL.test(text)) {
+  if (!LETTER_REGEX_GLOBAL.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'no-letters' };
   }
 
+  if (attributeContext) {
+    if (attributeContext === 'class' || attributeContext === 'classname') {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if (attributeContext === 'style' || attributeContext === 'd' || attributeContext === 'viewbox') {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if ((attributeContext === 'type' || attributeContext === 'inputmode') && INPUT_TYPE_PATTERN.test(trimmedText)) {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if ((attributeContext === 'icon' || attributeContext === 'iconname' || attributeContext === 'icon-name')
+      && ICON_IDENTIFIER_PATTERN.test(trimmedText)) {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if ((attributeContext === 'href' || attributeContext === 'to' || attributeContext === 'action' || attributeContext === 'src')
+      && RELATIVE_PATH_PATTERN.test(trimmedText)) {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if (attributeContext === 'd' && SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 20) {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+  }
+
   return { shouldExtract: true };
+}
+
+function isLikelyCssClassList(text: string): boolean {
+  const tokenCount = text.split(/\s+/).filter(Boolean).length;
+  const tailwindSignalCount = TAILWIND_SIGNAL_PATTERNS.filter(pattern => pattern.test(text)).length;
+
+  if (CSS_CLASS_PATTERN.test(text) && CSS_CLASS_SIGNAL.test(text)) {
+    if (tokenCount >= 3) {
+      return true;
+    }
+    return tailwindSignalCount >= 1;
+  }
+
+  if (tokenCount < 3) {
+    return false;
+  }
+
+  return tailwindSignalCount >= 2;
 }
 
 /**

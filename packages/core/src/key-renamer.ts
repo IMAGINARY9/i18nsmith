@@ -232,6 +232,11 @@ export class KeyRenamer {
       }
     }
 
+    const translationAdapter = {
+      module: this.config.translationAdapter?.module ?? 'react-i18next',
+      hookName: this.config.translationAdapter?.hookName ?? 'useTranslation',
+    };
+
     // Second pass: apply modifications using adapters
     const updatedFiles: string[] = [];
     if (write || generateDiffs) {
@@ -247,7 +252,8 @@ export class KeyRenamer {
         const result = adapter.mutate(filePath, content, candidates, {
           config: this.config,
           workspaceRoot: this.workspaceRoot,
-          translationAdapter: { module: '@i18nsmith/core', hookName: this.translationIdentifier },
+          translationAdapter,
+          mode: 'rename',
         });
 
         if (result.didMutate) {
@@ -278,7 +284,8 @@ export class KeyRenamer {
           const result = adapter.mutate(filePath, originalContent, candidates, {
             config: this.config,
             workspaceRoot: this.workspaceRoot,
-            translationAdapter: { module: '@i18nsmith/core', hookName: this.translationIdentifier },
+            translationAdapter,
+            mode: 'rename',
           });
           
           if (result.didMutate) {

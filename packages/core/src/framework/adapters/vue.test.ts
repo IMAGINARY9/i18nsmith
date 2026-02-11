@@ -114,6 +114,28 @@ describe('VueAdapter', () => {
       // Restore original method
       (adapter as any).getVueEslintParser = originalGetVueParser;
     });
+
+    it('should extract attribute literals from fallback parsing even with malformed template', () => {
+      const originalGetVueParser = (adapter as any).getVueEslintParser;
+      (adapter as any).getVueEslintParser = () => null;
+
+      const content = `
+<template>
+  <div>
+    <div>{{ $t('common.key') }}per ? '✓' : '✗' }}</div>
+  <img :alt="\`Property image \${index + 1}\`" />
+    <img alt="VR Preview" />
+    <span>360°</span>
+  </div>
+</template>
+`;
+
+      const candidates = adapter.scan('/test/Component.vue', content);
+  expect(candidates.some(c => c.text === 'Property image')).toBe(true);
+  expect(candidates.some(c => c.text === 'VR Preview')).toBe(true);
+
+      (adapter as any).getVueEslintParser = originalGetVueParser;
+    });
   });
 
   describe('mutate', () => {

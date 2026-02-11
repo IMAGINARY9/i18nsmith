@@ -92,6 +92,15 @@ export function Profile() {
     expect(esContents).toMatchObject({ 'new.key': 'Hola' });
   });
 
+  it('does not inject translation imports or hooks during rename', async () => {
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    await renamer.rename('old.key', 'new.key', { write: true });
+
+    const updatedContent = await fs.readFile(path.join(tempDir, 'src', 'App.tsx'), 'utf8');
+    expect(updatedContent.match(/import\s+\{\s*useTranslation\s*\}\s+from\s+'react-i18next';/g)).toHaveLength(1);
+    expect(updatedContent.match(/const\s+\{\s*t\s*\}\s*=\s*useTranslation\(\);/g)).toHaveLength(1);
+  });
+
   it('renames multiple keys using a mapping batch', async () => {
     const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
     const summary = await renamer.renameBatch(

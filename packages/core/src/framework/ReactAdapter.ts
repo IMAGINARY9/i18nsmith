@@ -151,8 +151,10 @@ export class ReactAdapter implements FrameworkAdapter {
 
     let mutatedContent = didMutate ? this.applyEdits(content, edits) : content;
 
+    const mode = options.mode ?? 'transform';
+
     // If we made mutations, ensure the file has the necessary imports and hooks
-    if (didMutate) {
+    if (didMutate && mode !== 'rename') {
       mutatedContent = this.ensureTranslationImportsAndHooks(mutatedContent, options);
     }
 
@@ -346,6 +348,13 @@ export class ReactAdapter implements FrameworkAdapter {
     const jsxExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.JsxExpression);
 
     for (const jsxExpr of jsxExpressions) {
+      const attributeParent = jsxExpr.getParentIfKind(SyntaxKind.JsxAttribute);
+      const attributeName = attributeParent?.getNameNode().getText();
+
+      if (attributeName && !this.translatableAttributes.has(attributeName)) {
+        continue;
+      }
+
       // Check if parent element has directive attributes
       const parent = jsxExpr.getParent();
       let skipReason: SkipReason | undefined;
@@ -381,7 +390,7 @@ export class ReactAdapter implements FrameworkAdapter {
           text = decodeHtmlEntities(text);
         }
 
-        if (this.shouldExtractText(text) || force) {
+        if (this.shouldExtractText(text, attributeName ? { attribute: attributeName } : undefined) || force) {
           const candidate: ScanCandidate = {
             id: `${filePath}:${stringLiteral.getStart()}`,
             kind: 'jsx-expression' as CandidateKind,
@@ -453,7 +462,7 @@ export class ReactAdapter implements FrameworkAdapter {
         text = text.replace(/\n/g, ' ');
       }
       
-      if (this.shouldExtractText(text)) {
+      if (this.shouldExtractText(text, { attribute: attrNameText })) {
         const candidate: ScanCandidate = {
           id: `${filePath}:${initializer.getStart()}`,
           kind: 'jsx-attribute' as CandidateKind,
@@ -475,11 +484,12 @@ export class ReactAdapter implements FrameworkAdapter {
     }
   }
 
-  private shouldExtractText(text: string): boolean {
+  private shouldExtractText(text: string, context?: { attribute?: string }): boolean {
     const config: TextFilterConfig = {
       allowPatterns: this.allowPatterns,
       denyPatterns: this.denyPatterns,
       skipHexColors: true, // React often has color values that shouldn't be translated
+      context,
     };
     return shouldExtractText(text, config).shouldExtract;
   }
