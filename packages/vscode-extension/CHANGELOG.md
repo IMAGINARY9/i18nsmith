@@ -5,7 +5,18 @@ All notable changes to this extension will be documented in this file.
 ## [Unreleased]
 
 ### Enhancement
-- Enhance Vue adapter and CLI preflight checks; add dependency installation prompts.
+- Add dynamic key coverage UX and exportable CLI coverage view.
+- Implement dependency installation prompts and DependencyCacheManager for better dependency notifications.
+- Add prebuild script to generate version file during builds.
+
+### Fix
+- Improve Vue parser error handling and fallback extraction logic.
+- Fix diff preview handling for editor state.
+- Warn on missing Vue parser and reduce false positives.
+
+## [0.4.3] - 2026-02-11
+### Enhancement
+- Minor improvements: dynamic key coverage UX, dependency prompts, prebuild version generation.
 
 ## [0.4.2] - 2026-02-09
 ### Enhancement

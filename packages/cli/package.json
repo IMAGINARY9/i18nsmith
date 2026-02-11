@@ -1,6 +1,6 @@
 {
   "name": "i18nsmith",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "CLI for i18nsmith",
   "type": "module",
   "main": "dist/index.cjs",
