@@ -115,6 +115,24 @@ describe('VueAdapter', () => {
       (adapter as any).getVueEslintParser = originalGetVueParser;
     });
 
+    it('should skip fallback literals in script expressions', () => {
+      const content = `
+<script>
+export default {
+  setup() {
+    const title = t('known.key') || 'Fallback text';
+    const alt = t('known.key') ?? 'Alt fallback';
+    return { title, alt };
+  }
+}
+</script>
+`;
+
+      const candidates = adapter.scan('/test/Component.vue', content);
+      expect(candidates.some(c => c.text === 'Fallback text')).toBe(false);
+      expect(candidates.some(c => c.text === 'Alt fallback')).toBe(false);
+    });
+
     it('should extract attribute literals from fallback parsing even with malformed template', () => {
       const originalGetVueParser = (adapter as any).getVueEslintParser;
       (adapter as any).getVueEslintParser = () => null;

@@ -29,8 +29,8 @@ describe('generateRenameProposals', () => {
     expect(report.safeProposals).toHaveLength(2);
     expect(report.conflictProposals).toHaveLength(0);
     expect(report.renameMapping).toEqual({
-      'When to Use Categorized View': 'common.app.when-to-use-categorized.ba88e6',
-      'Found': 'common.search.found.fe4afe',
+      'When to Use Categorized View': 'common.when-to-use-categorized',
+      'Found': 'common.found',
     });
   });
 
@@ -44,14 +44,14 @@ describe('generateRenameProposals', () => {
       },
     ];
 
-    const existingKeys = new Set(['common.form.submit-button.54c55d']);
+  const existingKeys = new Set(['common.submit-button']);
 
     const report = generateRenameProposals(suspiciousKeys, { existingKeys });
 
     expect(report.safeProposals).toHaveLength(0);
     expect(report.conflictProposals).toHaveLength(1);
     expect(report.conflictProposals[0].hasConflict).toBe(true);
-    expect(report.conflictProposals[0].conflictsWith).toBe('common.form.submit-button.54c55d');
+  expect(report.conflictProposals[0].conflictsWith).toBe('common.submit-button');
   });
 
   it('detects conflicts between proposals with same normalized output', () => {
@@ -73,8 +73,8 @@ describe('generateRenameProposals', () => {
 
     const report = generateRenameProposals(suspiciousKeys);
 
-    expect(report.safeProposals).toHaveLength(2);
-    expect(report.conflictProposals).toHaveLength(0);
+  expect(report.safeProposals).toHaveLength(1);
+  expect(report.conflictProposals).toHaveLength(1);
   });
 
   it('skips duplicate original keys', () => {
@@ -113,7 +113,7 @@ describe('generateRenameProposals', () => {
       namingConvention: 'camelCase',
     });
 
-    expect(report.renameMapping['Submit Button']).toBe('common.form.submit-button.54c55d');
+  expect(report.renameMapping['Submit Button']).toBe('common.submitButton');
   });
 
   it('filters by reason', () => {

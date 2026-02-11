@@ -130,6 +130,32 @@ describe('Text Filters', () => {
       expect(result.shouldExtract).toBe(false);
     });
 
+    it('should skip camelCase identifiers', () => {
+      const result = shouldExtractText('categoryId', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip dot-notation paths', () => {
+      const result = shouldExtractText('management.activityHistory.filters', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip font family strings', () => {
+      const result = shouldExtractText('Helvetica, Arial, sans-serif', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip http methods and targets', () => {
+      const result = shouldExtractText('POST', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+    });
+
+    it('should skip CSS keywords in attribute context', () => {
+      const config: TextFilterConfig = { ...defaultConfig, context: { attribute: 'style' } };
+      const result = shouldExtractText('flex', config);
+      expect(result.shouldExtract).toBe(false);
+    });
+
     it('should skip text matching deny patterns', () => {
       const config = {
         ...defaultConfig,

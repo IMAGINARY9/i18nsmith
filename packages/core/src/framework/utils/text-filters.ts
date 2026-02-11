@@ -24,6 +24,11 @@ const CONSTANT_PATTERN = /^(?=.*_)[A-Z0-9_]+$/;
 const DEBUG_MESSAGE_PATTERN = /^(?:[\u2700-\u27BF]|\p{Emoji_Presentation})/u;
 const EVENT_NAME_PATTERN = /^on[A-Z]\w+$/;
 const INPUT_TYPE_PATTERN = /^(text|email|password|number|tel|url|date|time|hidden|submit|button|checkbox|radio|file|range|color|search)$/i;
+const CAMEL_CASE_PATTERN = /^[a-z]+[A-Z][a-zA-Z]*$/;
+const DOT_PATH_PATTERN = /^[\w-]+(\.[\w-]+){2,}$/;
+const FONT_FAMILY_PATTERN = /^[\w\s,\-]+,\s*(sans-serif|serif|monospace|cursive|fantasy|system-ui)$/i;
+const HTTP_METHOD_PATTERN = /^(GET|POST|PUT|DELETE|PATCH|_blank|_self|_parent|_top|noopener|noreferrer)$/i;
+const CSS_KEYWORD_PATTERN = /^(auto|inherit|initial|unset|none|block|flex|grid|inline|bold|normal|center|left|right|baseline)$/i;
 const TAILWIND_SIGNAL_PATTERNS = [
   /\b(flex|grid|block|inline|hidden|absolute|relative|fixed|sticky)\b/i,
   /\b(bg|text|border|rounded|shadow|ring|outline|p|m|w|h|gap|space)-/i,
@@ -143,6 +148,22 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
+  if (CAMEL_CASE_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (DOT_PATH_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (FONT_FAMILY_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
+  if (HTTP_METHOD_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'non_sentence' };
+  }
+
   // Skip repeated symbols
   if (REPEATED_SYMBOL_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'repeated-symbols' };
@@ -165,6 +186,10 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     }
 
     if (attributeContext === 'style' || attributeContext === 'd' || attributeContext === 'viewbox') {
+      return { shouldExtract: false, skipReason: 'non_sentence' };
+    }
+
+    if (CSS_KEYWORD_PATTERN.test(trimmedText)) {
       return { shouldExtract: false, skipReason: 'non_sentence' };
     }
 

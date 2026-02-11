@@ -263,6 +263,7 @@ critical_bugs:
   - id: BUG-3
     title: "Transform proposes new keys for text that already has translation keys"
     severity: high
+    status: completed
     affects: [transform]
     frameworks: [react]
     
@@ -459,6 +460,7 @@ rename_bugs:
   - id: BUG-5
     title: "Suspicious key rename changes namespace based on new file path detection"
     severity: medium
+    status: completed
     affects: [rename]
     frameworks: [react]
     
@@ -721,6 +723,7 @@ text_filter_improvements:
 
   - id: TF-1
     title: "Add comprehensive non-translatable pattern library"
+    status: completed
     detail: |
       Create a curated set of patterns for common non-translatable content.
       These should be framework-agnostic and work for React, Vue, Angular, etc.
@@ -815,6 +818,7 @@ implementation_plan:
   phase_2_accuracy:
     title: "Improve extraction accuracy"
     priority: P1
+    status: completed
     estimated_effort: "2-3 days"
     depends_on: [phase_1_critical]
     items:

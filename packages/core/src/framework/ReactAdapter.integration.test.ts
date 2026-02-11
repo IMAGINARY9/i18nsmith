@@ -353,6 +353,26 @@ export default Custom;
       expect(candidates.some(c => c.context === 'data-label')).toBe(true);
     });
 
+    it('should skip fallback literals for existing translation calls', () => {
+      const adapter = new ReactAdapter(config, '/tmp');
+      const content = `
+import React from 'react';
+
+export function Example() {
+  return (
+    <div>
+      {t('known.key') || 'Fallback text'}
+      {t('known.key') ?? 'Alt fallback'}
+    </div>
+  );
+}
+`;
+
+      const candidates = adapter.scan('Example.tsx', content);
+      expect(candidates.some(c => c.text === 'Fallback text')).toBe(false);
+      expect(candidates.some(c => c.text === 'Alt fallback')).toBe(false);
+    });
+
     it('should work with frameworks config field', () => {
       // Config already has frameworks: ['react'] from beforeEach
       const reactAdapter = registry.getForFile('App.tsx');

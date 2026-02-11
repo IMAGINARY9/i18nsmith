@@ -7,7 +7,6 @@
 
 import { KeyNormalizationOptions, normalizeToKey, SuspiciousKeyReason } from './key-validator.js';
 import { SuspiciousKeyWarning } from './syncer.js';
-import { KeyGenerator } from './key-generator.js';
 
 export interface SuspiciousKeyRenameProposal {
   /** Original suspicious key */
@@ -69,10 +68,6 @@ export function generateRenameProposals(
   const skippedKeys: string[] = [];
   const renameMapping: Record<string, string> = {};
 
-  const keyGenerator = new KeyGenerator({
-    namespace: options.defaultNamespace,
-    workspaceRoot: options.workspaceRoot,
-  });
 
   for (const warning of suspiciousKeys) {
     // Skip if we've already processed this key
@@ -94,21 +89,13 @@ export function generateRenameProposals(
                            warning.filePath.includes('\\locales\\') ||
                            /\.(json|yaml|yml)$/.test(warning.filePath);
       
-      if (isLocaleFile) {
-        // For locale file entries without source references, use simple normalization
-        // to preserve the original key structure rather than generating a new namespace
-        proposedKey = normalizeToKey(warning.key, {
-          defaultNamespace: options.defaultNamespace,
-          namingConvention: options.namingConvention,
-          maxWords: options.maxWords,
-        });
-      } else {
-        const generated = keyGenerator.generate(warning.key, {
-          filePath: warning.filePath,
-          kind: 'call-expression', // Assume call expression for suspicious keys
-        });
-        proposedKey = generated.key;
-      }
+      // Always normalize to preserve existing namespace and avoid hash suffixes.
+      // This prevents renames from moving keys into file-path-based namespaces.
+      proposedKey = normalizeToKey(warning.key, {
+        defaultNamespace: options.defaultNamespace,
+        namingConvention: options.namingConvention,
+        maxWords: options.maxWords,
+      });
     } catch (e) {
       // Fallback to simple normalization if generator fails
       proposedKey = normalizeToKey(warning.key, {

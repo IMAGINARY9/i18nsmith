@@ -541,6 +541,10 @@ export class VueAdapter implements FrameworkAdapter {
       return;
     }
 
+    if (this.isTranslationFallback(node)) {
+      return;
+    }
+
     // Skip strings that contain HTML markup — these are typically innerHTML
     // assignments or template strings that need manual i18n handling.
     // Embedding $t() / {{ }} in an innerHTML string is a runtime error;
@@ -568,6 +572,39 @@ export class VueAdapter implements FrameworkAdapter {
     };
 
     candidates.push(candidate);
+  }
+
+  private isTranslationFallback(node: any): boolean {
+    const parent = node?.parent;
+    if (!parent || parent.type !== 'LogicalExpression') {
+      return false;
+    }
+
+    if (parent.right !== node || (parent.operator !== '||' && parent.operator !== '??')) {
+      return false;
+    }
+
+    const left = parent.left;
+    return this.isTranslationCallNode(left);
+  }
+
+  private isTranslationCallNode(node: any): boolean {
+    if (!node || node.type !== 'CallExpression') {
+      return false;
+    }
+
+    const callee = node.callee;
+    if (!callee) return false;
+
+    if (callee.type === 'Identifier') {
+      return callee.name === 't' || callee.name === '$t';
+    }
+
+    if (callee.type === 'MemberExpression' && callee.property?.type === 'Identifier') {
+      return callee.property.name === 't' || callee.property.name === '$t';
+    }
+
+    return false;
   }
 
   private walkTemplate(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {

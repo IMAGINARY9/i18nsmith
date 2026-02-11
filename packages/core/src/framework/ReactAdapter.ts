@@ -378,6 +378,9 @@ export class ReactAdapter implements FrameworkAdapter {
       // Look for string literals inside the expression
       const stringLiterals = jsxExpr.getDescendantsOfKind(SyntaxKind.StringLiteral);
       for (const stringLiteral of stringLiterals) {
+        if (this.isTranslationFallback(stringLiteral)) {
+          continue;
+        }
         // Skip string literals that are arguments to translation calls
         if (this.isInsideTranslationCall(stringLiteral)) {
           continue;
@@ -642,6 +645,27 @@ export class ReactAdapter implements FrameworkAdapter {
     }
 
     return false;
+  }
+
+  private isTranslationFallback(literal: Node): boolean {
+    const binaryExpr = literal.getParentIfKind(SyntaxKind.BinaryExpression);
+    if (!binaryExpr) return false;
+
+    const operator = binaryExpr.getOperatorToken().getText();
+    if (operator !== '||' && operator !== '??') {
+      return false;
+    }
+
+    if (binaryExpr.getRight() !== literal) {
+      return false;
+    }
+
+    const left = binaryExpr.getLeft();
+    if (!Node.isCallExpression(left)) {
+      return false;
+    }
+
+    return this.isTranslationCall(left.getExpression());
   }
 
   private isInsideTranslationCall(node: Node): boolean {
