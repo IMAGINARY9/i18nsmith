@@ -25,16 +25,13 @@ export class DiffPreviewService {
       return;
     }
 
-    let editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      const doc = await vscode.workspace.openTextDocument({ content: '', language: 'plaintext' });
-      editor = await vscode.window.showTextDocument(doc, { preview: true });
-    }
-
-    if (editor) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await this.diffPeekProvider.showDiffPeek(editor, diffs, options.title);
-    }
+    // Show diffs. DiffPeekProvider handles the actual preview document
+    // placement. When there is no active editor, we intentionally avoid
+    // creating a blank editor on the left — let the provider open the
+    // preview in the primary editor column so the user sees only the
+    // preview instead of an empty split.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await this.diffPeekProvider.showDiffPeek(vscode.window.activeTextEditor as any, diffs, options.title);
 
     const applyLabel = options.applyLabel || 'Apply Changes';
     const cancelLabel = options.cancelLabel || 'Cancel';

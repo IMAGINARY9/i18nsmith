@@ -20,7 +20,7 @@ export class DiffPeekProvider {
    * @param title Title for the peek view
    */
   async showDiffPeek(
-    editor: vscode.TextEditor,
+    editor: vscode.TextEditor | undefined,
     diffs: DiffEntry[],
     title: string = 'Changes Preview'
   ): Promise<void> {
@@ -46,15 +46,17 @@ export class DiffPeekProvider {
     const registration = vscode.workspace.registerTextDocumentContentProvider('i18nsmith-diff', provider);
 
     try {
-      // Open the document in a peek/preview
+      // Open the document in a peek/preview. If there's an active editor we
+      // intentionally open the preview *beside* it so the user can review
+      // diffs side-by-side. If there's no active editor, open in the primary
+      // column so the user sees a single preview pane (no empty split).
       const doc = await vscode.workspace.openTextDocument(uri);
-      
-      // Show in a new editor column to the side
-      await vscode.window.showTextDocument(doc, {
-        viewColumn: vscode.ViewColumn.Beside,
+      const showOptions: vscode.TextDocumentShowOptions = {
+        viewColumn: editor ? vscode.ViewColumn.Beside : vscode.ViewColumn.One,
         preview: true,
         preserveFocus: false,
-      });
+      };
+      await vscode.window.showTextDocument(doc, showOptions);
     } finally {
       // Clean up after a delay
       setTimeout(() => registration.dispose(), 60000); // 1 minute

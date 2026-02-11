@@ -130,10 +130,13 @@ export class Transformer {
       scanCalls: runOptions.migrateTextKeys,
     });
 
+    
+
     const preparedCandidates = await this.prepareCandidates(scanSummary.candidates);
     const sourceDiffs: SourceFileDiffEntry[] = [];
     const changedFiles = new Set<string>();
     const skippedFiles: FileTransformRecord[] = [];
+    
 
     const shouldProcess = write || generateDiffs;
     const allTargetLocales = new Set(this.targetLocales);
