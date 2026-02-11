@@ -152,6 +152,7 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const dynamicWarningCount = Array.isArray(report?.sync?.dynamicKeyWarnings)
     ? report!.sync!.dynamicKeyWarnings.length
     : 0;
+  const dynamicCoverage = getDynamicCoverageStatistics(report);
   const suspiciousWarnings = Array.isArray(report?.sync?.suspiciousKeys)
     ? (report!.sync!.suspiciousKeys as SuspiciousKeyWarning[])
     : [];
@@ -218,7 +219,13 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const problems: QuickActionDefinition[] = [];
   const driftTotal = (driftStats?.missing ?? 0) + (driftStats?.unused ?? 0);
 
-  if (summary.issueCount > 0 || dynamicWarningCount || suspiciousWarningCount || hardcodedCount) {
+  if (
+    summary.issueCount > 0 ||
+    dynamicWarningCount ||
+    suspiciousWarningCount ||
+    hardcodedCount ||
+    (dynamicCoverage && dynamicCoverage.missing > 0)
+  ) {
     const extractionSuggestion = suggestionBuckets.get('extraction')?.[0];
     const extraction = createQuickAction({
       id: 'batch-extract',
@@ -307,6 +314,20 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
           description: 'Review dynamic key warnings and add selected patterns to i18n.config.json',
           command: 'i18nsmith.whitelistDynamicKeys',
           interactive: true,
+        })!
+      );
+    }
+
+    if (dynamicCoverage && dynamicCoverage.missing > 0) {
+      problems.push(
+        createQuickAction({
+          id: 'dynamic-coverage',
+          icon: ICONS.dynamic,
+          title: `Fill Dynamic Key Coverage (${dynamicCoverage.patterns})`,
+          description: `Add ${dynamicCoverage.missing} missing dynamic translation${dynamicCoverage.missing === 1 ? '' : 's'} across ${dynamicCoverage.patterns} pattern${dynamicCoverage.patterns === 1 ? '' : 's'}.`,
+          detail: formatDynamicCoverageDetail(dynamicCoverage.entries),
+          command: 'i18nsmith.sync',
+          postRunBehavior: 'offer-output',
         })!
       );
     }
@@ -561,6 +582,61 @@ export function getDriftStatistics(report: unknown): { missing: number; unused: 
   }
 
   return { missing, unused };
+}
+
+type DynamicCoverageEntry = {
+  pattern: string;
+  missingByLocale: Record<string, string[]>;
+};
+
+function getDynamicCoverageStatistics(
+  report: CheckReport | null
+): { patterns: number; missing: number; entries: DynamicCoverageEntry[] } | null {
+  const raw = report?.sync?.dynamicKeyCoverage;
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+
+  const entries = raw
+    .map((entry) => {
+      const coverage = entry as { pattern?: string; missingByLocale?: Record<string, string[]> };
+      return {
+        pattern: coverage.pattern ?? 'unknown',
+        missingByLocale: coverage.missingByLocale ?? {},
+      };
+    })
+    .filter((entry) => entry.pattern !== 'unknown')
+    .filter((entry) => Object.keys(entry.missingByLocale).length > 0);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  const missing = entries.reduce((total, entry) => {
+    return total + Object.values(entry.missingByLocale).reduce((sum, list) => sum + list.length, 0);
+  }, 0);
+
+  return {
+    patterns: entries.length,
+    missing,
+    entries,
+  };
+}
+
+function formatDynamicCoverageDetail(entries: DynamicCoverageEntry[]): string | undefined {
+  if (!entries.length) {
+    return undefined;
+  }
+  const lines = entries.slice(0, 3).map((entry) => {
+    const locales = Object.entries(entry.missingByLocale)
+      .map(([locale, missing]) => `${locale}(${missing.length})`)
+      .join(', ');
+    return `${entry.pattern}: ${locales}`;
+  });
+  if (entries.length > 3) {
+    lines.push(`...and ${entries.length - 3} more pattern${entries.length - 3 === 1 ? '' : 's'}.`);
+  }
+  return lines.join('\n');
 }
 
 function formatPreviewIntentDetail(intent: PreviewableCommand, _originalCommand: string): string {

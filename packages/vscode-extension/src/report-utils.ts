@@ -47,7 +47,14 @@ type ExtendedSyncSection = {
   placeholderIssues?: unknown[];
   emptyValueViolations?: unknown[];
   dynamicKeyWarnings?: unknown[];
+  dynamicKeyCoverage?: unknown[];
   suspiciousKeys?: unknown[];
+};
+
+type DynamicKeyCoverageEntry = {
+  pattern: string;
+  expandedKeys?: unknown[];
+  missingByLocale?: Record<string, string[]>;
 };
 
 function createEmptySeverityCounts(): SeverityCounts {
@@ -161,6 +168,7 @@ export function assessStatusLevel(
   const dynamicWarnings: number = Array.isArray(syncSection?.dynamicKeyWarnings)
     ? syncSection.dynamicKeyWarnings.length
     : 0;
+  const dynamicCoverage = getDynamicCoverageStats(syncSection);
   const suspiciousKeys: number = Array.isArray(syncSection?.suspiciousKeys)
     ? syncSection.suspiciousKeys.length
     : 0;
@@ -226,6 +234,13 @@ export function assessStatusLevel(
       flag('warn', `${dynamicWarnings} dynamic key${dynamicWarnings === 1 ? '' : 's'} to whitelist`);
     }
 
+    if (dynamicCoverage.missing > 0) {
+      flag(
+        'warn',
+        `${dynamicCoverage.missing} missing dynamic translation${dynamicCoverage.missing === 1 ? '' : 's'} across ${dynamicCoverage.patterns} pattern${dynamicCoverage.patterns === 1 ? '' : 's'}`
+      );
+    }
+
     if (hasProviderGap) {
       flag('warn', 'Provider shell missing');
     }
@@ -286,6 +301,30 @@ export function formatSyncSummaryAsMarkdown(summary: SyncSummary, title: string 
   lines.push('─'.repeat(80));
   lines.push('');
 
+  const dynamicCoverage = summarizeDynamicCoverage(summary.dynamicKeyCoverage);
+  if (dynamicCoverage) {
+    lines.push('## Dynamic key coverage');
+    lines.push('');
+    if (dynamicCoverage.missing === 0) {
+      lines.push('_All expanded dynamic keys are present across locales._');
+    } else {
+      lines.push(`Missing ${dynamicCoverage.missing} translation${dynamicCoverage.missing === 1 ? '' : 's'} across ${dynamicCoverage.patterns} pattern${dynamicCoverage.patterns === 1 ? '' : 's'}.`);
+      lines.push('');
+      dynamicCoverage.entries.slice(0, 5).forEach((entry) => {
+        const localeSummary = Object.entries(entry.missingByLocale)
+          .map(([locale, missing]) => `${locale}(${missing.length})`)
+          .join(', ');
+        lines.push(`- ${entry.pattern}: ${localeSummary}`);
+      });
+      if (dynamicCoverage.entries.length > 5) {
+        lines.push(`- ...and ${dynamicCoverage.entries.length - 5} more.`);
+      }
+    }
+    lines.push('');
+    lines.push('─'.repeat(80));
+    lines.push('');
+  }
+
   // Diffs
   if (summary.diffs && summary.diffs.length > 0) {
     for (const diff of summary.diffs) {
@@ -312,6 +351,50 @@ export function formatSyncSummaryAsMarkdown(summary: SyncSummary, title: string 
   }
 
   return lines.join('\n');
+}
+
+function getDynamicCoverageStats(syncSection: ExtendedSyncSection): { patterns: number; missing: number } {
+  const entries = normalizeDynamicCoverage(syncSection.dynamicKeyCoverage);
+  const entriesWithGaps = entries.filter((entry) => Object.keys(entry.missingByLocale).length > 0);
+  const missing = entriesWithGaps.reduce((total, entry) => {
+    return total + Object.values(entry.missingByLocale).reduce((sum, list) => sum + list.length, 0);
+  }, 0);
+  return { patterns: entriesWithGaps.length, missing };
+}
+
+function summarizeDynamicCoverage(
+  dynamicKeyCoverage?: unknown[]
+): { patterns: number; missing: number; entries: Array<Required<DynamicKeyCoverageEntry>> } | null {
+  const entries = normalizeDynamicCoverage(dynamicKeyCoverage);
+  if (!entries.length) {
+    return null;
+  }
+  const entriesWithGaps = entries.filter((entry) => Object.keys(entry.missingByLocale).length > 0);
+  const missing = entriesWithGaps.reduce((total, entry) => {
+    return total + Object.values(entry.missingByLocale).reduce((sum, list) => sum + list.length, 0);
+  }, 0);
+  return {
+    patterns: entriesWithGaps.length,
+    missing,
+    entries: entriesWithGaps,
+  };
+}
+
+function normalizeDynamicCoverage(dynamicKeyCoverage?: unknown[]): Array<Required<DynamicKeyCoverageEntry>> {
+  if (!Array.isArray(dynamicKeyCoverage)) {
+    return [];
+  }
+  return dynamicKeyCoverage
+    .map((entry) => {
+      const coverage = entry as DynamicKeyCoverageEntry;
+      const missingByLocale = coverage.missingByLocale ?? {};
+      return {
+        pattern: coverage.pattern ?? 'unknown',
+        expandedKeys: coverage.expandedKeys ?? [],
+        missingByLocale,
+      };
+    })
+    .filter((entry) => entry.pattern !== 'unknown');
 }
 
 export function formatTransformSummaryAsMarkdown(summary: TransformSummary, title: string = 'Transform Preview'): string {

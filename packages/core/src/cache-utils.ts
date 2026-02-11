@@ -2,8 +2,10 @@ import crypto from 'crypto';
 import { createRequire } from 'module';
 import type { I18nConfig } from './config.js';
 
-const require = createRequire(import.meta.url);
-const packageJson = require('../package.json') as { version?: string };
+const localRequire = typeof require === 'function'
+  ? require
+  : createRequire(import.meta.url);
+const packageJson = localRequire('../package.json') as { version?: string };
 
 export function getToolVersion(): string {
   return packageJson.version ?? '0.0.0';

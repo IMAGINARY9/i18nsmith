@@ -20,4 +20,29 @@ describe('Quick Actions — Dynamic Whitelist', () => {
     expect(whitelistAction!.command).toBe('i18nsmith.whitelistDynamicKeys');
     expect(whitelistAction!.interactive).toBe(true);
   });
+
+  it('offers coverage action when dynamic key translations are missing', () => {
+    const report: any = {
+      sync: {
+        dynamicKeyCoverage: [
+          {
+            pattern: 'workingHours.*',
+            expandedKeys: ['workingHours.monday', 'workingHours.tuesday'],
+            missingByLocale: {
+              en: ['workingHours.tuesday'],
+              es: ['workingHours.monday', 'workingHours.tuesday'],
+            },
+          },
+        ],
+      },
+      suggestedCommands: [],
+    };
+
+    const model = buildQuickActionModel({ report, hasSelection: false });
+    const problems = model.sections.find((s) => s.title.includes('Problems'));
+    expect(problems).toBeDefined();
+    const coverageAction = problems!.actions.find((a) => a.id === 'dynamic-coverage');
+    expect(coverageAction).toBeDefined();
+    expect(coverageAction!.command).toBe('i18nsmith.sync');
+  });
 });

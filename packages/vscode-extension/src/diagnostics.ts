@@ -29,6 +29,7 @@ export interface CheckReport {
     unusedKeys?: Array<{ key: string; locales?: string[] }>;
     actionableItems?: ActionableItem[];
     dynamicKeyWarnings?: unknown[];
+    dynamicKeyCoverage?: unknown[];
     suspiciousKeys?: unknown[];
   };
   actionableItems?: ActionableItem[];

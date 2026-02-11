@@ -81,6 +81,8 @@ function printCheckSummary(summary: CheckSummary) {
     )
   );
 
+  printDynamicKeyCoverage(summary);
+
   if (summary.actionableItems.length) {
     console.log(chalk.blue('\nActionable items'));
     summary.actionableItems.slice(0, 25).forEach((item) => {
@@ -105,6 +107,46 @@ function printCheckSummary(summary: CheckSummary) {
   } else {
     console.log(chalk.gray('\nNo automated suggestions—review actionable items above.'));
   }
+}
+
+function printDynamicKeyCoverage(summary: CheckSummary) {
+  const coverage = summary.sync.dynamicKeyCoverage ?? [];
+  if (!coverage.length) {
+    return;
+  }
+
+  const entriesWithGaps = coverage.filter((entry) =>
+    entry.missingByLocale && Object.keys(entry.missingByLocale).length > 0
+  );
+  const totalMissing = entriesWithGaps.reduce((total, entry) => {
+    return (
+      total +
+      Object.values(entry.missingByLocale).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0)
+    );
+  }, 0);
+
+  if (!entriesWithGaps.length) {
+    console.log(chalk.green('Dynamic key coverage: all expanded keys present.'));
+    return;
+  }
+
+  console.log(
+    chalk.yellow(
+      `Dynamic key coverage: ${totalMissing} missing translation${totalMissing === 1 ? '' : 's'} across ${entriesWithGaps.length} pattern${entriesWithGaps.length === 1 ? '' : 's'}.`
+    )
+  );
+
+  entriesWithGaps.slice(0, 5).forEach((entry) => {
+    const localeSummary = Object.entries(entry.missingByLocale)
+      .map(([locale, missing]) => `${locale}(${missing.length})`)
+      .join(', ');
+    console.log(chalk.gray(`  • ${entry.pattern}: ${localeSummary}`));
+  });
+
+  if (entriesWithGaps.length > 5) {
+    console.log(chalk.gray(`  ...and ${entriesWithGaps.length - 5} more.`));
+  }
+  console.log(chalk.gray('  Tip: run `i18nsmith sync --write` to scaffold missing dynamic keys.'));
 }
 
 function formatSeverityLabel(severity: 'info' | 'warn' | 'error'): string {

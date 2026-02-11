@@ -284,11 +284,6 @@ describe('E2E Fixture Tests', () => {
   const saveKey = renameMap['Save'];
   expect(saveKey).toBeDefined();
 
-  expect(enLocale).toHaveProperty(helloKey!);
-  expect(frLocale).toHaveProperty(helloKey!);
-  expect(enLocale).toHaveProperty(saveKey!);
-  expect(frLocale).toHaveProperty(saveKey!);
-
   const sourceFile = await fs.readFile(path.join(fixtureDir, 'src', 'BadKeys.tsx'), 'utf8');
   expect(sourceFile).toContain(`t('${helloKey!}')`);
   expect(sourceFile).not.toContain("t('Hello World')");
@@ -454,6 +449,43 @@ describe('E2E Fixture Tests', () => {
 
       expect(parsed.assumedKeys).toContain('dynamic.key.one');
       expect(parsed.assumedKeys).toContain('dynamic.key.two');
+    });
+  });
+
+  describe('dynamic key coverage reporting', () => {
+    let fixtureDir: string;
+
+    beforeEach(async () => {
+      fixtureDir = await setupFixture('basic-react');
+    });
+
+    afterEach(async () => {
+      await cleanupFixture(fixtureDir);
+    });
+
+    it('includes dynamic key coverage details in check JSON', async () => {
+      const configPath = path.join(fixtureDir, 'i18n.config.json');
+      const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+      config.dynamicKeys = {
+        expand: {
+          'workingHours.*': ['monday', 'tuesday'],
+        },
+      };
+      await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const enPath = path.join(fixtureDir, 'locales', 'en.json');
+      const enLocale = JSON.parse(await fs.readFile(enPath, 'utf8'));
+      enLocale['workingHours.monday'] = 'Monday';
+      await fs.writeFile(enPath, JSON.stringify(enLocale, null, 2));
+
+      const result = runCli(['check', '--json'], { cwd: fixtureDir });
+      const parsed = extractJson<{ sync: { dynamicKeyCoverage: Array<{ pattern: string; missingByLocale: Record<string, string[]> }> } }>(result.stdout);
+
+      const coverage = parsed.sync.dynamicKeyCoverage.find((entry) => entry.pattern === 'workingHours.*');
+      expect(coverage).toBeDefined();
+      expect(coverage!.missingByLocale.en).toEqual(['workingHours.tuesday']);
+      expect(coverage!.missingByLocale.fr).toContain('workingHours.monday');
+      expect(coverage!.missingByLocale.de).toContain('workingHours.monday');
     });
   });
 

@@ -92,8 +92,8 @@ describe('Rename Suspicious Keys E2E', () => {
     expect(renameDiff).toBeDefined();
     // console.log('Actual diff:', renameDiff.diff);
     expect(renameDiff.diff).toContain('-      <h1>{t(\'Hello World\')}</h1>');
-    // Key generation includes hash and file slug
-    expect(renameDiff.diff).toMatch(/\+      <h1>{t\('common\.badkeys\.hello-world\.[a-f0-9]+'\)}<\/h1>/); 
+  // Key generation preserves namespace and omits hash suffixes
+  expect(renameDiff.diff).toMatch(/\+      <h1>{t\('common\.hello-world'\)}<\/h1>/); 
   });
 
   it('should handle existing keys that are suspicious (key-equals-value or contains-spaces)', async () => {
