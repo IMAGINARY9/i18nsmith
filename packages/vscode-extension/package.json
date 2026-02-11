@@ -142,6 +142,12 @@
           "name": "Quick Actions",
           "contextualTitle": "Quick Actions",
           "icon": "images/icon.png"
+        },
+        {
+          "id": "i18nsmith.dynamicCoverageView",
+          "name": "Dynamic Key Coverage",
+          "contextualTitle": "Dynamic Key Coverage",
+          "icon": "images/icon.png"
         }
       ]
     },
@@ -150,6 +156,11 @@
         "view": "i18nsmith.quickActionsView",
         "contents": "Run the health check to populate quick actions.\n[Run Health Check](command:i18nsmith.check)",
         "when": "i18nsmith.runtimeReady && !i18nsmith.quickActions.hasActions"
+      },
+      {
+        "view": "i18nsmith.dynamicCoverageView",
+        "contents": "Run the health check to see dynamic key coverage.\n[Run Health Check](command:i18nsmith.check)",
+        "when": "i18nsmith.runtimeReady"
       },
       {
         "view": "i18nsmith.quickActionsView",

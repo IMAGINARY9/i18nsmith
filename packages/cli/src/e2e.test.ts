@@ -487,6 +487,26 @@ describe('E2E Fixture Tests', () => {
       expect(coverage!.missingByLocale.fr).toContain('workingHours.monday');
       expect(coverage!.missingByLocale.de).toContain('workingHours.monday');
     });
+
+    it('writes a dynamic key coverage report file', async () => {
+      const configPath = path.join(fixtureDir, 'i18n.config.json');
+      const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+      config.dynamicKeys = {
+        expand: {
+          'workingHours.*': ['monday', 'tuesday'],
+        },
+      };
+      await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const reportPath = path.join(fixtureDir, 'coverage-report.json');
+      const result = runCli(['coverage', '--report', reportPath], { cwd: fixtureDir });
+      expect(result.exitCode).toBe(0);
+
+      const payload = JSON.parse(await fs.readFile(reportPath, 'utf8')) as {
+        summary: { patterns: number; missing: number };
+      };
+      expect(payload.summary.patterns).toBeGreaterThan(0);
+    });
   });
 
   describe('--invalidate-cache flag', () => {

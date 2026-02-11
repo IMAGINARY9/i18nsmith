@@ -17,6 +17,7 @@ import { registerInstallHooks } from './commands/install-hooks.js';
 import { registerConfig } from './commands/config.js';
 import { registerReview } from './commands/review.js';
 import { registerDetect } from './commands/detect.js';
+import { registerCoverage } from './commands/coverage.js';
 
 export const program = new Command();
 
@@ -42,6 +43,7 @@ registerInstallHooks(program);
 registerConfig(program);
 registerReview(program);
 registerDetect(program);
+registerCoverage(program);
 
 
 program.parse();

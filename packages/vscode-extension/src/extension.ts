@@ -30,6 +30,7 @@ import {
   type QuickActionMetadata,
 } from "./quick-actions-data";
 import { QuickActionsProvider } from "./views/quick-actions-provider";
+import { DynamicCoverageProvider } from "./views/dynamic-coverage-provider";
 import type { ConfigurationService } from "./services/configuration-service";
 
 interface QuickActionPick extends vscode.QuickPickItem {
@@ -75,6 +76,7 @@ let transformController: TransformController;
 let extractionController: ExtractionController;
 let cliService: CliService;
 let quickActionsProvider: QuickActionsProvider | null = null;
+let dynamicCoverageProvider: DynamicCoverageProvider | null = null;
 let quickActionSelectionState = false;
 let configurationService: ConfigurationService | null = null;
 let lastScanResult: ScanResult | null = null;
@@ -272,6 +274,16 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(quickActionsProvider, quickActionsView);
 
+  dynamicCoverageProvider = new DynamicCoverageProvider();
+  const dynamicCoverageView = vscode.window.createTreeView(
+    "i18nsmith.dynamicCoverageView",
+    {
+      treeDataProvider: dynamicCoverageProvider,
+      showCollapseAll: true,
+    }
+  );
+  context.subscriptions.push(dynamicCoverageProvider, dynamicCoverageView);
+
   const supportedLanguages = [
     { scheme: "file", language: "typescript" },
     { scheme: "file", language: "typescriptreact" },
@@ -342,6 +354,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Refresh CodeLens when report watcher detects file changes
   services.reportWatcher.onDidRefresh(() => {
     codeLensProvider.refresh();
+    const report = services.diagnosticsManager.getReport();
+    dynamicCoverageProvider?.update(report);
   });
 
   // Register commands
