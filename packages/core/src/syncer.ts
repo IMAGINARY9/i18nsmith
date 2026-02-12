@@ -88,6 +88,7 @@ export interface SyncSummary {
   references: TranslationReference[];
   missingKeys: MissingKeyRecord[];
   unusedKeys: UnusedKeyRecord[];
+  untranslatedKeys: UnusedKeyRecord[];
   localeStats: LocaleFileStats[];
   localePreview: LocaleDiffPreview[];
   diffs: LocaleDiffEntry[];
@@ -304,13 +305,16 @@ export class Syncer {
       runtime.write
     );
 
-    const { unusedKeys, unusedKeysToApply } = this.processUnusedKeys(
+    const { unusedKeys, unusedKeysToApply, untranslatedKeys } = this.processUnusedKeys(
       keySet,
       localeKeySets,
       projectedLocaleData,
       runtime.selectedUnusedKeys,
       !targetFilter,
-      runtime.prune
+      runtime.prune,
+      localeData.get(this.sourceLocale),
+      this.config.sync?.emptyKeyProtection ?? true,
+      localeData
     );
 
     const placeholderIssues = runtime.validateInterpolations
@@ -462,6 +466,7 @@ export class Syncer {
       references: scopedReferences,
       missingKeys,
       unusedKeys,
+      untranslatedKeys,
       localeStats,
       localePreview,
       diffs,
@@ -690,20 +695,48 @@ export class Syncer {
     projectedLocaleData: Map<string, Record<string, string>>,
     selectedUnusedKeys?: Set<string>,
     enabled: boolean = true,
-    prune: boolean = false
+    prune: boolean = false,
+    sourceLocaleData?: Record<string, string>,
+    emptyKeyProtection: boolean = true,
+    originalLocaleData?: Map<string, Record<string, string>>
   ) {
     let unusedKeys: UnusedKeyRecord[] = [];
+    let untranslatedKeys: UnusedKeyRecord[] = [];
+
     if (enabled) {
       const unusedKeyMap = new Map<string, Set<string>>();
+      const untranslatedKeyMap = new Map<string, Set<string>>();
+
       for (const [locale, keys] of localeKeySets) {
         for (const key of keys) {
           if (keySet.has(key)) {
             continue;
           }
-          if (!unusedKeyMap.has(key)) {
-            unusedKeyMap.set(key, new Set());
+
+          // Check if this is an untranslated key (exists in source with value, empty in target)
+          // Only applies to target locales, not source locale
+          const isUntranslated = emptyKeyProtection &&
+            locale !== this.sourceLocale &&
+            sourceLocaleData &&
+            sourceLocaleData[key] &&
+            sourceLocaleData[key].trim() !== '' &&
+            originalLocaleData &&
+            (!originalLocaleData.get(locale) ||
+             !originalLocaleData.get(locale)![key] ||
+             originalLocaleData.get(locale)![key].trim() === '');
+
+          if (isUntranslated) {
+            if (!untranslatedKeyMap.has(key)) {
+              untranslatedKeyMap.set(key, new Set());
+            }
+            untranslatedKeyMap.get(key)!.add(locale);
+          } else {
+            // Genuine unused key
+            if (!unusedKeyMap.has(key)) {
+              unusedKeyMap.set(key, new Set());
+            }
+            unusedKeyMap.get(key)!.add(locale);
           }
-          unusedKeyMap.get(key)!.add(locale);
         }
       }
 
@@ -711,10 +744,16 @@ export class Syncer {
         key,
         locales: Array.from(locales).sort(),
       }));
+
+      untranslatedKeys = Array.from(untranslatedKeyMap.entries()).map(([key, locales]) => ({
+        key,
+        locales: Array.from(locales).sort(),
+      }));
     }
 
     // Only apply removal if prune is explicitly enabled
     // selectedUnusedKeys is from interactive mode where user explicitly selected keys
+    // Never remove untranslated keys
     const unusedKeysToApply = selectedUnusedKeys
       ? filterSelection(unusedKeys, selectedUnusedKeys)
       : prune
@@ -727,7 +766,7 @@ export class Syncer {
       });
     }
 
-    return { unusedKeys, unusedKeysToApply };
+    return { unusedKeys, unusedKeysToApply, untranslatedKeys };
   }
 
   private async resolveTargetReferenceFilter(targets?: string[]): Promise<TargetReferenceFilter | undefined> {

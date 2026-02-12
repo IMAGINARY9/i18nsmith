@@ -51,7 +51,7 @@ const LOCALE_CODE_PATTERN = /^[a-z]{2,3}$/; // ISO 639-1/2/3 language codes
 const REL_ATTRIBUTE_PATTERN = /^(noopener|noreferrer|nofollow|noopener\s+noreferrer)$/i;
 const DOM_EVENT_PATTERN = /^on\w+$/i;
 const SVG_ATTRIBUTE_PATTERN = /^(evenodd|nonzero)$/i;
-const ALL_CAPS_CONSTANT_PATTERN = /^[A-Z][A-Z0-9]{2,}$/; // Pure ALL-CAPS words ≥3 chars
+const ALL_CAPS_CONSTANT_PATTERN = /^(?=.*_)[A-Z][A-Z0-9_]{3,}$/; // ALL-CAPS constants with underscores, ≥4 chars
 const CSS_TRANSITION_PATTERN = /^\w+\s+[\d.]+s?\s*(ease|linear|ease-in|ease-out)?$/i;
 const TAILWIND_SIGNAL_PATTERNS = [
   /\b(flex|grid|block|inline|hidden|absolute|relative|fixed|sticky)\b/i,
@@ -198,8 +198,8 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'hex-color' };
   }
 
-  // Skip HTML input type keywords (context-free check)
-  if (HTML_TYPE_KEYWORDS.has(trimmedText.toLowerCase())) {
+  // Skip HTML input type keywords (only in type attributes)
+  if (attributeContext === 'type' && HTML_TYPE_KEYWORDS.has(trimmedText.toLowerCase())) {
     return { shouldExtract: false, skipReason: 'html-type-keyword' };
   }
 

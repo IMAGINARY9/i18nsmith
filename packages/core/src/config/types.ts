@@ -78,6 +78,12 @@ export interface SyncConfig {
    * Defaults to "" (empty string). Set to "[TODO]" for visible markers.
    */
   seedValue?: string;
+  /**
+   * Whether to protect keys with empty values in target locales from being
+   * treated as unused when they exist with values in the source locale.
+   * Defaults to true.
+   */
+  emptyKeyProtection?: boolean;
 }
 
 export type MergeStrategy = 'keep-source' | 'overwrite' | 'interactive';
