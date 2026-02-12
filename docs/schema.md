@@ -11,6 +11,7 @@ interface CheckSummary {
   suggestedCommands: CheckSuggestedCommand[];
   hasConflicts: boolean;
   hasDrift: boolean;
+  hasHardcodedText: boolean;
   timestamp: string;
 }
 ```
@@ -22,12 +23,16 @@ interface SyncSummary {
   references: TranslationReference[];
   missingKeys: MissingKeyRecord[];
   unusedKeys: UnusedKeyRecord[];
+  untranslatedKeys: UnusedKeyRecord[];
   localeStats: LocaleFileStats[];
   localePreview: LocaleDiffPreview[];
   diffs: LocaleDiffEntry[];
+  localeDiffs?: LocaleDiffEntry[];
+  renameDiffs?: SourceFileDiffEntry[];
   placeholderIssues: PlaceholderIssue[];
   emptyValueViolations: EmptyValueViolation[];
   dynamicKeyWarnings: DynamicKeyWarning[];
+  dynamicKeyCoverage: DynamicKeyCoverage[];
   suspiciousKeys: SuspiciousKeyWarning[];
   validation: SyncValidationState;
   assumedKeys: string[];

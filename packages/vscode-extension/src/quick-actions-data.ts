@@ -35,6 +35,8 @@ export interface QuickActionBuildRequest {
   detectedAdapter?: string;
   /** Absolute path to the workspace root — used to detect whether i18n.config.json exists on disk */
   workspaceRoot?: string;
+  /** Filtered dynamic warning count (after whitelist filtering) */
+  filteredDynamicWarningCount?: number;
 }
 
 export interface QuickActionMetadata {
@@ -149,9 +151,10 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const driftStats = getDriftStatistics(report);
   const suggestions = Array.isArray(report?.suggestedCommands) ? report!.suggestedCommands : [];
 
-  const dynamicWarningCount = Array.isArray(report?.sync?.dynamicKeyWarnings)
-    ? report!.sync!.dynamicKeyWarnings.length
-    : 0;
+  const dynamicWarningCount = request.filteredDynamicWarningCount ??
+    (Array.isArray(report?.sync?.dynamicKeyWarnings)
+      ? report!.sync!.dynamicKeyWarnings.length
+      : 0);
   const dynamicCoverage = getDynamicCoverageStatistics(report);
   const suspiciousWarnings = Array.isArray(report?.sync?.suspiciousKeys)
     ? (report!.sync!.suspiciousKeys as SuspiciousKeyWarning[])

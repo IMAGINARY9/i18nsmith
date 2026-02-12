@@ -530,12 +530,14 @@ function refreshQuickActionsModel(
 ): QuickActionBuildOutput {
   const report = diagnosticsManager?.getReport?.() ?? null;
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const filteredDynamicWarningCount = configController?.getLastSyncDynamicWarnings?.().length ?? 0;
   const model = buildQuickActionModel({
     report,
     hasSelection: getQuickActionSelectionState(),
     scanResult: lastScanResult,
     detectedAdapter,
     workspaceRoot,
+    filteredDynamicWarningCount,
   });
 
   if (quickActionsProvider) {

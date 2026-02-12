@@ -18,6 +18,7 @@ export interface KeyGeneratorOptions {
   namespace?: string;
   hashLength?: number;
   workspaceRoot?: string;
+  deduplicateByValue?: boolean;
 }
 
 function normalizeText(input: string): string {
@@ -42,6 +43,7 @@ export class KeyGenerator {
   private readonly namespace: string;
   private readonly hashLength: number;
   private readonly workspaceRoot: string;
+  private readonly deduplicateByValue: boolean;
   private readonly textCache = new Map<string, GeneratedKey>();
   private readonly hashCache = new Map<string, string>();
 
@@ -49,6 +51,7 @@ export class KeyGenerator {
     this.namespace = options.namespace ?? 'common';
     this.hashLength = options.hashLength ?? 6;
     this.workspaceRoot = options.workspaceRoot ? path.resolve(options.workspaceRoot) : process.cwd();
+    this.deduplicateByValue = options.deduplicateByValue ?? false;
   }
 
   public generate(text: string, context: KeyGenerationContext): GeneratedKey {
@@ -89,7 +92,7 @@ export class KeyGenerator {
       text,
       context.kind,
       context.context ?? '',
-      path.normalize(context.filePath).replace(/\\+/g, '/'),
+      this.deduplicateByValue ? '' : path.normalize(context.filePath).replace(/\\+/g, '/'),
     ].join('|');
 
     return crypto.createHash('sha1').update(base).digest('hex');

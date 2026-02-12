@@ -39,4 +39,57 @@ describe('KeyGenerator', () => {
     const key = generator.generate('Dashboard title', context).key;
     expect(key.startsWith('demo.dashboard.')).toBe(true);
   });
+
+  it('deduplicates by value when enabled', () => {
+    const generator = new KeyGenerator({ 
+      namespace: 'demo', 
+      workspaceRoot: '/tmp',
+      deduplicateByValue: true 
+    });
+    
+    const context1 = {
+      filePath: '/tmp/src/page1.tsx',
+      kind: 'jsx-text' as CandidateKind,
+      context: '<div>',
+    };
+    
+    const context2 = {
+      filePath: '/tmp/src/page2.tsx',
+      kind: 'jsx-text' as CandidateKind,
+      context: '<span>',
+    };
+
+    const key1 = generator.generate('Hello world', context1);
+    const key2 = generator.generate('Hello world', context2);
+
+    // Same text should produce same key when deduplicateByValue is true
+    expect(key1.key).toBe(key2.key);
+    expect(key1.hash).toBe(key2.hash);
+  });
+
+  it('does not deduplicate by value when disabled', () => {
+    const generator = new KeyGenerator({ 
+      namespace: 'demo', 
+      workspaceRoot: '/tmp',
+      deduplicateByValue: false 
+    });
+    
+    const context1 = {
+      filePath: '/tmp/src/page1.tsx',
+      kind: 'jsx-text' as CandidateKind,
+      context: '<div>',
+    };
+    
+    const context2 = {
+      filePath: '/tmp/src/page2.tsx',
+      kind: 'jsx-text' as CandidateKind,
+      context: '<span>',
+    };
+
+    const key1 = generator.generate('Hello world', context1);
+    const key2 = generator.generate('Hello world', context2);
+
+    // Same text should produce different keys when deduplicateByValue is false
+    expect(key1.key).not.toBe(key2.key);
+  });
 });

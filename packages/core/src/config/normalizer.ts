@@ -34,6 +34,9 @@ import {
   DEFAULT_TRANSLATION_IDENTIFIER,
   DEFAULT_ADAPTER_MODULE,
   DEFAULT_ADAPTER_HOOK,
+  DEFAULT_EXTRACTION_PRESET,
+  STRICT_DENY_PATTERNS,
+  STANDARD_DENY_PATTERNS,
 } from './defaults.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +54,21 @@ export const isSuspiciousKeyPolicy = (value: unknown): value is SuspiciousKeyPol
 
 export const isPlaceholderFormat = (value: string): value is PlaceholderFormat =>
   (DEFAULT_PLACEHOLDER_FORMATS as readonly string[]).includes(value);
+
+export const isExtractionPreset = (value: string): value is import('./types.js').ExtractionPreset =>
+  value === 'strict' || value === 'standard' || value === 'permissive';
+
+function getDefaultDenyPatterns(preset: import('./types.js').ExtractionPreset): string[] {
+  switch (preset) {
+    case 'strict':
+      return STRICT_DENY_PATTERNS;
+    case 'standard':
+      return STANDARD_DENY_PATTERNS;
+    case 'permissive':
+    default:
+      return [];
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Array Utilities
@@ -297,6 +315,9 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
   const shortHashLen = typeof keyGen.shortHashLen === 'number' && keyGen.shortHashLen > 0
     ? keyGen.shortHashLen
     : DEFAULT_SHORT_HASH_LEN;
+  const deduplicateByValue = typeof keyGen.deduplicateByValue === 'boolean'
+    ? keyGen.deduplicateByValue
+    : false;
   const localeFormat = normalizeLocaleFormat(localesConfig?.format);
   const localeDelimiter = normalizeLocaleDelimiter(localesConfig?.delimiter);
   const localeSortKeys = isLocaleSortOrder(localesConfig?.sortKeys)
@@ -325,6 +346,14 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
       ? (parsed.mergeStrategy as 'keep-source' | 'overwrite' | 'interactive')
       : undefined;
 
+  // Handle extraction preset and default deny patterns
+  const extractionPreset = typeof extractionConfig.preset === 'string' && isExtractionPreset(extractionConfig.preset)
+    ? extractionConfig.preset
+    : (DEFAULT_EXTRACTION_PRESET as import('./types.js').ExtractionPreset);
+  const defaultDenyPatterns = getDefaultDenyPatterns(extractionPreset);
+  const userDenyPatterns = ensureOptionalArray(extractionConfig.denyPatterns) ?? [];
+  const combinedDenyPatterns = [...defaultDenyPatterns, ...userDenyPatterns];
+
   const normalized: I18nConfig = {
     configVersion: rawConfigVersion,
     version: parsed.version,
@@ -337,6 +366,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
       ? parsed.minTextLength
       : DEFAULT_MIN_TEXT_LENGTH,
     extraction: {
+      preset: extractionPreset,
       minLetterCount: typeof extractionConfig.minLetterCount === 'number' && extractionConfig.minLetterCount >= 0
         ? extractionConfig.minLetterCount
         : undefined,
@@ -350,7 +380,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
         ? extractionConfig.decodeHtmlEntities
         : undefined,
       allowPatterns: ensureOptionalArray(extractionConfig.allowPatterns),
-      denyPatterns: ensureOptionalArray(extractionConfig.denyPatterns),
+      denyPatterns: combinedDenyPatterns.length > 0 ? combinedDenyPatterns : undefined,
       translatableAttributes,
       nonTranslatableAttributes,
       attributeSuffixes,
@@ -371,6 +401,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
     keyGeneration: {
       namespace: keyNamespace,
       shortHashLen,
+      deduplicateByValue,
     },
     seedTargetLocales: typeof parsed.seedTargetLocales === 'boolean' ? parsed.seedTargetLocales : false,
     mergeStrategy,

@@ -26,6 +26,17 @@ export class DynamicCoverageProvider
     this.changeEmitter.fire(undefined);
   }
 
+  getBadge(): vscode.ViewBadge | undefined {
+    const totalMissing = this.entries.reduce((sum, entry) => sum + getMissingTotal(entry), 0);
+    if (totalMissing === 0) {
+      return undefined;
+    }
+    return {
+      value: totalMissing,
+      tooltip: `${totalMissing} missing translation${totalMissing === 1 ? '' : 's'} for dynamic keys`,
+    };
+  }
+
   getTreeItem(element: DynamicCoverageTreeNode): vscode.TreeItem {
     if (element.kind === 'empty') {
       const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);

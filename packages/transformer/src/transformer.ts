@@ -76,6 +76,7 @@ export class Transformer {
       namespace,
       hashLength: this.config.keyGeneration?.shortHashLen ?? 6,
       workspaceRoot: this.workspaceRoot,
+      deduplicateByValue: this.config.keyGeneration?.deduplicateByValue ?? false,
     });
   this.keyValidator = new KeyValidator(this.config.sync?.suspiciousKeyPolicy ?? 'skip');
     const localesDir = path.resolve(this.workspaceRoot, config.localesDir ?? 'locales');

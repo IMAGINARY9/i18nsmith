@@ -12,7 +12,7 @@ describe('Quick Actions — Dynamic Whitelist', () => {
       suggestedCommands: [],
     };
 
-    const model = buildQuickActionModel({ report, hasSelection: false });
+    const model = buildQuickActionModel({ report, hasSelection: false, filteredDynamicWarningCount: 1 });
     const problems = model.sections.find((s) => s.title.includes('Problems'));
     expect(problems).toBeDefined();
     const whitelistAction = problems!.actions.find((a) => a.id === 'whitelist-dynamic');
@@ -38,7 +38,7 @@ describe('Quick Actions — Dynamic Whitelist', () => {
       suggestedCommands: [],
     };
 
-    const model = buildQuickActionModel({ report, hasSelection: false });
+    const model = buildQuickActionModel({ report, hasSelection: false, filteredDynamicWarningCount: 0 });
     const problems = model.sections.find((s) => s.title.includes('Problems'));
     expect(problems).toBeDefined();
     const coverageAction = problems!.actions.find((a) => a.id === 'dynamic-coverage');

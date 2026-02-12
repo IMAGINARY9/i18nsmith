@@ -132,6 +132,7 @@ Run `i18nsmith init` to generate an `i18n.config.json` file interactively. A typ
 - `translationAdapter.hookName`: Name of the hook to import (default: `"useTranslation"`).
 - `keyGeneration.namespace`: Prefix for generated keys (default: `"common"`).
 - `keyGeneration.shortHashLen`: Length of hash suffix (default: `6`).
+- `keyGeneration.deduplicateByValue`: Whether to generate the same key for identical text across different files (default: `false`).
 - `seedTargetLocales`: Whether to create empty entries in target locale files (default: `false`).
 - `sync.translationIdentifier`: Name of the translation helper function used in your code (default: `"t"`). Update this if you alias the hook (e.g., `const { translate } = useTranslation()`).
 - `sync.validateInterpolations`: When `true`, `i18nsmith sync` compares interpolation placeholders (e.g., `{{name}}`, `%{count}`) between the source locale and every target locale and reports mismatches (default: `false`).

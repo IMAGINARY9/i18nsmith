@@ -282,4 +282,130 @@ export function registerConfig(program: Command) {
         }
       })
     );
+
+  // Subcommand: config migrate
+  configCmd
+    .command('migrate')
+    .description('Migrate configuration from v1 to v2 format and apply modern defaults')
+    .option('-c, --config <path>', 'Path to i18nsmith config file', DEFAULT_CONFIG_FILENAME)
+    .option('--dry-run', 'Show what would be changed without modifying files', false)
+    .option('--json', 'Output result as JSON', false)
+    .action(
+      withErrorHandling(async (options: { config?: string; dryRun?: boolean; json?: boolean }) => {
+        try {
+          const { configPath } = await loadConfigWithMeta(options.config);
+          const { parsed: rawConfig } = await readRawConfig(configPath);
+
+          // Check if migration is needed
+          const currentVersion = (rawConfig.configVersion ?? rawConfig.version ?? 1) as number;
+          if (currentVersion >= 2) {
+            if (options.json) {
+              console.log(JSON.stringify({ migrated: false, reason: 'Already at latest version' }, null, 2));
+            } else {
+              console.log(chalk.blue('Configuration is already up to date (v2 or later)'));
+            }
+            return;
+          }
+
+          // Apply migration transformations
+          const migratedConfig = { ...rawConfig };
+
+          // Set new version
+          migratedConfig.configVersion = 2;
+          delete migratedConfig.version;
+
+          // Migrate field names
+          if (rawConfig.sourceLocale) {
+            migratedConfig.sourceLanguage = rawConfig.sourceLocale;
+            delete migratedConfig.sourceLocale;
+          }
+          if (rawConfig.targetLocales) {
+            migratedConfig.targetLanguages = rawConfig.targetLocales;
+            delete migratedConfig.targetLocales;
+          }
+
+          // Add extraction preset with strict defaults for new configs
+          if (!migratedConfig.extraction) {
+            migratedConfig.extraction = {};
+          }
+          const extraction = migratedConfig.extraction as Record<string, unknown>;
+          if (!extraction.preset) {
+            extraction.preset = 'strict';
+          }
+
+          // Clean up deprecated fields
+          const deprecatedFields = ['projectName'];
+          for (const field of deprecatedFields) {
+            if (field in migratedConfig) {
+              delete migratedConfig[field];
+            }
+          }
+
+          if (options.dryRun) {
+            if (options.json) {
+              console.log(JSON.stringify({
+                migrated: true,
+                dryRun: true,
+                changes: {
+                  added: { configVersion: 2, 'extraction.preset': 'strict' },
+                  removed: deprecatedFields.filter(f => f in rawConfig),
+                  renamed: Object.assign({},
+                    rawConfig.sourceLocale ? { sourceLocale: 'sourceLanguage' } : {},
+                    rawConfig.targetLocales ? { targetLocales: 'targetLanguages' } : {},
+                  ),
+                },
+                result: migratedConfig,
+              }, null, 2));
+            } else {
+              console.log(chalk.blue('Migration preview (dry run):'));
+              console.log();
+              console.log(chalk.green('✓ Would set configVersion: 2'));
+              console.log(chalk.green('✓ Would add extraction.preset: strict'));
+              if (rawConfig.sourceLocale) {
+                console.log(chalk.green(`✓ Would rename sourceLocale → sourceLanguage`));
+              }
+              if (rawConfig.targetLocales) {
+                console.log(chalk.green(`✓ Would rename targetLocales → targetLanguages`));
+              }
+              const removed = deprecatedFields.filter(f => f in rawConfig);
+              if (removed.length > 0) {
+                console.log(chalk.green(`✓ Would remove deprecated fields: ${removed.join(', ')}`));
+              }
+              console.log();
+              console.log(chalk.dim('Run without --dry-run to apply changes'));
+            }
+          } else {
+            await writeConfig(configPath, migratedConfig);
+
+            if (options.json) {
+              console.log(JSON.stringify({
+                migrated: true,
+                configPath,
+                changes: {
+                  added: { configVersion: 2, 'extraction.preset': 'strict' },
+                  removed: deprecatedFields.filter(f => f in rawConfig),
+                  renamed: Object.assign({},
+                    rawConfig.sourceLocale ? { sourceLocale: 'sourceLanguage' } : {},
+                    rawConfig.targetLocales ? { targetLocales: 'targetLanguages' } : {},
+                  ),
+                },
+              }, null, 2));
+            } else {
+              console.log(chalk.green('✓ Configuration migrated to v2'));
+              console.log(chalk.dim(`  Updated: ${configPath}`));
+              console.log();
+              console.log(chalk.blue('New features available:'));
+              console.log(chalk.dim('  • extraction.preset: strict (reduces false positives)'));
+              console.log(chalk.dim('  • Improved field names for clarity'));
+            }
+          }
+        } catch (error) {
+          if (error instanceof CliError) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new CliError(`Failed to migrate config: ${message}`);
+        }
+      })
+    );
 }

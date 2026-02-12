@@ -11,6 +11,7 @@ export type SuspiciousKeyPolicy = 'allow' | 'skip' | 'error';
 export type LocaleSortOrder = 'alphabetical' | 'preserve' | 'insertion';
 export type PlaceholderFormat = 'doubleCurly' | 'percentCurly' | 'percentSymbol';
 export type EmptyValuePolicy = 'ignore' | 'warn' | 'fail';
+export type ExtractionPreset = 'strict' | 'standard' | 'permissive';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Translation Adapter Configuration
@@ -57,6 +58,13 @@ export interface KeyGenerationConfig {
    * Defaults to 6.
    */
   shortHashLen?: number;
+  /**
+   * Whether to deduplicate keys by text value instead of by location.
+   * When true, identical text in different files will use the same key.
+   * When false (default), each occurrence gets a unique key based on location.
+   * Defaults to false.
+   */
+  deduplicateByValue?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +181,8 @@ export interface I18nConfig {
    * Extraction-related configuration (heuristics for detecting translatable text)
    */
   extraction?: {
+    /** Preset for extraction strictness (strict/standard/permissive) */
+    preset?: ExtractionPreset;
     /** Minimum number of unicode letters required to consider text translatable (default: 1) */
     minLetterCount?: number;
     /** Minimum ratio of letters to total characters to consider text translatable (default: 0.25) */
