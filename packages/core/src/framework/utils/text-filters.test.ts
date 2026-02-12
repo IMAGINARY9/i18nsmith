@@ -176,13 +176,78 @@ describe('Text Filters', () => {
       expect(result.skipReason).toBe('allow-pattern-mismatch');
     });
 
-    it('should allow text matching allow patterns', () => {
-      const config = {
-        ...defaultConfig,
-        allowPatterns: [/allowed/i],
-      };
-      const result = shouldExtractText('This is allowed', config);
-      expect(result.shouldExtract).toBe(true);
+    it('should skip HTML input type keywords (context-free)', () => {
+      const result = shouldExtractText('text', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('html-type-keyword');
+    });
+
+    it('should skip CSS single-word value keywords', () => {
+      const result = shouldExtractText('flex', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('css-value-keyword');
+    });
+
+    it('should skip locale codes', () => {
+      const result = shouldExtractText('en', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('locale-code');
+    });
+
+    it('should skip rel attribute values', () => {
+      const result = shouldExtractText('noopener noreferrer', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('rel-attribute');
+    });
+
+    it('should skip DOM event handler names', () => {
+      const result = shouldExtractText('ontouchstart', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('dom-event');
+    });
+
+    it('should skip SVG fill-rule values', () => {
+      const result = shouldExtractText('evenodd', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('svg-attribute');
+    });
+
+    it('should skip ALL-CAPS constant-like words', () => {
+      const result = shouldExtractText('BASIC', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('all-caps-constant');
+    });
+
+    it('should skip CSS transition shorthand strings', () => {
+      const result = shouldExtractText('background 0.3s', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('css-transition');
+    });
+
+    it('should skip single-token Tailwind utility classes', () => {
+      const testCases = [
+        'flex-1', 'p-6', 'text-white', 'ml-2', 'mb-6', 'shadow-xl', 'text-right',
+        'font-medium', 'space-y-4', 'bg-blue-500', 'rounded-lg', 'opacity-100'
+      ];
+
+      for (const testCase of testCases) {
+        const result = shouldExtractText(testCase, defaultConfig);
+        expect(result.shouldExtract).toBe(false);
+        expect(result.skipReason).toBe('single-token-tailwind');
+      }
+    });
+
+    it('should skip short SVG path data', () => {
+      const result = shouldExtractText('M12 4v16m8-8H4', defaultConfig);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('non_sentence');
+    });
+
+    it('should skip longer SVG paths in attribute context', () => {
+      const config: TextFilterConfig = { ...defaultConfig, context: { attribute: 'd' } };
+      const result = shouldExtractText('M12 4v16m8-8H4', config);
+      expect(result.shouldExtract).toBe(false);
+      expect(result.skipReason).toBe('non_sentence');
     });
   });
 

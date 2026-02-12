@@ -29,6 +29,30 @@ const DOT_PATH_PATTERN = /^[\w-]+(\.[\w-]+){2,}$/;
 const FONT_FAMILY_PATTERN = /^[\w\s,\-]+,\s*(sans-serif|serif|monospace|cursive|fantasy|system-ui)$/i;
 const HTTP_METHOD_PATTERN = /^(GET|POST|PUT|DELETE|PATCH|_blank|_self|_parent|_top|noopener|noreferrer)$/i;
 const CSS_KEYWORD_PATTERN = /^(auto|inherit|initial|unset|none|block|flex|grid|inline|bold|normal|center|left|right|baseline)$/i;
+
+// New deny patterns for false-positive filtering
+const HTML_TYPE_KEYWORDS = new Set([
+  'text', 'submit', 'checkbox', 'hidden', 'number', 'radio',
+  'range', 'button', 'password', 'email', 'tel', 'date', 'time',
+  'file', 'search', 'url', 'color', 'reset', 'image',
+]);
+
+const CSS_VALUE_KEYWORDS = new Set([
+  'bold', 'normal', 'italic', 'center', 'left', 'right', 'justify',
+  'top', 'bottom', 'baseline', 'middle', 'flex', 'grid', 'block',
+  'inline', 'none', 'hidden', 'visible', 'absolute', 'relative',
+  'fixed', 'sticky', 'transparent', 'inherit', 'initial', 'unset',
+  'auto', 'wrap', 'nowrap', 'uppercase', 'lowercase', 'capitalize',
+  'underline', 'overline', 'pointer', 'default', 'cover', 'contain',
+  'scroll', 'smooth', 'start', 'end', 'stretch',
+]);
+
+const LOCALE_CODE_PATTERN = /^[a-z]{2,3}$/; // ISO 639-1/2/3 language codes
+const REL_ATTRIBUTE_PATTERN = /^(noopener|noreferrer|nofollow|noopener\s+noreferrer)$/i;
+const DOM_EVENT_PATTERN = /^on\w+$/i;
+const SVG_ATTRIBUTE_PATTERN = /^(evenodd|nonzero)$/i;
+const ALL_CAPS_CONSTANT_PATTERN = /^[A-Z][A-Z0-9]{2,}$/; // Pure ALL-CAPS words ≥3 chars
+const CSS_TRANSITION_PATTERN = /^\w+\s+[\d.]+s?\s*(ease|linear|ease-in|ease-out)?$/i;
 const TAILWIND_SIGNAL_PATTERNS = [
   /\b(flex|grid|block|inline|hidden|absolute|relative|fixed|sticky)\b/i,
   /\b(bg|text|border|rounded|shadow|ring|outline|p|m|w|h|gap|space)-/i,
@@ -124,7 +148,7 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
-  if (SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 20) {
+  if (SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 8) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
@@ -174,6 +198,51 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'hex-color' };
   }
 
+  // Skip HTML input type keywords (context-free check)
+  if (HTML_TYPE_KEYWORDS.has(trimmedText.toLowerCase())) {
+    return { shouldExtract: false, skipReason: 'html-type-keyword' };
+  }
+
+  // Skip CSS single-word value keywords
+  if (CSS_VALUE_KEYWORDS.has(trimmedText.toLowerCase())) {
+    return { shouldExtract: false, skipReason: 'css-value-keyword' };
+  }
+
+  // Skip locale codes (2-3 letter language codes)
+  if (LOCALE_CODE_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'locale-code' };
+  }
+
+  // Skip rel attribute values
+  if (REL_ATTRIBUTE_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'rel-attribute' };
+  }
+
+  // Skip DOM event handler names
+  if (DOM_EVENT_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'dom-event' };
+  }
+
+  // Skip SVG fill-rule values
+  if (SVG_ATTRIBUTE_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'svg-attribute' };
+  }
+
+  // Skip ALL-CAPS constant-like words (≥3 chars, no spaces)
+  if (ALL_CAPS_CONSTANT_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'all-caps-constant' };
+  }
+
+  // Skip CSS transition shorthand strings
+  if (CSS_TRANSITION_PATTERN.test(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'css-transition' };
+  }
+
+  // Skip single-token Tailwind utility classes (context-free)
+  if (isLikelySingleTokenTailwindClass(trimmedText)) {
+    return { shouldExtract: false, skipReason: 'single-token-tailwind' };
+  }
+
   // Must contain at least one letter
   LETTER_REGEX_GLOBAL.lastIndex = 0;
   if (!LETTER_REGEX_GLOBAL.test(trimmedText)) {
@@ -207,7 +276,7 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
       return { shouldExtract: false, skipReason: 'non_sentence' };
     }
 
-    if (attributeContext === 'd' && SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 20) {
+    if (attributeContext === 'd' && SVG_PATH_PATTERN.test(trimmedText) && trimmedText.length > 8) {
       return { shouldExtract: false, skipReason: 'non_sentence' };
     }
   }
@@ -219,18 +288,52 @@ function isLikelyCssClassList(text: string): boolean {
   const tokenCount = text.split(/\s+/).filter(Boolean).length;
   const tailwindSignalCount = TAILWIND_SIGNAL_PATTERNS.filter(pattern => pattern.test(text)).length;
 
+  // Check for Tailwind arbitrary value syntax [value]
+  const hasArbitraryValue = /\[[\d.]+\]/.test(text);
+
   if (CSS_CLASS_PATTERN.test(text) && CSS_CLASS_SIGNAL.test(text)) {
     if (tokenCount >= 3) {
       return true;
     }
-    return tailwindSignalCount >= 1;
+    // Lower threshold: if ≥50% of tokens match Tailwind signals OR has arbitrary values
+    if (tokenCount >= 2) {
+      const signalRatio = tailwindSignalCount / tokenCount;
+      return signalRatio >= 0.5 || hasArbitraryValue;
+    }
+    return tailwindSignalCount >= 1 || hasArbitraryValue;
   }
 
-  if (tokenCount < 3) {
+  if (tokenCount < 2) {
     return false;
   }
 
-  return tailwindSignalCount >= 2;
+  // Lower threshold for multi-token detection
+  return tailwindSignalCount >= 1 || hasArbitraryValue;
+}
+
+/**
+ * Check if text is likely a single-token Tailwind utility class.
+ * Catches classes like "flex-1", "p-6", "text-white" that bypass the multi-token check.
+ */
+function isLikelySingleTokenTailwindClass(text: string): boolean {
+  // Must be a single token (no spaces)
+  if (text.includes(' ')) {
+    return false;
+  }
+
+  // Must match the general Tailwind utility pattern
+  const TAILWIND_SINGLE_TOKEN_PATTERN = /^(flex|grid|block|inline|hidden|p|m|w|h|gap|space|text|bg|border|rounded|shadow|ring|outline|p|m|w|h|gap|space|text|bg|border|rounded|shadow|ring|outline|font|leading|tracking|opacity|z|top|right|bottom|left|inset|overflow|cursor|pointer|select|resize|sr|object|break|whitespace|truncate|animate|transition|duration|ease|delay|scale|rotate|translate|skew|origin|col|row|order|justify|items|content|self|place|float|clear)[-]?\d*[a-z0-9./\[\]-]*$/i;
+
+  if (!TAILWIND_SINGLE_TOKEN_PATTERN.test(text)) {
+    return false;
+  }
+
+  // Additional heuristics: must contain at least one digit or specific Tailwind signals
+  const hasDigit = /\d/.test(text);
+  const hasArbitraryValue = /\[[\d.]+\]/.test(text);
+  const hasTailwindPrefix = /^(flex|grid|block|inline|hidden|p|m|w|h|gap|space|text|bg|border|rounded|shadow|ring|outline|font|leading|tracking|opacity|z|top|right|bottom|left|inset|overflow|cursor|pointer|select|resize|sr|object|break|whitespace|truncate|animate|transition|duration|ease|delay|scale|rotate|translate|skew|origin|col|row|order|justify|items|content|self|place|float|clear)/.test(text);
+
+  return hasDigit || hasArbitraryValue || hasTailwindPrefix;
 }
 
 /**

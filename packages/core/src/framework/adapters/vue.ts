@@ -662,7 +662,9 @@ export class VueAdapter implements FrameworkAdapter {
       },
       suggestedKey: this.generateKey(trimmedText),
       hash: this.hashText(trimmedText),
-    };
+      // Store the full text node range for accurate replacement during mutation
+      fullRange: [node.range[0], node.range[1]],
+    } as ScanCandidate & { fullRange?: [number, number] };
 
     candidates.push(candidate);
   }
@@ -772,23 +774,31 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private applyCandidate(candidate: TransformCandidate, content: string, magicString: MagicString): boolean {
-    // Calculate byte positions from line/column
-    const startPos = this.lineColumnToBytePosition(content, candidate.position.line, candidate.position.column);
-    if (startPos === -1) return false;
-
+    let startPos: number;
     let endPos: number;
-    if (candidate.kind === 'jsx-expression') {
-      // For script string literals the position points to the opening quote.
-      // The raw range includes the quotes, so we need to account for them.
-      // Detect the quote character and find the matching close.
-      const quoteChar = content[startPos];
-      if (quoteChar === '\'' || quoteChar === '"' || quoteChar === '`') {
-        endPos = startPos + candidate.text.length + 2; // +2 for opening and closing quotes
+
+    // Check if we have stored the full range for accurate replacement
+    const extendedCandidate = candidate as TransformCandidate & { fullRange?: [number, number] };
+    if (extendedCandidate.fullRange) {
+      [startPos, endPos] = extendedCandidate.fullRange;
+    } else {
+      // Fallback to position-based calculation
+      startPos = this.lineColumnToBytePosition(content, candidate.position.line, candidate.position.column);
+      if (startPos === -1) return false;
+
+      if (candidate.kind === 'jsx-expression') {
+        // For script string literals the position points to the opening quote.
+        // The raw range includes the quotes, so we need to account for them.
+        // Detect the quote character and find the matching close.
+        const quoteChar = content[startPos];
+        if (quoteChar === '\'' || quoteChar === '"' || quoteChar === '`') {
+          endPos = startPos + candidate.text.length + 2; // +2 for opening and closing quotes
+        } else {
+          endPos = startPos + candidate.text.length;
+        }
       } else {
         endPos = startPos + candidate.text.length;
       }
-    } else {
-      endPos = startPos + candidate.text.length;
     }
 
     // For Vue files, we need to handle different types of content based on the candidate kind

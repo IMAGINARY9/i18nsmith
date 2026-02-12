@@ -225,22 +225,97 @@ export default {
       }
     });
 
-    it('should return edits array', () => {
+    it('should handle text with leading whitespace correctly', () => {
       const content = `
 <template>
   <div>
-    <h1>Test</h1>
+    <b>STEP 1:</b> Select the travel dates
   </div>
 </template>
 `;
 
       const candidates = adapter.scan('/test/Component.vue', content);
-      const textCandidate = candidates.find(c => c.text === 'Test');
+      const textCandidate = candidates.find(c => c.text === 'Select the travel dates');
+      expect(textCandidate).toBeDefined();
 
       if (textCandidate) {
         const transformCandidate = {
           ...textCandidate,
-          suggestedKey: 'test_key',
+          suggestedKey: 'select_the_travel_dates',
+          hash: 'hash123',
+          status: 'pending' as const,
+        };
+
+        const result = adapter.mutate('/test/Component.vue', content, [transformCandidate], {
+          config,
+          workspaceRoot: '/tmp',
+          translationAdapter: { module: 'vue-i18n', hookName: 'useI18n' },
+          allowFallback: true
+        });
+
+        expect(result.didMutate).toBe(true);
+        // Should replace the entire text node including whitespace, not leave trailing characters
+        expect(result.content).not.toContain('Select the travel dates');
+        expect(result.content).toContain(`{{ $t('select_the_travel_dates') }}`);
+        // Should not have corrupted output like ">{{ $t('...') }}s"
+        expect(result.content).toMatch(/\{\{ \$t\('select_the_travel_dates'\) \}\}(?:\s*<|$)/);
+      }
+    });
+
+    it('should handle Unicode text correctly', () => {
+      const content = `
+<template>
+  <div>
+    Keine Angaben verfügbar
+  </div>
+</template>
+`;
+
+      const candidates = adapter.scan('/test/Component.vue', content);
+      const textCandidate = candidates.find(c => c.text === 'Keine Angaben verfügbar');
+      expect(textCandidate).toBeDefined();
+
+      if (textCandidate) {
+        const transformCandidate = {
+          ...textCandidate,
+          suggestedKey: 'keine_angaben_verfuegbar',
+          hash: 'hash456',
+          status: 'pending' as const,
+        };
+
+        const result = adapter.mutate('/test/Component.vue', content, [transformCandidate], {
+          config,
+          workspaceRoot: '/tmp',
+          translationAdapter: { module: 'vue-i18n', hookName: 'useI18n' },
+          allowFallback: true
+        });
+
+        expect(result.didMutate).toBe(true);
+        // Should replace the entire Unicode text without corruption
+        expect(result.content).not.toContain('Keine Angaben verfügbar');
+        expect(result.content).toContain(`{{ $t('keine_angaben_verfuegbar') }}`);
+        // Should not have extra content after the closing braces
+        expect(result.content).toMatch(/\{\{ \$t\('keine_angaben_verfuegbar'\) \}\}(?:\s*<|$)/);
+      }
+    });
+
+    it('should handle text after closing tags correctly', () => {
+      const content = `
+<template>
+  <div>
+    <b>STEP 2:</b> Verify occupation
+  </div>
+</template>
+`;
+
+      const candidates = adapter.scan('/test/Component.vue', content);
+      const textCandidate = candidates.find(c => c.text === 'Verify occupation');
+      expect(textCandidate).toBeDefined();
+
+      if (textCandidate) {
+        const transformCandidate = {
+          ...textCandidate,
+          suggestedKey: 'verify_occupation',
           hash: 'hash789',
           status: 'pending' as const,
         };
@@ -252,10 +327,11 @@ export default {
           allowFallback: true
         });
 
-        expect(result.edits).toHaveLength(1);
-        expect(result.edits[0]).toHaveProperty('start');
-        expect(result.edits[0]).toHaveProperty('end');
-        expect(result.edits[0]).toHaveProperty('replacement');
+        expect(result.didMutate).toBe(true);
+        // Should not leave trailing characters like "n"
+        expect(result.content).not.toContain('Verify occupation');
+        expect(result.content).toContain(`{{ $t('verify_occupation') }}`);
+        expect(result.content).toMatch(/\{\{ \$t\('verify_occupation'\) \}\}(?:\s*<|$)/);
       }
     });
   });
