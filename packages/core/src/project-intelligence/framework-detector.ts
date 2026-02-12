@@ -10,6 +10,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import fg from 'fast-glob';
+import { readFileSync } from 'fs';
 import type {
   FrameworkType,
   FrameworkDetection,
@@ -286,7 +287,43 @@ export class FrameworkDetector {
       return { adapter: 'react-i18next', adapterEvidence: evidence };
     }
 
+    // First, check for existing config and prefer it
+    const existingAdapter = this.detectExistingAdapterConfig();
+    if (existingAdapter) {
+      evidence.push({
+        type: 'file',
+        source: 'i18n.config.json',
+        weight: 1.0,
+        description: `Found existing adapter config: ${existingAdapter}`,
+      });
+      return { adapter: existingAdapter, adapterEvidence: evidence };
+    }
+
+    // Second, check for custom adapters in source code
+    const customAdapter = this.detectCustomAdapter();
+    if (customAdapter) {
+      // Check if we also have conflicting package-based adapters
+      const hasConflictingPackage = signature.i18nPackages.some(pkg => this.hasPackage(pkg));
+      if (hasConflictingPackage) {
+        evidence.push({
+          type: 'pattern',
+          source: 'conflict',
+          weight: -0.1, // Reduce confidence due to potential conflict
+          description: `Custom adapter detected but conflicting i18n packages also found`,
+        });
+      }
+
+      evidence.push({
+        type: 'code',
+        source: customAdapter.source,
+        weight: 0.8,
+        description: `Found custom adapter import: ${customAdapter.adapter}`,
+      });
+      return { adapter: customAdapter.adapter, adapterEvidence: evidence };
+    }
+
     // Check for known i18n packages
+    let packageAdapter: string | null = null;
     for (const i18nPkg of signature.i18nPackages) {
       if (this.hasPackage(i18nPkg)) {
         const version = this.getPackageVersion(i18nPkg);
@@ -296,8 +333,16 @@ export class FrameworkDetector {
           weight: 0.3,
           description: `Found i18n package ${i18nPkg}${version ? `@${version}` : ''}`,
         });
-        return { adapter: i18nPkg, adapterEvidence: evidence };
+        packageAdapter = i18nPkg;
+        break; // Return the first found package
       }
+    }
+
+    // If we found a package adapter but also detected custom adapters earlier,
+    // the custom adapter would have already been returned. But if we get here,
+    // it means no custom adapter was found, so return the package adapter.
+    if (packageAdapter) {
+      return { adapter: packageAdapter, adapterEvidence: evidence };
     }
 
     // No i18n package found, use default
@@ -309,6 +354,96 @@ export class FrameworkDetector {
     });
 
     return { adapter: signature.defaultAdapter, adapterEvidence: evidence };
+  }
+
+  /**
+   * Detect existing adapter configuration from i18n.config.json.
+   */
+  private detectExistingAdapterConfig(): string | null {
+    const configPath = path.join(this.workspaceRoot, 'i18n.config.json');
+
+    try {
+      const content = readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(content);
+
+      // Check for translationAdapter in the config
+      if (config.translationAdapter?.module) {
+        return config.translationAdapter.module;
+      }
+    } catch {
+      // If config doesn't exist or is invalid, return null
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect custom i18n adapters by scanning source code for hook imports.
+   */
+  private detectCustomAdapter(): { adapter: string; source: string } | null {
+    // Common custom adapter patterns to look for
+    const customAdapterPatterns = [
+      // React custom contexts
+      { pattern: /import\s*\{[^}]*useTranslation[^}]*\}\s*from\s*['"]([^'"]+)['"]/g, type: 'react' },
+      // Vue custom composables
+      { pattern: /import\s*\{[^}]*useI18n[^}]*\}\s*from\s*['"]([^'"]+)['"]/g, type: 'vue' },
+      // Direct hook imports
+      { pattern: /import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*['"]([^'"]+)['"]/g, type: 'react' },
+      // Custom translation functions
+      { pattern: /import\s*\{[^}]*translate[^}]*\}\s*from\s*['"]([^'"]+)['"]/g, type: 'react' },
+    ];
+
+    try {
+      // Get source files to scan (limit to common entry points and components)
+      const sourceFiles = fg.sync([
+        'src/**/*.{ts,tsx,js,jsx,vue}',
+        'app/**/*.{ts,tsx,js,jsx}',
+        'pages/**/*.{ts,tsx,js,jsx,vue}',
+        'components/**/*.{ts,tsx,js,jsx,vue}',
+        'composables/**/*.{ts,js}',
+        'hooks/**/*.{ts,js}',
+        'contexts/**/*.{ts,tsx,js,jsx}',
+        'lib/**/*.{ts,js}',
+        'utils/**/*.{ts,js}',
+      ], {
+        cwd: this.workspaceRoot,
+        onlyFiles: true,
+        absolute: true,
+        followSymbolicLinks: false,
+      });
+
+      // Limit scanning to avoid performance issues (scan first 50 files)
+      const filesToScan = sourceFiles.slice(0, 50);
+
+      for (const filePath of filesToScan) {
+        try {
+          const content = readFileSync(filePath, 'utf-8');
+
+          for (const { pattern, type } of customAdapterPatterns) {
+            const matches = content.match(pattern);
+            if (matches) {
+              // Extract the module path from the first match
+              const match = matches[0];
+              const moduleMatch = match.match(/from\s*['"`]([^'"`]+)['"`]/);
+              if (moduleMatch) {
+                const modulePath = moduleMatch[1];
+                return {
+                  adapter: modulePath,
+                  source: `${filePath}:${match}`,
+                };
+              }
+            }
+          }
+        } catch {
+          // Skip files that can't be read
+          continue;
+        }
+      }
+    } catch {
+      // If scanning fails, return null
+    }
+
+    return null;
   }
 
   /**

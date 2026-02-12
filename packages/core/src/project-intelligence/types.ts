@@ -50,7 +50,7 @@ export interface FrameworkDetection {
 
 export interface DetectionEvidence {
   /** Type of evidence */
-  type: 'package' | 'file' | 'pattern' | 'content';
+  type: 'package' | 'file' | 'pattern' | 'content' | 'code';
   
   /** What was found */
   source: string;
