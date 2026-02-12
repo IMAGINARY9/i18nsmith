@@ -362,6 +362,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     const summary = payload.summary;
     const missingCount = summary.missingKeys?.length ?? 0;
     const unusedCount = summary.unusedKeys?.length ?? 0;
+    const untranslatedCount = summary.untranslatedKeys?.length ?? 0;
 
     const changes: PlannedChange[] = [];
     
@@ -371,6 +372,7 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
     const detailLines = [
       `Missing keys: ${missingCount}`,
       `Unused keys: ${unusedCount}`,
+      `Untranslated keys: ${untranslatedCount}`,
       '',
       'This will update locale files to match source code usage.',
     ];
@@ -397,13 +399,24 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
       }
     }
 
+    if (untranslatedCount > 0) {
+      detailLines.push('', '## Untranslated Keys (Protected)');
+      const limit = 10;
+      for (const k of summary.untranslatedKeys.slice(0, limit)) {
+        detailLines.push(`- ${k.key}`);
+      }
+      if (untranslatedCount > limit) {
+        detailLines.push(`...and ${untranslatedCount - limit} more`);
+      }
+    }
+
     // Create a "virtual" change that represents the sync application
     // In a real implementation of Phase 2, we would parse the diffs from the preview payload
     changes.push({
       label: 'Apply Sync Changes',
       beforeUri: vscode.Uri.parse('i18nsmith-preview:sync-before'), // Placeholder
       afterUri: vscode.Uri.parse('i18nsmith-preview:sync-after'),   // Placeholder
-      summary: `${missingCount} missing, ${unusedCount} unused`,
+      summary: `${missingCount} missing, ${unusedCount} unused, ${untranslatedCount} untranslated`,
       apply: async () => {
         // Close the preview editor first to avoid confusion
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');

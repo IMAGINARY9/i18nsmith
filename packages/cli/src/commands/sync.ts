@@ -771,6 +771,18 @@ function printSyncSummary(summary: SyncSummary) {
     console.log(chalk.green("No unused locale keys detected."));
   }
 
+  if (summary.untranslatedKeys.length) {
+    console.log(chalk.blue("Untranslated keys (protected from pruning):"));
+    summary.untranslatedKeys.slice(0, 50).forEach((item) => {
+      console.log(`  • ${item.key} (${item.locales.join(", ")})`);
+    });
+    if (summary.untranslatedKeys.length > 50) {
+      console.log(
+        chalk.gray(`  ...and ${summary.untranslatedKeys.length - 50} more.`)
+      );
+    }
+  }
+
   if (summary.validation.interpolations) {
     if (summary.placeholderIssues.length) {
       console.log(chalk.yellow("Placeholder mismatches:"));
@@ -882,11 +894,29 @@ async function handleAutoRenameSuspicious(
   const sourceData = await localeStore.get(sourceLocale);
   const existingKeys = new Set(Object.keys(sourceData));
 
-  // Generate rename proposals
+  // For auto-detection, collect all existing keys from all locales
+  let allExistingKeys: string[] | undefined;
   const namingConvention = options.namingConvention ?? "kebab-case";
+  if (namingConvention === "auto") {
+    try {
+      const allLocales = await localeStore.getStoredLocales();
+      const allKeys = new Set<string>();
+      for (const locale of allLocales) {
+        const localeData = await localeStore.get(locale);
+        Object.keys(localeData).forEach(key => allKeys.add(key));
+      }
+      allExistingKeys = Array.from(allKeys);
+      console.log(`  Auto-detected naming convention from ${allKeys.size} existing keys`);
+    } catch (error) {
+      console.warn(chalk.yellow("  Warning: Could not load all locales for convention detection, falling back to kebab-case"));
+    }
+  }
+
+  // Generate rename proposals
   const report = generateRenameProposals(summary.suspiciousKeys, {
     existingKeys,
     namingConvention,
+    allExistingKeys,
     allowExistingConflicts: true,
   });
 

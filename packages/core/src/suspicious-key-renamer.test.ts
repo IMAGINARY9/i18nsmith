@@ -205,4 +205,50 @@ describe('parseRenameMappingFile', () => {
 
     expect(Object.keys(mapping)).toHaveLength(2);
   });
+
+  it('auto-detects naming convention from existing keys', () => {
+    const suspiciousKeys: SuspiciousKeyWarning[] = [
+      {
+        key: 'Hello World',
+        filePath: 'src/app.tsx',
+        position: { line: 10, column: 5 },
+        reason: 'contains-spaces',
+      },
+    ];
+
+    // camelCase existing keys
+    const allExistingKeys = ['userName', 'userEmail', 'loginButton', 'submitForm'];
+
+    const report = generateRenameProposals(suspiciousKeys, {
+      namingConvention: 'auto',
+      allExistingKeys,
+    });
+
+    expect(report.totalSuspicious).toBe(1);
+    expect(report.safeProposals).toHaveLength(1);
+    expect(report.safeProposals[0].proposedKey).toBe('common.helloWorld'); // camelCase detected with common namespace
+  });
+
+  it('falls back to kebab-case when auto-detection has insufficient data', () => {
+    const suspiciousKeys: SuspiciousKeyWarning[] = [
+      {
+        key: 'Hello World',
+        filePath: 'src/app.tsx',
+        position: { line: 10, column: 5 },
+        reason: 'contains-spaces',
+      },
+    ];
+
+    // Insufficient existing keys for reliable detection
+    const allExistingKeys = ['a', 'b', 'c'];
+
+    const report = generateRenameProposals(suspiciousKeys, {
+      namingConvention: 'auto',
+      allExistingKeys,
+    });
+
+    expect(report.totalSuspicious).toBe(1);
+    expect(report.safeProposals).toHaveLength(1);
+    expect(report.safeProposals[0].proposedKey).toBe('common.hello-world'); // kebab-case fallback
+  });
 });

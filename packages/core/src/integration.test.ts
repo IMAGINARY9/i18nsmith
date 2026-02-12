@@ -474,5 +474,47 @@ export default function RootLayout({ children }) {
       expect('common.save' in de).toBe(true);
       expect(de['common.save']).toBe('');
     });
+
+    it('protects untranslated keys from pruning', async () => {
+      // Create source locale with the key
+      await fs.writeFile(
+        path.join(localesDir, 'en.json'),
+        JSON.stringify({ 'welcome.message': 'Welcome!' }, null, 2)
+      );
+
+      // Create target locale with empty value for the same key and an unused key
+      await fs.writeFile(
+        path.join(localesDir, 'de.json'),
+        JSON.stringify({ 
+          'welcome.message': '',
+          'unused.key': 'This should be removed'
+        }, null, 2)
+      );
+
+      const config: I18nConfig = {
+        include: ['src/**/*.tsx'],
+        sourceLanguage: 'en',
+        targetLanguages: ['de'],
+        localesDir: 'locales',
+        sync: {
+          emptyKeyProtection: true, // Enable protection
+        },
+      };
+
+      const syncer = new Syncer(config, { workspaceRoot: tempDir });
+      const summary = await syncer.run({ write: true, prune: true });
+
+      expect(summary.unusedKeys.length).toBe(2); // welcome.message (en) and unused.key (de)
+      expect(summary.unusedKeys.find(k => k.key === 'unused.key')).toBeDefined();
+      expect(summary.unusedKeys.find(k => k.key === 'welcome.message')).toBeDefined();
+      expect(summary.untranslatedKeys.length).toBe(1); // The empty key in target locale
+      expect(summary.untranslatedKeys[0].key).toBe('welcome.message');
+
+      // Check that the locale file still has the untranslated key
+      const de = JSON.parse(await fs.readFile(path.join(localesDir, 'de.json'), 'utf8'));
+      expect(de['welcome.message']).toBe(''); // Should still be empty (untranslated)
+      expect(de['unused.key']).toBeUndefined(); // Should be removed
+    });
   });
 });
+
