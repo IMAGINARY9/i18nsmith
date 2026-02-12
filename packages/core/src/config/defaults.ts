@@ -68,8 +68,8 @@ export const STRICT_DENY_PATTERNS = [
   '^(evenodd|nonzero|M|L|H|V|Z|C|S|Q|T|A)$',
   // DOM event names
   '^on[a-zA-Z]+$',
-  // SCREAMING_CASE constants
-  '^[A-Z][A-Z0-9_]{2,}$',
+  // SCREAMING_CASE constants (case-sensitive regex)
+  /^[A-Z][A-Z0-9_]{2,}$/,
   // Short SVG paths
   '^M\\s*\\d+.*$',
   // CSS transitions
@@ -81,7 +81,7 @@ export const STANDARD_DENY_PATTERNS = [
   '^(text|submit|checkbox|hidden|number|radio|range|button|bold|normal|center|left|right|flex|block|none|hidden|auto)$',
   // Locale codes
   '^[a-z]{2,3}$',
-  // SCREAMING_CASE constants
-  '^[A-Z][A-Z0-9_]{2,}$',
+  // SCREAMING_CASE constants (case-sensitive regex)
+  /^[A-Z][A-Z0-9_]{2,}$/,
 ];
 export const DEFAULT_CONFIG_FILENAME = 'i18n.config.json';

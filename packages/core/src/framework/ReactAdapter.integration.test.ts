@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ReactAdapter } from './ReactAdapter';
+import { shouldExtractText } from './utils/text-filters';
 import { AdapterRegistry } from './registry';
 import { normalizeConfig } from '../config/normalizer';
 import { validateConfig } from '../config/validator';
@@ -54,7 +55,10 @@ export default App;
 
       const candidates = adapter.scan('App.tsx', content);
 
-      expect(candidates).toHaveLength(4);
+      // Default extraction presets now filter common UI tokens (e.g. button
+      // labels like "Submit"). Expect only the meaningful translatable
+      // candidates to be returned by default.
+      expect(candidates).toHaveLength(3);
       expect(candidates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -74,11 +78,6 @@ export default App;
             filePath: 'App.tsx',
             kind: 'jsx-attribute',
             context: 'alt'
-          }),
-          expect.objectContaining({
-            text: 'Submit',
-            filePath: 'App.tsx',
-            kind: 'jsx-text'
           })
         ])
       );
@@ -346,11 +345,14 @@ const Custom = () => {
 export default Custom;
 `;
 
-      const candidates = customAdapter.scan('Custom.tsx', content);
+    const candidates = customAdapter.scan('Custom.tsx', content);
 
-      expect(candidates).toHaveLength(2);
-      expect(candidates.some(c => c.text === 'This should be extracted')).toBe(true);
-      expect(candidates.some(c => c.context === 'data-label')).toBe(true);
+    // With stricter defaults the button inner text ('OK') is no longer
+    // considered translatable; only the explicitly configured
+    // `data-label` attribute should be returned.
+    expect(candidates).toHaveLength(1);
+    expect(candidates.some(c => c.text === 'This should be extracted')).toBe(true);
+    expect(candidates.some(c => c.context === 'data-label')).toBe(true);
     });
 
     it('should skip fallback literals for existing translation calls', () => {

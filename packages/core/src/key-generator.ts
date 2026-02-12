@@ -60,8 +60,13 @@ export class KeyGenerator {
       throw new Error('Cannot generate a key for empty text');
     }
 
-    if (this.textCache.has(normalized)) {
-      return this.textCache.get(normalized)!;
+    // Cache key should respect deduplication setting. When deduplicateByValue
+    // is enabled we reuse the same generated key for identical text values
+    // regardless of source file; otherwise cache by text+file so different
+    // occurrences produce distinct keys even when requested repeatedly.
+    const cacheKey = this.deduplicateByValue ? normalized : `${normalized}::${path.normalize(context.filePath)}`;
+    if (this.textCache.has(cacheKey)) {
+      return this.textCache.get(cacheKey)!;
     }
 
     const digest = this.createDigest(normalized, context);
@@ -83,7 +88,7 @@ export class KeyGenerator {
       preview: normalized.slice(0, 80),
     };
 
-    this.textCache.set(normalized, generated);
+    this.textCache.set(cacheKey, generated);
     return generated;
   }
 
