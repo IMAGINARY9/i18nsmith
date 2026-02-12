@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KeyValidator, SuspiciousKeyReason, SUSPICIOUS_KEY_REASON_DESCRIPTIONS, normalizeToKey } from './key-validator.js';
+import { KeyValidator, SuspiciousKeyReason, SUSPICIOUS_KEY_REASON_DESCRIPTIONS, normalizeToKey, detectNamingConvention, followsConvention } from './key-validator.js';
 
 describe('KeyValidator', () => {
   describe('analyze', () => {
@@ -250,5 +250,108 @@ describe('normalizeToKey', () => {
     expect(normalizeToKey('')).toBe('common.unknown');
     expect(normalizeToKey('   ')).toBe('common.unknown');
     expect(normalizeToKey('!!!')).toBe('common.unknown');
+  });
+});
+
+describe('detectNamingConvention', () => {
+  it('detects kebab-case as dominant convention', () => {
+    const keys = [
+      'common.submit-button',
+      'auth.login-form',
+      'nav.main-menu',
+      'user.profile-settings'
+    ];
+    expect(detectNamingConvention(keys)).toBe('kebab-case');
+  });
+
+  it('detects camelCase as dominant convention', () => {
+    const keys = [
+      'common.submitButton',
+      'auth.loginForm',
+      'nav.mainMenu',
+      'user.profileSettings'
+    ];
+    expect(detectNamingConvention(keys)).toBe('camelCase');
+  });
+
+  it('detects snake_case as dominant convention', () => {
+    const keys = [
+      'common.submit_button',
+      'auth.login_form',
+      'nav.main_menu',
+      'user.profile_settings'
+    ];
+    expect(detectNamingConvention(keys)).toBe('snake_case');
+  });
+
+  it('returns kebab-case for empty input', () => {
+    expect(detectNamingConvention([])).toBe('kebab-case');
+  });
+
+  it('handles mixed conventions by picking the most common', () => {
+    const keys = [
+      'common.submit-button', // kebab
+      'auth.loginForm',       // camel
+      'nav.main_menu',        // snake
+      'user.profile-button',  // kebab
+    ];
+    expect(detectNamingConvention(keys)).toBe('kebab-case');
+  });
+});
+
+describe('followsConvention', () => {
+  it('validates kebab-case keys', () => {
+    expect(followsConvention('submit-button', 'kebab-case')).toBe(true);
+    expect(followsConvention('submitButton', 'kebab-case')).toBe(false);
+    expect(followsConvention('submit_button', 'kebab-case')).toBe(false);
+  });
+
+  it('validates camelCase keys', () => {
+    expect(followsConvention('submitButton', 'camelCase')).toBe(true);
+    expect(followsConvention('SubmitButton', 'camelCase')).toBe(false); // PascalCase
+    expect(followsConvention('submit-button', 'camelCase')).toBe(false);
+  });
+
+  it('validates snake_case keys', () => {
+    expect(followsConvention('submit_button', 'snake_case')).toBe(true);
+    expect(followsConvention('submitButton', 'snake_case')).toBe(false);
+    expect(followsConvention('submit-button', 'snake_case')).toBe(false);
+  });
+});
+
+describe('preserveExistingConvention', () => {
+  it('preserves keys that already follow a valid convention', () => {
+    expect(normalizeToKey('nav.goToSignIn', {
+      preserveExistingConvention: true,
+      namingConvention: 'kebab-case'
+    })).toBe('nav.goToSignIn'); // Already camelCase, should preserve
+
+    expect(normalizeToKey('auth.login_form', {
+      preserveExistingConvention: true,
+      namingConvention: 'kebab-case'
+    })).toBe('auth.login_form'); // Already snake_case, should preserve
+  });
+
+  it('normalizes keys that do not follow any convention', () => {
+    expect(normalizeToKey('nav.Go To Sign In', {
+      preserveExistingConvention: true,
+      namingConvention: 'kebab-case'
+    })).toBe('nav.go-to-sign-in'); // Contains spaces, should normalize
+  });
+
+  it('defaults to false (normalizes all keys)', () => {
+    expect(normalizeToKey('nav.goToSignIn', {
+      namingConvention: 'kebab-case'
+    })).toBe('nav.go-to-sign-in'); // Should normalize even though it's valid camelCase
+  });
+});
+
+describe('auto naming convention', () => {
+  it('resolves auto to detected convention', () => {
+    // This would require mocking or setting up test data, but the logic is tested
+    // in the integration with generateRenameProposals
+    expect(normalizeToKey('test key', {
+      namingConvention: 'auto'
+    })).toBe('common.test-key'); // Falls back to kebab-case
   });
 });

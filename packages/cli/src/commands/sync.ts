@@ -48,7 +48,7 @@ interface SyncCommandOptions {
   invalidateCache?: boolean;
   autoRenameSuspicious?: boolean;
   renameMapFile?: string;
-  namingConvention?: "kebab-case" | "camelCase" | "snake_case";
+  namingConvention?: "kebab-case" | "camelCase" | "snake_case" | "auto";
   rewriteShape?: "flat" | "nested";
   shapeDelimiter?: string;
   seedTargetLocales?: boolean;
@@ -193,7 +193,7 @@ export function registerSync(program: Command) {
     )
     .option(
       "--naming-convention <convention>",
-      "Naming convention for auto-rename (kebab-case, camelCase, snake_case)",
+      "Naming convention for auto-rename (kebab-case, camelCase, snake_case, auto)",
       "kebab-case"
     )
     .option(
@@ -480,6 +480,8 @@ export function registerSync(program: Command) {
             namingConvention,
             workspaceRoot: projectRoot,
             allowExistingConflicts: true,
+            allExistingKeys: Object.keys(sourceData), // Pass all existing keys for convention detection
+            preserveExistingConvention: true, // Respect existing project conventions
           });
 
           if (report.safeProposals.length > 0) {

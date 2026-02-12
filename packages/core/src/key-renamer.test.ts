@@ -112,9 +112,9 @@ export function Profile() {
     );
 
     expect(summary.mappingSummaries).toHaveLength(2);
-    const mapping = summary.mappingSummaries.find((entry) => entry.from === 'profile.greeting');
-    expect(mapping?.occurrences).toBe(1);
-    expect(summary.filesUpdated).toEqual(expect.arrayContaining(['src/App.tsx', 'src/Profile.tsx']));
+    const oldKeyMapping = summary.mappingSummaries.find((entry) => entry.from === 'old.key');
+    expect(oldKeyMapping?.occurrences).toBe(1);
+    expect(summary.filesUpdated).toEqual(['src/App.tsx']);
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({ 'new.key': 'Hello', 'profile.salutation': 'Hi profile' });

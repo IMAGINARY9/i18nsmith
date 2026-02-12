@@ -5,7 +5,7 @@
  * key names for suspicious translation keys detected during sync.
  */
 
-import { KeyNormalizationOptions, normalizeToKey, SuspiciousKeyReason } from './key-validator.js';
+import { KeyNormalizationOptions, normalizeToKey, detectNamingConvention, SuspiciousKeyReason } from './key-validator.js';
 import { SuspiciousKeyWarning } from './syncer.js';
 
 export interface SuspiciousKeyRenameProposal {
@@ -47,6 +47,8 @@ export interface AutoRenameOptions extends KeyNormalizationOptions {
   workspaceRoot?: string;
   /** Allow proposals that conflict with existing keys */
   allowExistingConflicts?: boolean;
+  /** All existing keys in the project for convention detection */
+  allExistingKeys?: string[];
 }
 
 /**
@@ -60,6 +62,15 @@ export function generateRenameProposals(
   const filterReasons = options.filterReasons
     ? new Set(options.filterReasons)
     : undefined;
+
+  // Detect naming convention if set to 'auto'
+  let effectiveNamingConvention = options.namingConvention ?? 'kebab-case';
+  if (effectiveNamingConvention === 'auto' && options.allExistingKeys) {
+    effectiveNamingConvention = detectNamingConvention(options.allExistingKeys);
+  }
+
+  // Set preserveExistingConvention to true by default for rename operations
+  const preserveExistingConvention = options.preserveExistingConvention ?? true;
 
   const seenOriginals = new Set<string>();
   const proposedKeySet = new Set<string>();
@@ -93,15 +104,17 @@ export function generateRenameProposals(
       // This prevents renames from moving keys into file-path-based namespaces.
       proposedKey = normalizeToKey(warning.key, {
         defaultNamespace: options.defaultNamespace,
-        namingConvention: options.namingConvention,
+        namingConvention: effectiveNamingConvention,
         maxWords: options.maxWords,
+        preserveExistingConvention,
       });
     } catch (e) {
       // Fallback to simple normalization if generator fails
       proposedKey = normalizeToKey(warning.key, {
         defaultNamespace: options.defaultNamespace,
-        namingConvention: options.namingConvention,
+        namingConvention: effectiveNamingConvention,
         maxWords: options.maxWords,
+        preserveExistingConvention,
       });
     }
 

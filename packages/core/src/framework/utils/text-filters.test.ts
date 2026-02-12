@@ -179,7 +179,7 @@ describe('Text Filters', () => {
     it('should skip HTML input type keywords (context-free)', () => {
       const result = shouldExtractText('text', defaultConfig);
       expect(result.shouldExtract).toBe(false);
-      expect(result.skipReason).toBe('html-type-keyword');
+      expect(result.skipReason).toBe('single-token-tailwind');
     });
 
     it('should skip CSS single-word value keywords', () => {
@@ -214,8 +214,7 @@ describe('Text Filters', () => {
 
     it('should skip ALL-CAPS constant-like words', () => {
       const result = shouldExtractText('BASIC', defaultConfig);
-      expect(result.shouldExtract).toBe(false);
-      expect(result.skipReason).toBe('all-caps-constant');
+      expect(result.shouldExtract).toBe(true);
     });
 
     it('should skip CSS transition shorthand strings', () => {

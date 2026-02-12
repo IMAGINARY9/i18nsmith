@@ -15,7 +15,7 @@ export type SuspiciousKeyReason =
   | 'sentence-article'
   | 'key-equals-value';
 
-export type KeyNamingConvention = 'kebab-case' | 'camelCase' | 'snake_case';
+export type KeyNamingConvention = 'kebab-case' | 'camelCase' | 'snake_case' | 'auto';
 
 export interface KeyNormalizationOptions {
   /** Default namespace for orphan keys */
@@ -24,6 +24,8 @@ export interface KeyNormalizationOptions {
   namingConvention?: KeyNamingConvention;
   /** Maximum number of words to include */
   maxWords?: number;
+  /** Whether to preserve existing naming conventions */
+  preserveExistingConvention?: boolean;
 }
 
 export interface KeyAnalysisResult {
@@ -282,6 +284,76 @@ export function createKeyValidator(policy: SuspiciousKeyPolicy = 'skip'): KeyVal
 }
 
 /**
+ * Detect the dominant naming convention from a corpus of existing keys.
+ * Analyzes the key parts (after namespace) to determine the most common pattern.
+ */
+export function detectNamingConvention(keys: string[]): KeyNamingConvention {
+  if (keys.length === 0) {
+    return 'kebab-case'; // Default fallback
+  }
+
+  const conventionCounts = {
+    'kebab-case': 0,
+    'camelCase': 0,
+    'snake_case': 0,
+  };
+
+  for (const key of keys) {
+    // Extract the key part (after last dot)
+    const keyPart = key.includes('.') ? key.split('.').pop()! : key;
+
+    // Skip if empty or doesn't contain word boundaries
+    if (!keyPart || !/[a-zA-Z]/.test(keyPart)) {
+      continue;
+    }
+
+    // Check for each convention
+    if (keyPart.includes('-')) {
+      conventionCounts['kebab-case']++;
+    } else if (keyPart.includes('_')) {
+      conventionCounts['snake_case']++;
+    } else if (/[a-z][A-Z]/.test(keyPart)) {
+      conventionCounts['camelCase']++;
+    } else {
+      // Single word or no separators - could be any convention
+      // Count as the most common existing convention, or default to kebab-case
+      const maxCount = Math.max(...Object.values(conventionCounts));
+      if (maxCount > 0) {
+        const dominant = Object.entries(conventionCounts)
+          .find(([, count]) => count === maxCount)?.[0] as keyof typeof conventionCounts;
+        if (dominant) {
+          conventionCounts[dominant]++;
+        }
+      } else {
+        conventionCounts['kebab-case']++;
+      }
+    }
+  }
+
+  // Return the convention with the highest count
+  const [dominant] = Object.entries(conventionCounts)
+    .sort(([, a], [, b]) => b - a)[0];
+
+  return dominant as KeyNamingConvention;
+}
+
+/**
+ * Check if a key part follows a specific naming convention.
+ */
+export function followsConvention(keyPart: string, convention: KeyNamingConvention): boolean {
+  switch (convention) {
+    case 'kebab-case':
+      return /^[a-z]+(-[a-z]+)*$/.test(keyPart);
+    case 'snake_case':
+      return /^[a-z]+(_[a-z]+)*$/.test(keyPart);
+    case 'camelCase':
+      return /^[a-z]+([A-Z][a-z]*)*$/.test(keyPart);
+    default:
+      return true; // For 'auto' or unknown, consider it valid
+  }
+}
+
+/**
  * Normalize a raw text or suspicious key into a proper i18n key.
  * Extracted for standalone use (e.g., auto-rename feature).
  */
@@ -293,6 +365,7 @@ export function normalizeToKey(
     defaultNamespace = 'common',
     namingConvention = 'kebab-case',
     maxWords = 4,
+    preserveExistingConvention = false,
   } = options;
 
   // Step 1: Check if input already has a namespace
@@ -311,7 +384,19 @@ export function normalizeToKey(
     }
   }
 
-  // Step 2: Extract raw words from the key part
+  // Step 2: Check if we should preserve existing convention
+  if (preserveExistingConvention && keyText) {
+    // Check if the key already follows a valid convention
+    const conventions: KeyNamingConvention[] = ['kebab-case', 'camelCase', 'snake_case'];
+    for (const convention of conventions) {
+      if (followsConvention(keyText, convention)) {
+        // Key already follows a convention, return as-is
+        return `${namespace}.${keyText}`;
+      }
+    }
+  }
+
+  // Step 3: Extract raw words from the key part
   // Handle PascalCase, camelCase, spaces, punctuation
   const words = extractWords(keyText);
 
@@ -319,12 +404,13 @@ export function normalizeToKey(
     return `${namespace}.unknown`;
   }
 
-  // Step 3: Limit words to maxWords
+  // Step 4: Limit words to maxWords
   const limitedWords = words.slice(0, maxWords);
 
-  // Step 4: Apply naming convention
+  // Step 5: Apply naming convention
   let keyPart: string;
-  switch (namingConvention) {
+  const effectiveConvention = namingConvention === 'auto' ? 'kebab-case' : namingConvention;
+  switch (effectiveConvention) {
     case 'camelCase':
       keyPart = limitedWords
         .map((w, i) => (i === 0 ? w.toLowerCase() : capitalize(w)))
