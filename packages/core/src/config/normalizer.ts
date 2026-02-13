@@ -58,7 +58,7 @@ export const isPlaceholderFormat = (value: string): value is PlaceholderFormat =
 export const isExtractionPreset = (value: string): value is import('./types.js').ExtractionPreset =>
   value === 'strict' || value === 'standard' || value === 'permissive';
 
-function getDefaultDenyPatterns(preset: import('./types.js').ExtractionPreset): string[] {
+function getDefaultDenyPatterns(preset: import('./types.js').ExtractionPreset): (string | RegExp)[] {
   switch (preset) {
     case 'strict':
       return STRICT_DENY_PATTERNS;
@@ -109,6 +109,17 @@ export function ensureOptionalArray(value: unknown): string[] | undefined {
 export function ensureUniqueStrings(value: unknown): string[] | undefined {
   const normalized = ensureOptionalArray(value);
   return normalized ? Array.from(new Set(normalized)) : undefined;
+}
+
+export function ensureOptionalPatterns(value: unknown): (string | RegExp)[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const patterns: (string | RegExp)[] = [];
+  for (const item of value) {
+    if (typeof item === 'string' || item instanceof RegExp) {
+      patterns.push(item);
+    }
+  }
+  return patterns.length ? patterns : undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,7 +362,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
     ? extractionConfig.preset
     : (DEFAULT_EXTRACTION_PRESET as import('./types.js').ExtractionPreset);
   const defaultDenyPatterns = getDefaultDenyPatterns(extractionPreset);
-  const userDenyPatterns = ensureOptionalArray(extractionConfig.denyPatterns) ?? [];
+  const userDenyPatterns = ensureOptionalPatterns(extractionConfig.denyPatterns) ?? [];
   const combinedDenyPatterns = [...defaultDenyPatterns, ...userDenyPatterns];
 
   const normalized: I18nConfig = {
@@ -379,7 +390,7 @@ export function normalizeConfigWithWarnings(parsed: Partial<I18nConfig>): { conf
       decodeHtmlEntities: typeof extractionConfig.decodeHtmlEntities === 'boolean'
         ? extractionConfig.decodeHtmlEntities
         : undefined,
-      allowPatterns: ensureOptionalArray(extractionConfig.allowPatterns),
+      allowPatterns: ensureOptionalPatterns(extractionConfig.allowPatterns),
       denyPatterns: combinedDenyPatterns.length > 0 ? combinedDenyPatterns : undefined,
       translatableAttributes,
       nonTranslatableAttributes,

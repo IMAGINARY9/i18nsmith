@@ -253,12 +253,13 @@ function buildCliEnv(cwd: string, extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessE
 function listAncestorRoots(startDir: string): string[] {
   const roots: string[] = [];
   let current = startDir;
-  while (true) {
+  let parent = path.dirname(current);
+  while (current !== parent) {
     roots.push(current);
-    const parent = path.dirname(current);
-    if (parent === current) break;
     current = parent;
+    parent = path.dirname(current);
   }
+  roots.push(current); // Add the root directory
   return roots;
 }
 

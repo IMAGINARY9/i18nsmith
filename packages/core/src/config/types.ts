@@ -192,9 +192,9 @@ export interface I18nConfig {
     /** Decode HTML entities like &amp;, &apos;, &#10; before processing (default: true) */
     decodeHtmlEntities?: boolean;
     /** Regex patterns that should always be treated as translatable (bypass heuristics) */
-    allowPatterns?: string[];
+    allowPatterns?: (string | RegExp)[];
     /** Regex patterns that should always be skipped (override heuristics) */
-    denyPatterns?: string[];
+    denyPatterns?: (string | RegExp)[];
     /** Additional attributes to treat as translatable in Vue templates */
     translatableAttributes?: string[];
     /** Attributes to exclude from translation in Vue templates */

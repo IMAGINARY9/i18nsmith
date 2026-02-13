@@ -22,7 +22,9 @@ export async function checkAndPromptForVueParser(workspaceFolder: vscode.Workspa
                        break;
                    }
                }
-            } catch {}
+            } catch {
+               // Ignore errors when checking file stats
+            }
          }
      }
   } else {

@@ -77,7 +77,6 @@ let extractionController: ExtractionController;
 let cliService: CliService;
 let quickActionsProvider: QuickActionsProvider | null = null;
 let dynamicCoverageProvider: DynamicCoverageProvider | null = null;
-let quickActionSelectionState = false;
 let configurationService: ConfigurationService | null = null;
 let lastScanResult: ScanResult | null = null;
 let detectedAdapter: string | undefined;
