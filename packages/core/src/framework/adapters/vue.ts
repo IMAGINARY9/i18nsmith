@@ -163,11 +163,26 @@ export class VueAdapter implements FrameworkAdapter {
     // Check if vue-eslint-parser is available (resolve from workspace root first)
     const available = isPackageResolvable('vue-eslint-parser', this.workspaceRoot);
 
-    return [{
+    const deps: Array<{ name: string; available: boolean; installHint: string }> = [{
       name: 'vue-eslint-parser',
       available,
       installHint: 'npm install --save-dev vue-eslint-parser'
     }];
+
+    // Check if vue-i18n is configured (optional but recommended check)
+    // This verifies the project has i18n integration so $t() calls will work at runtime
+    const i18nModuleName = this.config.translationAdapter?.module ?? 'vue-i18n';
+    const hasI18n = isPackageResolvable(i18nModuleName, this.workspaceRoot);
+    
+    if (!hasI18n) {
+      deps.push({
+        name: i18nModuleName,
+        available: false,
+        installHint: `npm install ${i18nModuleName}`
+      });
+    }
+
+    return deps;
   }
 
 
@@ -631,9 +646,45 @@ export class VueAdapter implements FrameworkAdapter {
         }
         break;
       case 'VExpressionContainer':
-        // Skip expressions — they're JS code, not translatable text
+        // Extract string literals from template expressions like {{ 'text' }}
+        if (node.expression) {
+          this.extractFromExpression(node.expression, content, filePath, candidates);
+        }
         break;
     }
+  }
+
+  private extractFromExpression(expr: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+    if (!expr) return;
+
+    // Handle string literals in template expressions: {{ 'text' }} or {{ "text" }}
+    if (expr.type === 'Literal' && typeof expr.value === 'string') {
+      const text = expr.value;
+      
+      if (!this.shouldExtractText(text)) return;
+
+      // Skip if it's already a translation call
+      if (this.isHtmlString(text)) return;
+
+      const candidate: ScanCandidate = {
+        id: `${filePath}:${expr.loc.start.line}:${expr.loc.start.column}`,
+        kind: 'jsx-expression' as CandidateKind,
+        filePath,
+        text,
+        position: {
+          line: expr.loc.start.line,
+          column: expr.loc.start.column,
+        },
+        suggestedKey: this.generateKey(text),
+        hash: this.hashText(text),
+        // Store the full literal range including quotes for replacement
+        fullRange: [expr.range[0], expr.range[1]],
+      } as ScanCandidate & { fullRange?: [number, number] };
+
+      candidates.push(candidate);
+    }
+
+    // TODO: Handle template literals, concatenations, etc. if needed
   }
 
   private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean): void {
@@ -652,7 +703,7 @@ export class VueAdapter implements FrameworkAdapter {
     }
 
     const candidate: ScanCandidate = {
-      id: `${filePath}:${node.loc.start.line}`,
+      id: `${filePath}:${node.loc.start.line}:${node.loc.start.column}`,
       kind: 'jsx-text' as CandidateKind,
       filePath,
       text: trimmedText,
@@ -685,7 +736,7 @@ export class VueAdapter implements FrameworkAdapter {
         const text = attr.value.value;
         if (this.shouldExtractText(text, { attribute: attrName })) {
           const candidate: ScanCandidate = {
-            id: `${filePath}:${attr.loc.start.line}`,
+            id: `${filePath}:${attr.loc.start.line}:${attr.loc.start.column}`,
             kind: 'jsx-attribute' as CandidateKind,
             filePath,
             text,
@@ -860,7 +911,9 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private transformExpression(candidate: TransformCandidate, startPos: number, endPos: number, magicString: MagicString): boolean {
-    // Replace string literal with $t() call
+    // For template expressions like {{ 'text' }}, we replace just the string literal
+    // with $t('key'), keeping the {{ }} wrapper intact.
+    // The fullRange should point to the literal including quotes.
     const translationCall = `$t('${candidate.suggestedKey}')`;
     magicString.overwrite(startPos, endPos, translationCall);
     return true;

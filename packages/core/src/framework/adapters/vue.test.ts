@@ -48,10 +48,15 @@ describe('VueAdapter', () => {
   describe('checkDependencies', () => {
     it('should return vue-eslint-parser dependency check', () => {
       const deps = adapter.checkDependencies();
-      expect(deps).toHaveLength(1);
+      expect(deps.length).toBeGreaterThanOrEqual(1);
       expect(deps[0].name).toBe('vue-eslint-parser');
       expect(deps[0].installHint).toBe('npm install --save-dev vue-eslint-parser');
       // Note: available will depend on whether vue-eslint-parser is installed
+      
+      // If vue-i18n (or configured translation adapter) is not installed, it will be in the deps list
+      if (deps.length > 1) {
+        expect(deps[1].available).toBe(false);
+      }
     });
   });
 
