@@ -400,6 +400,26 @@ export class Syncer {
     let localeStats: LocaleFileStats[] = [];
     let backupResult: BackupResult | undefined;
 
+    // Apply seeding to projectedLocaleData for preview (before write check)
+    if (this.shouldSeedTargets()) {
+      const seedValue = this.config.sync?.seedValue ?? '';
+      const sourceData = localeData.get(this.sourceLocale) ?? {};
+      const sourceKeys = Object.keys(sourceData);
+      const overwriteExisting = this.shouldOverwriteTargets();
+
+      for (const locale of this.targetLocales) {
+        const targetData = localeData.get(locale) ?? {};
+        for (const key of sourceKeys) {
+          if (overwriteExisting || !(key in targetData)) {
+            // Update projectedLocaleData so seeded keys appear in preview
+            const projectedTarget = projectedLocaleData.get(locale) ?? {};
+            projectedTarget[key] = seedValue;
+            projectedLocaleData.set(locale, projectedTarget);
+          }
+        }
+      }
+    }
+
     if (write) {
       // Create backup before any destructive write operations
       if (runtime.backup) {
@@ -990,7 +1010,10 @@ export class Syncer {
    * Seeds keys from source locale to target locales if they are missing.
    * This ensures target locales have the same structure as the source.
    */
-  private async seedSourceToTargets(localeData: Map<string, Record<string, string>>, overwriteExisting = false) {
+  private async seedSourceToTargets(
+    localeData: Map<string, Record<string, string>>, 
+    overwriteExisting = false
+  ) {
     const seedValue = this.config.sync?.seedValue ?? '';
     const sourceData = localeData.get(this.sourceLocale) ?? {};
     const sourceKeys = Object.keys(sourceData);

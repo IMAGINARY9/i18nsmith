@@ -47,6 +47,7 @@ export class VueParser implements Parser {
     translationIdentifier: string,
     workspaceRoot?: string
   ): ParseResult {
+    console.log(`[DEBUG] VueParser.parseFile called for ${filePath}, identifier: ${translationIdentifier}`);
     const references: TranslationReference[] = [];
     const dynamicKeyWarnings: DynamicKeyWarning[] = [];
 
@@ -70,13 +71,36 @@ export class VueParser implements Parser {
 
       // Check if @typescript-eslint/parser is available for TypeScript support in <script lang="ts">
       // If available, configure vue-eslint-parser to use it for TypeScript files
-      if (isPackageResolvable('@typescript-eslint/parser', workspaceRoot || process.cwd())) {
+      const hasTypescriptParser = isPackageResolvable('@typescript-eslint/parser', workspaceRoot || process.cwd());
+      if (hasTypescriptParser) {
         parserOptions.parser = '@typescript-eslint/parser';
       }
 
-      const ast = parse(content, parserOptions);
+      let ast: any;
+      try {
+        console.log(`[DEBUG] VueParser: Attempting to parse, hasTypescriptParser = ${hasTypescriptParser}, parser = ${parserOptions.parser}`);
+        console.log(`[DEBUG] VueParser: Content first 200 chars:`, content.substring(0, 200));
+        ast = parse(content, parserOptions);
+        console.log(`[DEBUG] VueParser: Parse returned, ast type =`, typeof ast, 'ast.type =', ast?.type);
+      } catch (parseError) {
+        console.log(`[DEBUG] VueParser: Initial parse failed:`, parseError);
+        // If parsing failed (likely due to TypeScript syntax without TS parser),
+        // try parsing with parser: false which only parses the template
+        try {
+          console.log(`[DEBUG] VueParser: Trying fallback with parser: false`);
+          ast = parse(content, {
+            ...parserOptions,
+            parser: false, // Skip script parsing, only parse template
+          });
+          console.log(`[DEBUG] VueParser: Fallback parse succeeded, ast.type = ${ast?.type}`);
+        } catch (fallbackError) {
+          console.log(`[DEBUG] VueParser: Fallback parse also failed:`, fallbackError);
+          throw parseError; // Rethrow original error
+        }
+      }
 
       // Extract references from the AST
+      console.log(`[DEBUG] VueParser: ast.type = ${ast.type}, has templateBody = ${!!ast.templateBody}`);
       this.extractReferencesFromVueAST(
         filePath,
         ast,
@@ -92,6 +116,7 @@ export class VueParser implements Parser {
       console.warn(`Failed to parse Vue file ${filePath}:`, error);
     }
     
+    console.log(`[DEBUG] VueParser found ${references.length} references in ${filePath}`);
     return { references, dynamicKeyWarnings };
   }
 
@@ -212,12 +237,28 @@ export class VueParser implements Parser {
   }
 
   private isTranslationCall(node: any, translationIdentifier: string): boolean {
-    return (
-      node.type === 'CallExpression' &&
-      node.callee?.type === 'Identifier' &&
-      (node.callee.name === translationIdentifier || 
-       node.callee.name === '$' + translationIdentifier) // Handle $t in templates
-    );
+    if (node.type !== 'CallExpression') {
+      return false;
+    }
+
+    // Check for direct identifier calls: t(...) or $t(...)
+    if (node.callee?.type === 'Identifier') {
+      const calleeName = node.callee.name;
+      // Support both 't' and '$t' style calls
+      const isMatch = calleeName === translationIdentifier || calleeName === `$${translationIdentifier}`;
+      if (isMatch) {
+        console.log(`[DEBUG] VueParser: Found translation call ${calleeName}(...)`);
+      }
+      return isMatch;
+    }
+
+    // Check for member expression calls: i18n.t(...) or this.t(...)
+    if (node.callee?.type === 'MemberExpression') {
+      const propertyName = node.callee.property?.name;
+      return propertyName === translationIdentifier;
+    }
+
+    return false;
   }
 
   private extractKeyFromVueCall(node: any):

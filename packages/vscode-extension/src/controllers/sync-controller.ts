@@ -130,11 +130,16 @@ export class SyncController extends PreviewApplyController implements vscode.Dis
         (summary as unknown as { placeholderIssues?: unknown[] }).placeholderIssues!.length > 0
     );
 
+    // Check if we're in seed mode - if so, missing keys might be present even if
+    // code doesn't reference them yet (seeding from source locale to targets)
+    const isSeedMode = options.extraArgs?.some(arg => arg.includes('seed-target-locales'));
+    
     if (
       (!summary.missingKeys || summary.missingKeys.length === 0) &&
       (!summary.unusedKeys || summary.unusedKeys.length === 0) &&
       (!summary.renameDiffs || summary.renameDiffs.length === 0) &&
-      !hasPlaceholderIssues
+      !hasPlaceholderIssues &&
+      !isSeedMode // Don't skip if in seed mode - there may be keys to seed
     ) {
       vscode.window.showInformationMessage('Locales are in sync. No changes needed.');
       return;

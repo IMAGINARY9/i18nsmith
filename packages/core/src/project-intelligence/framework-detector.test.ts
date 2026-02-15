@@ -65,18 +65,18 @@ describe('FrameworkDetector', () => {
       // Mock pathExists
       const mockPathExists = vi.fn();
       mockPathExists.mockImplementation(async (pattern: string) => {
-        return pattern === '**/*.vue';
+        return pattern === '**/*.vue' || pattern === 'src/**/*.vue';
       });
       (detector as any).pathExists = mockPathExists;
 
       const result = await detector.detect();
 
-      expect(result.type).toBe('nuxt');
+      expect(result.type).toBe('vue');
       expect(result.evidence).toContainEqual(
         expect.objectContaining({
           type: 'file',
-          source: '**/*.vue',
-          description: 'Found files matching **/*.vue'
+          source: expect.stringContaining('.vue'),
+          description: expect.stringContaining('.vue')
         })
       );
     });

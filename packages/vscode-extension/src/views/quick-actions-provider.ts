@@ -56,6 +56,10 @@ export class QuickActionsProvider
       treeItem.description = action.description;
       treeItem.tooltip = [action.description, action.detail].filter(Boolean).join('\n\n');
       treeItem.iconPath = new vscode.ThemeIcon(action.iconId);
+      
+      // Debug logging
+      console.log(`[i18nsmith] Action "${action.title}": hasChildren=${!!action.children?.length}, hasCommand=${!!action.command}, hasPreviewIntent=${!!action.previewIntent}`);
+      
       treeItem.command = action.children?.length
         ? undefined
         : {

@@ -617,6 +617,13 @@ function createQuickPickItem(action: QuickActionDefinition): QuickActionPick {
 }
 
 async function runQuickActionDefinition(action: QuickActionDefinition) {
+  console.log(`[i18nsmith] runQuickActionDefinition called for "${action.title}"`, {
+    hasCommand: !!action.command,
+    command: action.command,
+    hasPreviewIntent: !!action.previewIntent,
+    previewIntent: action.previewIntent
+  });
+  
   if (action.confirmMessage) {
     const confirm = await vscode.window.showWarningMessage(
       action.confirmMessage,

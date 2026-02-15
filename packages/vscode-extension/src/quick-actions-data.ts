@@ -149,7 +149,41 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
   const summary = summarizeReportIssues(report);
   const actionableItems = summary.items;
   const driftStats = getDriftStatistics(report);
-  const suggestions = Array.isArray(report?.suggestedCommands) ? report!.suggestedCommands : [];
+  const suggestions = Array.isArray(report?.suggestedCommands) ? report!.suggestedCommands.slice() : [];
+
+  // If the CLI/report doesn't include a sync suggestion but the workspace
+  // config requests seeding target locales, synthesize a seed-aware suggestion
+  // so the Quick Actions UI surfaces the correct command even when the
+  // underlying CLI is out-of-date (development/runtime mismatch).
+  try {
+    const hasMissing = Array.isArray(report?.sync?.missingKeys) && report!.sync!.missingKeys.length > 0;
+  const diagSafe = report as unknown as { diagnostics?: { localeFiles?: Array<{ locale: string; keyCount?: number }>; } };
+  const localeFiles = Array.isArray(diagSafe.diagnostics?.localeFiles) ? diagSafe.diagnostics!.localeFiles : [];
+  const cfgPath = request.workspaceRoot ? path.join(request.workspaceRoot, 'i18n.config.json') : null;
+  const parsedCfg = cfgPath && fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : null;
+    const sourceLocaleCode = parsedCfg?.sourceLanguage ?? parsedCfg?.sourceLocale ?? 'en';
+    const sourceLocale = localeFiles.find((f) => f.locale === sourceLocaleCode) || localeFiles.find((f) => f.locale === 'en');
+    const hasLocaleShortfall = Boolean(
+      sourceLocale && typeof sourceLocale.keyCount === 'number' &&
+      localeFiles.some((f) => f.locale !== sourceLocale.locale && typeof f.keyCount === 'number' && f.keyCount < (sourceLocale.keyCount ?? 0))
+    );
+    const seedEnabled = cfgPath && fs.existsSync(cfgPath)
+      ? Boolean(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).seedTargetLocales)
+      : false;
+
+    const hasSyncSuggestion = suggestions.some((s: SuggestedCommandEntry) => s.category === 'sync');
+    if ((hasMissing || hasLocaleShortfall) && seedEnabled && !hasSyncSuggestion) {
+      suggestions.push({
+        label: 'Add missing keys',
+        command: 'i18nsmith sync --seed-target-locales',
+        reason: 'Add missing keys and seed target locales as configured',
+        severity: 'error',
+        category: 'sync',
+      } as SuggestedCommandEntry);
+    }
+  } catch (e) {
+    // Silently ignore config read/parse errors — fall back to existing suggestions
+  }
 
   const dynamicWarningCount = request.filteredDynamicWarningCount ??
     (Array.isArray(report?.sync?.dynamicKeyWarnings)
@@ -227,7 +261,9 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
     dynamicWarningCount ||
     suspiciousWarningCount ||
     hardcodedCount ||
-    (dynamicCoverage && dynamicCoverage.missing > 0)
+    driftTotal > 0 ||
+    (dynamicCoverage && dynamicCoverage.missing > 0) ||
+    ((suggestionBuckets.get('sync')?.length ?? 0) > 0)
   ) {
     const extractionSuggestion = suggestionBuckets.get('extraction')?.[0];
     const extraction = createQuickAction({
@@ -246,15 +282,23 @@ export function buildQuickActionModel(request: QuickActionBuildRequest): QuickAc
       problems.push(extraction);
     }
 
-    if (driftTotal > 0) {
+    // Show the Fix Locale Drift quick action if there is detected drift OR
+    // if we have a sync suggestion that implies seeding/repair (for example
+    // a `--seed-target-locales` suggestion synthesized from diagnostics).
+    const syncSuggestions = suggestionBuckets.get('sync') ?? [];
+    const hasSeedSuggestion = syncSuggestions.some((s) =>
+      (s.command ?? '').includes('--seed-target-locales') || /seed/i.test(String(s.label || '')) || /seed/i.test(String(s.reason || ''))
+    );
+
+    if (driftTotal > 0 || hasSeedSuggestion) {
       const driftParts: string[] = [];
       if (driftStats?.missing) driftParts.push(`${driftStats.missing} missing`);
       if (driftStats?.unused) driftParts.push(`${driftStats.unused} unused`);
-      const syncSuggestion = suggestionBuckets.get('sync')?.[0];
+      const syncSuggestion = syncSuggestions[0];
       const driftAction = createQuickAction({
         id: 'fix-locale-drift',
         icon: ICONS.sync,
-        title: `Fix Locale Drift (${driftTotal})`,
+        title: `Fix Locale Drift (${driftTotal || (driftStats?.missing ?? 0)})`,
         description: driftParts.length
           ? `${driftParts.join(', ')} — preview adds/removals before applying.`
           : 'Review detected drift, then selectively add or prune keys.',
@@ -532,7 +576,25 @@ function createQuickAction(config: CommandActionConfig): QuickActionDefinition |
 
   const rawCommand = config.command;
   const isVsCodeCommand = Boolean(rawCommand && rawCommand.startsWith('i18nsmith.'));
+  
+  // Debug logging for seed commands
+  if (rawCommand?.includes('seed')) {
+    console.log(`[i18nsmith] createQuickAction: Processing seed command`, {
+      rawCommand,
+      isVsCodeCommand,
+      willParse: !isVsCodeCommand && rawCommand
+    });
+  }
+  
   const previewIntent = config.previewIntent ?? (!isVsCodeCommand && rawCommand ? parsePreviewableCommand(rawCommand) : null);
+  
+  // More debug logging
+  if (rawCommand?.includes('seed')) {
+    console.log(`[i18nsmith] createQuickAction: Parsed preview intent`, {
+      previewIntent,
+      hasPreviewIntent: !!previewIntent
+    });
+  }
 
   return {
     id: config.id,

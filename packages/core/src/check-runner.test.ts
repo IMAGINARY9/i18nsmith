@@ -71,6 +71,55 @@ export default Component;
     expect(summary.hasConflicts).toBe(false);
   });
 
+  it('suggests seeding when target locales have fewer keys than source', async () => {
+    await writeFile('package.json', JSON.stringify({ name: 'fixture-app', version: '1.0.0' }));
+    // Source has 2 keys, target has 0
+    await writeFile('locales/en.json', JSON.stringify({ a: 'A', b: 'B' }, null, 2));
+    await writeFile('locales/es.json', JSON.stringify({}, null, 2));
+    await writeFile(
+      'src/App.tsx',
+      `import { useTranslation } from 'react-i18next';
+const Component = () => {
+  const { t } = useTranslation();
+  return <p>{t('a')}</p>;
+};
+export default Component;
+`
+    );
+
+    const config: I18nConfig = {
+      ...baseConfig,
+      seedTargetLocales: true,
+    };
+
+    const runner = new CheckRunner(config, { workspaceRoot: tempDir });
+    const summary = await runner.run();
+
+    expect(summary.suggestedCommands.some((c) => c.command?.includes('--seed-target-locales'))).toBe(true);
+  });
+
+  it('suggests seeding when seedTargetLocales is enabled', async () => {
+    await writeFile('package.json', JSON.stringify({ name: 'fixture-app', version: '1.0.0' }));
+    await writeFile('locales/en.json', JSON.stringify({}, null, 2));
+    await writeFile(
+      'src/App.tsx',
+      `import { useTranslation } from 'react-i18next';
+const Component = () => {
+  const { t } = useTranslation();
+  return <p>{t('common.greeting')}</p>;
+};
+export default Component;
+`
+    );
+
+  const cfg = { ...baseConfig, seedTargetLocales: true } as any as I18nConfig;
+  const runner = new CheckRunner(cfg, { workspaceRoot: tempDir });
+    const summary = await runner.run();
+
+    expect(summary.sync.missingKeys.map((item) => item.key)).toContain('common.greeting');
+    expect(summary.suggestedCommands.some((cmd) => cmd.command === 'i18nsmith sync --seed-target-locales')).toBe(true);
+  });
+
   it('surfaces runtime recommendations when no adapters are detected', async () => {
     await writeFile('package.json', JSON.stringify({ name: 'fixture-app', version: '1.0.0' }));
     await writeFile('locales/en.json', JSON.stringify({ greeting: 'Hello' }, null, 2));

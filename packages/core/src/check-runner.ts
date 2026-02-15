@@ -260,10 +260,15 @@ function buildSuggestedCommands(
     });
   } else if (hasMissingKeys) {
     const relevantFiles = [...new Set(sync.missingKeys.flatMap((k) => k.references.map((r) => r.filePath)))].slice(0, 5);
+    // If the workspace config enables seeding target locales, suggest the
+    // sync command with the --seed-target-locales flag so users can apply
+    // missing keys and populate target files in one step.
+    const syncCommand = config.seedTargetLocales ? 'i18nsmith sync --seed-target-locales' : 'i18nsmith sync';
+    const reasonSuffix = config.seedTargetLocales ? ' — target locales will be seeded as configured' : '';
     add({
       label: 'Add missing keys',
-      command: 'i18nsmith sync',
-      reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files`,
+      command: syncCommand,
+      reason: `${sync.missingKeys.length} key(s) used in code but missing from locale files${reasonSuffix}`,
       severity: deriveSeverityForKinds(['missing-key'], 'error'),
       category: 'sync',
       relevantFiles,
@@ -328,6 +333,37 @@ function buildSuggestedCommands(
       category: 'setup',
       priority: 15,
     });
+  }
+
+  // If the source locale contains more keys than one or more target
+  // locale files, suggest seeding the target locales so translators get
+  // placeholders for missing translations. This uses the diagnostics
+  // summary (key counts) and is safe to show during a dry-run/check.
+  try {
+    const sourceLocale = config.sourceLanguage ?? 'en';
+  const localeFiles = report.localeFiles ?? [];
+    const sourceStats = Array.isArray(localeFiles)
+      ? (localeFiles as any[]).find((f) => f.locale === sourceLocale)
+      : undefined;
+    if (sourceStats) {
+      const shortfall = (localeFiles as any[])
+        .filter((f) => f.locale !== sourceLocale && typeof f.keyCount === 'number' && f.keyCount < sourceStats.keyCount)
+        .map((f) => ({ locale: f.locale, have: f.keyCount, want: sourceStats.keyCount }));
+
+      if (shortfall.length > 0) {
+        const localesList = shortfall.map((l) => `${l.locale}(${l.have}/${l.want})`).join(', ');
+        add({
+          label: `Seed missing translations (${shortfall.length} locales)`,
+          command: 'i18nsmith sync --seed-target-locales',
+          reason: `Source locale has more keys than target locale(s): ${localesList}`,
+          severity: 'warn',
+          category: 'sync',
+          priority: 22,
+        });
+      }
+    }
+  } catch {
+    /* ignore diagnostics parsing errors */
   }
 
   // Only suggest runtime/provider scaffolding if no working setup exists

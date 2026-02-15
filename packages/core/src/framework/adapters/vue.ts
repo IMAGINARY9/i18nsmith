@@ -192,11 +192,13 @@ export class VueAdapter implements FrameworkAdapter {
     this.activeSkipLog = [];
     this.seenCandidateIds.clear();
 
+    const scanCalls = options?.scanCalls ?? false;
+
     try {
       const vueEslintParser = this.getVueEslintParser();
       if (!vueEslintParser) {
         // Fallback: no parser available - use a minimal text-based extraction
-        this.extractFromContent(content, filePath, candidates);
+        this.extractFromContent(content, filePath, candidates, scanCalls);
         this.lastSkipped = this.activeSkipLog ?? [];
         this.activeSkipLog = undefined;
         return candidates;
@@ -232,7 +234,15 @@ export class VueAdapter implements FrameworkAdapter {
 
       if (!ast) {
         this.reportTemplateParseFailure(filePath, content, parseError);
-        this.extractFromContent(content, filePath, candidates);
+        this.extractFromContent(content, filePath, candidates, scanCalls);
+        this.lastSkipped = this.activeSkipLog ?? [];
+        this.activeSkipLog = undefined;
+        return candidates;
+      }
+
+      // If both templateBody and body are null/missing, fall back to regex extraction
+      if (!ast.templateBody && !ast.body) {
+        this.extractFromContent(content, filePath, candidates, scanCalls);
         this.lastSkipped = this.activeSkipLog ?? [];
         this.activeSkipLog = undefined;
         return candidates;
@@ -240,12 +250,12 @@ export class VueAdapter implements FrameworkAdapter {
 
       // Extract candidates from template
       if (ast.templateBody) {
-        this.extractFromTemplate(ast.templateBody, content, filePath, candidates);
+        this.extractFromTemplate(ast.templateBody, content, filePath, candidates, scanCalls);
       }
 
       // Extract candidates from script body (only available when full parse succeeded)
       if (ast.body) {
-        this.extractFromScript(ast.body, content, filePath, candidates);
+        this.extractFromScript(ast.body, content, filePath, candidates, scanCalls);
       }
 
       this.lastSkipped = this.activeSkipLog ?? [];
@@ -253,7 +263,7 @@ export class VueAdapter implements FrameworkAdapter {
       return candidates;
     } catch (error) {
       // Unexpected error — fall back to content-based extraction
-      this.extractFromContent(content, filePath, candidates);
+      this.extractFromContent(content, filePath, candidates, scanCalls);
       this.lastSkipped = this.activeSkipLog ?? [];
       this.activeSkipLog = undefined;
       return candidates;
@@ -310,7 +320,7 @@ export class VueAdapter implements FrameworkAdapter {
     return patterns.map(pattern => new RegExp(pattern, 'i'));
   }
 
-  private extractFromContent(content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractFromContent(content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean = false): void {
     // Simple fallback extraction - look for text content in template HTML.
     // This is used when vue-eslint-parser is not available at all.
     const lines = content.split('\n');
@@ -338,6 +348,24 @@ export class VueAdapter implements FrameworkAdapter {
       for (const match of templateMatches) {
         const text = match.slice(1, -1).trim();
         if (!text) continue;
+
+        // When scanCalls is true (rename mode), capture literal key-like strings
+        if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(text)) {
+          const candidate: ScanCandidate = {
+            id: `${filePath}:${i + 1}:rename`,
+            kind: 'jsx-text' as CandidateKind, // Use jsx-text for template context
+            filePath,
+            text,
+            position: {
+              line: i + 1,
+              column: line.indexOf(text),
+            },
+            suggestedKey: text,
+            hash: this.hashText(text),
+          };
+          candidates.push(candidate);
+          continue;
+        }
 
         // Skip text that contains Vue template interpolations ({{ ... }}).
         // Mixed content like "Main: {{ expr }}" needs compound i18n with named
@@ -505,54 +533,85 @@ export class VueAdapter implements FrameworkAdapter {
     return issues;
   }
 
-  private extractFromTemplate(templateBody: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractFromTemplate(templateBody: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!templateBody) return;
 
     // Walk the template AST to find text and attributes
-    this.walkTemplate(templateBody, content, filePath, candidates);
+    this.walkTemplate(templateBody, content, filePath, candidates, scanCalls);
   }
 
-  private extractFromScript(scriptBody: any[], content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractFromScript(scriptBody: any[], content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     // Extract string literals from variable declarations and assignments in script
     for (const node of scriptBody) {
-      this.walkScript(node, content, filePath, candidates);
+      this.walkScript(node, content, filePath, candidates, scanCalls);
     }
   }
 
-  private walkScript(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private walkScript(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!node) return;
 
     switch (node.type) {
       case 'VariableDeclaration':
         for (const declaration of node.declarations) {
           if (declaration.init && declaration.init.type === 'Literal' && typeof declaration.init.value === 'string') {
-            this.extractScriptStringLiteral(declaration.init, content, filePath, candidates);
+            this.extractScriptStringLiteral(declaration.init, content, filePath, candidates, scanCalls);
           }
         }
         break;
       case 'AssignmentExpression':
         if (node.right && node.right.type === 'Literal' && typeof node.right.value === 'string') {
-          this.extractScriptStringLiteral(node.right, content, filePath, candidates);
+          this.extractScriptStringLiteral(node.right, content, filePath, candidates, scanCalls);
         }
         break;
       // Walk child nodes
       default:
         if (node.body && Array.isArray(node.body)) {
           for (const child of node.body) {
-            this.walkScript(child, content, filePath, candidates);
+            this.walkScript(child, content, filePath, candidates, scanCalls);
           }
         } else if (node.consequent) {
-          this.walkScript(node.consequent, content, filePath, candidates);
+          this.walkScript(node.consequent, content, filePath, candidates, scanCalls);
         } else if (node.alternate) {
-          this.walkScript(node.alternate, content, filePath, candidates);
+          this.walkScript(node.alternate, content, filePath, candidates, scanCalls);
         }
         break;
     }
   }
 
-  private extractScriptStringLiteral(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractScriptStringLiteral(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     const text = node.value;
-    if (!text || typeof text !== 'string' || !this.shouldExtractText(text)) {
+    if (!text || typeof text !== 'string') {
+      return;
+    }
+
+    // When scanCalls is true (rename mode), we want to capture literal key-like
+    // strings that may represent translation keys, even if they don't match
+    // extraction heuristics. This ensures KeyRenamer can find and rename
+    // literal occurrences like `message: 'old.key'` in script sections.
+    if (scanCalls) {
+      // Emit a candidate for any dotted string literal that looks like a key
+      if (/^[\w-]+(\.[\w-]+)+$/.test(text)) {
+        const lines = content.slice(0, node.range[0]).split('\n');
+        const line = lines.length;
+        const column = lines[lines.length - 1].length;
+
+        const candidate: ScanCandidate = {
+          id: `${filePath}:${line}:rename`,
+          kind: 'jsx-expression' as CandidateKind, // Use jsx-expression for script context
+          filePath,
+          text,
+          position: { line, column },
+          suggestedKey: text, // Keep the same key for rename operations
+          hash: this.hashText(text),
+        };
+
+        candidates.push(candidate);
+        return;
+      }
+    }
+
+    // Standard extraction logic (for transform/scan operations)
+    if (!this.shouldExtractText(text)) {
       return;
     }
 
@@ -622,7 +681,7 @@ export class VueAdapter implements FrameworkAdapter {
     return false;
   }
 
-  private walkTemplate(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private walkTemplate(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!node) return;
 
     switch (node.type) {
@@ -630,7 +689,7 @@ export class VueAdapter implements FrameworkAdapter {
         // VText is handled by the parent VElement (see below) with sibling context
         break;
       case 'VElement':
-        this.extractElementAttributes(node, content, filePath, candidates);
+        this.extractElementAttributes(node, content, filePath, candidates, scanCalls);
         // Process children with sibling awareness: VText nodes adjacent to
         // VExpressionContainers are fragments of compound expressions
         // (e.g. "ID: {{ id }} | Images: {{ count }}") and should be skipped.
@@ -638,9 +697,9 @@ export class VueAdapter implements FrameworkAdapter {
           const hasExpressionChild = node.children.some((c: any) => c.type === 'VExpressionContainer');
           for (const child of node.children) {
             if (child.type === 'VText') {
-              this.extractTextNode(child, content, filePath, candidates, hasExpressionChild);
+              this.extractTextNode(child, content, filePath, candidates, hasExpressionChild, scanCalls);
             } else {
-              this.walkTemplate(child, content, filePath, candidates);
+              this.walkTemplate(child, content, filePath, candidates, scanCalls);
             }
           }
         }
@@ -648,19 +707,39 @@ export class VueAdapter implements FrameworkAdapter {
       case 'VExpressionContainer':
         // Extract string literals from template expressions like {{ 'text' }}
         if (node.expression) {
-          this.extractFromExpression(node.expression, content, filePath, candidates);
+          this.extractFromExpression(node.expression, content, filePath, candidates, scanCalls);
         }
         break;
     }
   }
 
-  private extractFromExpression(expr: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractFromExpression(expr: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!expr) return;
 
     // Handle string literals in template expressions: {{ 'text' }} or {{ "text" }}
     if (expr.type === 'Literal' && typeof expr.value === 'string') {
       const text = expr.value;
       
+      // When scanCalls is true (rename mode), capture literal key-like strings
+      if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(text)) {
+        const candidate: ScanCandidate = {
+          id: `${filePath}:${expr.loc.start.line}:${expr.loc.start.column}:rename`,
+          kind: 'jsx-expression' as CandidateKind, // Use jsx-expression for template expressions
+          filePath,
+          text,
+          position: {
+            line: expr.loc.start.line,
+            column: expr.loc.start.column,
+          },
+          suggestedKey: text, // Keep the same key for rename
+          hash: this.hashText(text),
+          fullRange: [expr.range[0], expr.range[1]],
+        } as ScanCandidate & { fullRange?: [number, number] };
+
+        candidates.push(candidate);
+        return;
+      }
+
       if (!this.shouldExtractText(text)) return;
 
       // Skip if it's already a translation call
@@ -687,9 +766,29 @@ export class VueAdapter implements FrameworkAdapter {
     // TODO: Handle template literals, concatenations, etc. if needed
   }
 
-  private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean): void {
+  private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean, scanCalls: boolean): void {
     const rawText = content.slice(node.range[0], node.range[1]);
     const trimmedText = rawText.trim();
+
+    // When scanCalls is true (rename mode), capture literal key-like text
+    if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(trimmedText)) {
+      const candidate: ScanCandidate = {
+        id: `${filePath}:${node.loc.start.line}:${node.loc.start.column}:rename`,
+        kind: 'jsx-text' as CandidateKind, // Use jsx-text so transformText will be called
+        filePath,
+        text: trimmedText,
+        position: {
+          line: node.loc.start.line,
+          column: node.loc.start.column,
+        },
+        suggestedKey: trimmedText, // Keep the same key for rename
+        hash: this.hashText(trimmedText),
+        fullRange: [node.range[0], node.range[1]],
+      } as ScanCandidate & { fullRange?: [number, number] };
+
+      candidates.push(candidate);
+      return;
+    }
 
   if (!this.shouldExtractText(trimmedText)) return;
 
@@ -720,7 +819,7 @@ export class VueAdapter implements FrameworkAdapter {
     candidates.push(candidate);
   }
 
-  private extractElementAttributes(node: any, content: string, filePath: string, candidates: ScanCandidate[]): void {
+  private extractElementAttributes(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!node.startTag || !node.startTag.attributes) return;
 
     for (const attr of node.startTag.attributes) {
@@ -734,6 +833,26 @@ export class VueAdapter implements FrameworkAdapter {
 
       if (attr.value.type === 'VLiteral' && typeof attr.value.value === 'string') {
         const text = attr.value.value;
+        
+        // When scanCalls is true (rename mode), capture literal key-like strings
+        if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(text)) {
+          const candidate: ScanCandidate = {
+            id: `${filePath}:${attr.loc.start.line}:${attr.loc.start.column}:rename`,
+            kind: 'jsx-attribute' as CandidateKind,
+            filePath,
+            text,
+            position: {
+              line: attr.loc.start.line,
+              column: attr.loc.start.column,
+            },
+            suggestedKey: text, // Keep the same key for rename
+            hash: this.hashText(text),
+            context: attrName,
+          };
+          candidates.push(candidate);
+          continue;
+        }
+        
         if (this.shouldExtractText(text, { attribute: attrName })) {
           const candidate: ScanCandidate = {
             id: `${filePath}:${attr.loc.start.line}:${attr.loc.start.column}`,
@@ -919,7 +1038,7 @@ export class VueAdapter implements FrameworkAdapter {
     return true;
   }
 
-  private generateEdits(candidates: TransformCandidate[], originalContent: string, newContent: string): Array<{ start: number; end: number; replacement: string }> {
+  private generateEdits(candidates: TransformCandidate[], originalContent: string, _newContent: string): Array<{ start: number; end: number; replacement: string }> {
     // Simple diff-based edit generation
     const edits: Array<{ start: number; end: number; replacement: string }> = [];
 

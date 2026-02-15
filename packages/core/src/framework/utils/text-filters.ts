@@ -168,10 +168,10 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
-  // Treat strings that are *only* emoji/debug symbols as non-sentences,
-  // but allow strings that contain regular alphabetic characters even
-  // if they begin with an emoji (e.g. "🎉 Welcome!").
-  if (DEBUG_MESSAGE_PATTERN.test(trimmedText) && !/[\p{L}]/u.test(trimmedText)) {
+  // Skip debug messages that start with emoji.
+  // These are typically console.log messages, not user-facing UI text.
+  // Examples: "✅ Logo updated", "🚀 Server started"
+  if (DEBUG_MESSAGE_PATTERN.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
