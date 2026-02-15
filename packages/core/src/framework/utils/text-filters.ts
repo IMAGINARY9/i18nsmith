@@ -12,7 +12,11 @@ const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-
 const URL_PATTERN = /^(https?:\/\/|mailto:|tel:)/i;
 const BOOLEAN_LITERAL_PATTERN = /^(true|false|null|undefined)$/i;
 const CODE_FRAGMENT_PATTERN = /(&&|\|\||===|!==|=>|\breturn\b|\bconst\b|\blet\b|\bvar\b|\bif\b|\belse\b)/;
-const CSS_CLASS_PATTERN = /^(?:[\w:./\-\[\]()'#%,]+\s+)+[\w:./\-\[\]()'#%,]+$/i;
+// Require tokens to start with an alphanumeric character so isolated
+// punctuation (e.g. an em-dash written as " - ") doesn't match.
+// This reduces false-positives where normal sentences are mistaken
+// for CSS class lists.
+const CSS_CLASS_PATTERN = /^(?:[A-Za-z0-9][\w:./\-\[\]()'#%,]*\s+)+[A-Za-z0-9][\w:./\-\[\]()'#%,]*$/i;
 const CSS_CLASS_SIGNAL = /[-:\[\]/\d]/;
 const SVG_PATH_PATTERN = /^[MmLlHhVvCcSsQqTtAaZz\d\s.,\-]+$/;
 const ICON_IDENTIFIER_PATTERN = /^[a-z][\w-]*:[a-z][\w-]*$/i;
@@ -164,7 +168,10 @@ export function shouldExtractText(text: string, config: TextFilterConfig): TextF
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
-  if (DEBUG_MESSAGE_PATTERN.test(trimmedText)) {
+  // Treat strings that are *only* emoji/debug symbols as non-sentences,
+  // but allow strings that contain regular alphabetic characters even
+  // if they begin with an emoji (e.g. "🎉 Welcome!").
+  if (DEBUG_MESSAGE_PATTERN.test(trimmedText) && !/[\p{L}]/u.test(trimmedText)) {
     return { shouldExtract: false, skipReason: 'non_sentence' };
   }
 
@@ -291,7 +298,16 @@ function isLikelyCssClassList(text: string): boolean {
   // Check for Tailwind arbitrary value syntax [value]
   const hasArbitraryValue = /\[[\d.]+\]/.test(text);
 
-  if (CSS_CLASS_PATTERN.test(text) && CSS_CLASS_SIGNAL.test(text)) {
+  // Only consider it a class-list if the overall pattern matches AND at least
+  // one token looks class-like (contains a hyphen/colon/slash/bracket or a
+  // digit inside the token). This avoids false-positives where normal
+  // sentences contain punctuation or digits separated by spaces.
+  const tokens = text.split(/\s+/).filter(Boolean);
+  // A class-like token typically contains an internal hyphen, slash, bracket
+  // or a colon followed by an identifier (e.g. "sm:mt-2"). Trailing
+  // punctuation like a terminal ':' should not trigger class-list detection.
+  const hasClassLikeToken = tokens.some((tok) => /[-\/\[]/.test(tok) || /:\w/.test(tok) || /\d/.test(tok));
+  if (CSS_CLASS_PATTERN.test(text) && hasClassLikeToken) {
     if (tokenCount >= 3) {
       return true;
     }

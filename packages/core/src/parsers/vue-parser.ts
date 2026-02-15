@@ -61,12 +61,20 @@ export class VueParser implements Parser {
       const parse = parserModule.parse;
 
       // Parse the Vue SFC
-      const ast = parse(content, {
+      const parserOptions: any = {
         sourceType: 'module',
         ecmaVersion: 2020,
         loc: true,
         range: true,
-      });
+      };
+
+      // Check if @typescript-eslint/parser is available for TypeScript support in <script lang="ts">
+      // If available, configure vue-eslint-parser to use it for TypeScript files
+      if (isPackageResolvable('@typescript-eslint/parser', workspaceRoot || process.cwd())) {
+        parserOptions.parser = '@typescript-eslint/parser';
+      }
+
+      const ast = parse(content, parserOptions);
 
       // Extract references from the AST
       this.extractReferencesFromVueAST(

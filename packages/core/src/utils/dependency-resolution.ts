@@ -61,14 +61,21 @@ export function requireFromWorkspace(packageName: string, workspaceRoot: string)
       const req = createRequire(pkgJson);
       const resolved = req.resolve(packageName);
       // Clear any cached copy and require via the workspace-specific require
-      delete require.cache[resolved];
+      // Use req.cache instead of require.cache (ESM compatibility)
+      if (req.cache && req.cache[resolved]) {
+        delete req.cache[resolved];
+      }
       return req(packageName);
     }
 
+    // Fallback: try default resolution from workspace paths
+    const req = createRequire(path.join(workspaceRoot, 'package.json'));
     const resolveFrom = buildResolutionPaths(workspaceRoot);
-    const resolved = require.resolve(packageName, { paths: resolveFrom });
-    delete require.cache[resolved];
-    return require(resolved);
+    const resolved = req.resolve(packageName, { paths: resolveFrom });
+    if (req.cache && req.cache[resolved]) {
+      delete req.cache[resolved];
+    }
+    return req(resolved);
   } catch (err) {
     // Let the caller receive the original error when module truly isn't
     // available via any resolution path.

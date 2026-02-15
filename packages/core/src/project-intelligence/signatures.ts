@@ -159,7 +159,8 @@ export const FRAMEWORK_SIGNATURES: FrameworkSignature[] = [
     featureIndicators: {
       'hooks': [], // React hooks are standard now
       'cra': ['react-scripts'],
-      'vite': ['vite.config.ts', 'vite.config.js'],
+      // Note: vite is not React-specific, so we don't include vite.config here
+      // to avoid false positives with Vue, Svelte, etc.
     },
   },
 

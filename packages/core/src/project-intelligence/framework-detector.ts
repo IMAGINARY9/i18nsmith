@@ -74,6 +74,15 @@ export class FrameworkDetector {
       const result = await this.checkFramework(signature.type);
       const confidence = this.calculateConfidence(result.evidence);
       
+      // Debug logging
+      if (process.env.DEBUG_FRAMEWORK_DETECTION) {
+        console.log(`[Framework Detection] ${signature.type}:`, {
+          matched: result.matched,
+          confidence,
+          evidence: result.evidence,
+        });
+      }
+      
       frameworkResults.push({
         type: signature.type,
         matched: result.matched,
@@ -210,23 +219,50 @@ export class FrameworkDetector {
         }
       }
 
+      // Check file patterns and add evidence, but be strict about what
+      // constitutes a "match" to avoid false positives.
+      // 
+      // Without the required package, we only match on truly framework-specific
+      // file types that cannot be confused with other frameworks:
+      // - .vue files = Vue
+      // - .svelte files = Svelte
+      // - .component.html (Angular templates)
+      // 
+      // Generic files like .ts, .js, .tsx, .jsx are NOT sufficient without
+      // the framework package, as they could belong to any framework.
+      let matchedFrameworkSpecificPattern = false;
       for (const pattern of signature.includePatterns ?? []) {
-        // pathExists understands globs
-        // Use a slightly higher weight since file patterns are strong indicators
-        // when present (e.g., many .vue files -> Vue project).
         // eslint-disable-next-line no-await-in-loop
         const exists = await this.pathExists(pattern);
         if (exists) {
-          hasRequiredPackage = true;
+          // Check if this pattern is for framework-specific file extensions.
+          // Patterns containing .vue, .svelte, etc. are strong indicators.
+          // Patterns with only .ts/.js/.tsx/.jsx are NOT framework-specific
+          // (they could be any framework or vanilla TypeScript).
+          const hasVueExtension = pattern.includes('.vue');
+          const hasSvelteExtension = pattern.includes('.svelte');
+          const hasAngularExtension = pattern.includes('.component.html') || pattern.includes('.component.ts');
+          
+          const isFrameworkSpecific = hasVueExtension || hasSvelteExtension || hasAngularExtension;
+          
+          const weight = isFrameworkSpecific ? 0.3 : 0.1; // Lower weight for generic patterns
+          
           evidence.push({
             type: 'file',
             source: pattern,
-            weight: 0.3,
+            weight,
             description: `Found files matching ${pattern}`,
           });
-          break;
+          
+          if (isFrameworkSpecific) {
+            matchedFrameworkSpecificPattern = true;
+          }
         }
       }
+      
+      // Only set hasRequiredPackage if we found framework-specific indicators
+      hasRequiredPackage = matchedFeatureIndicator || matchedFrameworkSpecificPattern;
+      
       // Heuristic: for high-level frameworks that encompass others (e.g., Nuxt
       // includes Vue), require a feature indicator (nuxt.config.* or pages/)
       // in addition to generic file matches to avoid misclassification.
