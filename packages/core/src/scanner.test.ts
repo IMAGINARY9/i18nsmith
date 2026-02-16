@@ -214,7 +214,7 @@ describe('Scanner', async () => {
     const summary = scanner.scan({ scanCalls: true } as any);
     const texts = summary.candidates.map((candidate) => candidate.text);
 
-    expect(texts).toEqual(['a150800', 'Ready ✅', 'All set now', '30% off']);
+    expect(texts).toEqual(['a150800', 'Ready ✅', 'All set now', '30% off', '••••••']);
   });
 
   it('decodes HTML entities and preserves newlines when configured', async () => {

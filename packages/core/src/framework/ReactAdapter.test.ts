@@ -173,5 +173,68 @@ describe('ReactAdapter', () => {
       expect(result.content).toBe(content);
       expect(result.edits).toHaveLength(0);
     });
+
+    it('should rename call-expression argument (single quotes)', () => {
+      const content = `
+        function Component() {
+          const { t } = useTranslation();
+          return <div>{t('old.key')}</div>;
+        }
+      `;
+
+  const candidates = adapter.scan('/test.tsx', content, { scanCalls: true, config: mockConfig, workspaceRoot: '/workspace' });
+      const callCandidate = candidates.find((c) => c.kind === 'call-expression');
+      expect(callCandidate).toBeDefined();
+
+      // Simulate rename suggestion
+      (callCandidate as any).suggestedKey = 'new.key';
+
+      const result = adapter.mutate('/test.tsx', content, [callCandidate as any], {
+        mode: 'rename',
+        config: mockConfig,
+        workspaceRoot: '/workspace',
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+      });
+
+      expect(result.didMutate).toBe(true);
+      expect(result.content).toContain("t('new.key')");
+    });
+
+    it('should rename call-expression argument (double quotes, template literals, and extra args)', () => {
+      const content = `
+        function Component() {
+          const { t } = useTranslation();
+          return (
+            <div>
+              {t("old.key")}
+              {t(\`old.key\`)}
+              {t('old.key', { count: 1 })}
+            </div>
+          );
+        }
+      `;
+
+      const candidates = adapter.scan('/test.tsx', content, { scanCalls: true, config: mockConfig, workspaceRoot: '/workspace' });
+      const callCandidates = candidates.filter((c) => c.kind === 'call-expression');
+      expect(callCandidates.length).toBeGreaterThanOrEqual(3);
+
+      // Rename all found occurrences
+      for (const cand of callCandidates) {
+        (cand as any).suggestedKey = 'new.key';
+      }
+
+      const result = adapter.mutate('/test.tsx', content, callCandidates as any[], {
+        mode: 'rename',
+        config: mockConfig,
+        workspaceRoot: '/workspace',
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+      });
+
+      expect(result.didMutate).toBe(true);
+      // preserves quoting style and extra args
+      expect(result.content).toContain('t("new.key")');
+      expect(result.content).toContain('t(`new.key`)');
+      expect(result.content).toContain("t('new.key', { count: 1 })");
+    });
   });
 });

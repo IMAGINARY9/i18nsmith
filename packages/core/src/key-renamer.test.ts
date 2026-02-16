@@ -215,6 +215,52 @@ export function I18nTest() {
     expect(content).toContain("i18n.t('new.key')");
   });
 
+  it('renames call-expression occurrences with different literal styles and preserves extra args', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'DoubleQuotes.tsx'),
+      `import { useTranslation } from 'react-i18next';
+export function DoubleQuotes() {
+  const { t } = useTranslation();
+  return <div>{t("old.key")}</div>;
+}
+`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'TemplateLiteral.tsx'),
+      `import { useTranslation } from 'react-i18next';
+export function TemplateLiteral() {
+  const { t } = useTranslation();
+  return <div>{t(\`old.key\`)}</div>;
+}
+`
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'src', 'ExtraArgs.tsx'),
+      `import { useTranslation } from 'react-i18next';
+export function ExtraArgs() {
+  const { t } = useTranslation();
+  return <div>{t('old.key', { count: 2 })}</div>;
+}
+`
+    );
+
+    const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
+    const summary = await renamer.rename('old.key', 'new.key', { write: true });
+
+    // App.tsx + three newly created files
+    expect(summary.occurrences).toBe(4);
+    const doubleContents = await fs.readFile(path.join(tempDir, 'src', 'DoubleQuotes.tsx'), 'utf8');
+    expect(doubleContents).toContain('t("new.key")');
+
+    const templateContents = await fs.readFile(path.join(tempDir, 'src', 'TemplateLiteral.tsx'), 'utf8');
+    expect(templateContents).toContain('t(`new.key`)');
+
+    const extraContents = await fs.readFile(path.join(tempDir, 'src', 'ExtraArgs.tsx'), 'utf8');
+    expect(extraContents).toContain("t('new.key', { count: 2 })");
+  });
+
   it('finds files in default include directories (e.g., pages/)', async () => {
     await fs.mkdir(path.join(tempDir, 'pages'), { recursive: true });
     await fs.writeFile(

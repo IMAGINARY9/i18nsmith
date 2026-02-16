@@ -1,13 +1,4 @@
-import path from 'path';
-import {
-  Node,
-  JsxAttribute,
-  JsxExpression,
-  JsxText,
-  SourceFile,
-  SyntaxKind,
-  Project,
-} from 'ts-morph';
+import { Node, JsxAttribute, SourceFile, SyntaxKind } from 'ts-morph';
 import type { I18nConfig } from '../config.js';
 import { createScannerProject } from '../project-factory.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../scanner.js';
@@ -85,7 +76,7 @@ export class ReactAdapter implements FrameworkAdapter {
 
     // Scan translation call expressions if enabled
     if (options?.scanCalls) {
-      this.scanCallExpressions(sourceFile, candidates, filePath);
+      this.scanCallExpressions(sourceFile, candidates, filePath, options);
     }
 
     return candidates;
@@ -109,17 +100,36 @@ export class ReactAdapter implements FrameworkAdapter {
 
     for (const candidate of candidates) {
       if (candidate.kind === 'call-expression') {
-        // For renaming existing calls, find and replace the key
-        const oldCall = `t('${candidate.text}')`;
-        const newCall = `t('${candidate.suggestedKey}')`;
-        const index = content.indexOf(oldCall);
-        
-        if (index !== -1) {
-          edits.push({
-            start: index,
-            end: index + oldCall.length,
-            replacement: newCall,
-          });
+        // For renaming existing translation call arguments we must perform
+        // an AST-aware replacement of the first argument so we preserve
+        // surrounding formatting, additional arguments and quoting style.
+        const node = this.findNodeByPosition(sourceFile, candidate);
+        let literalNode: Node | null = node && (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) ? node : null;
+
+        // Fallback: try to locate a string/template literal at the same position
+        if (!literalNode) {
+          const literalsAtPos = sourceFile.getDescendants()
+            .filter((n) => (Node.isStringLiteral(n) || Node.isNoSubstitutionTemplateLiteral(n)) &&
+                           n.getStartLineNumber() === candidate.position.line &&
+                           (n.getStart() - n.getStartLinePos()) === candidate.position.column);
+          if (literalsAtPos.length > 0) literalNode = literalsAtPos[0];
+        }
+
+        if (literalNode) {
+          // Preserve original quoting (single, double, or template) when
+          // replacing the literal.
+          const originalText = literalNode.getText();
+          const quote = originalText[0] || '\'';
+          let replacementLiteral: string;
+          if (quote === '`') {
+            replacementLiteral = `\`${candidate.suggestedKey}\``;
+          } else if (quote === '"') {
+            replacementLiteral = `"${candidate.suggestedKey}"`;
+          } else {
+            replacementLiteral = `'${candidate.suggestedKey}'`;
+          }
+
+          edits.push({ start: literalNode.getStart(), end: literalNode.getEnd(), replacement: replacementLiteral });
           didMutate = true;
         }
       } else {
@@ -505,7 +515,7 @@ export class ReactAdapter implements FrameworkAdapter {
     return hashText(text);
   }
 
-  private scanCallExpressions(sourceFile: SourceFile, candidates: ScanCandidate[], filePath: string): void {
+  private scanCallExpressions(sourceFile: SourceFile, candidates: ScanCandidate[], filePath: string, options?: AdapterScanOptions): void {
     // Find all call expressions
     const callExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression);
 
@@ -539,15 +549,15 @@ export class ReactAdapter implements FrameworkAdapter {
             text = text.replace(/\n/g, ' ');
           }
           
-          if (this.shouldExtractText(text) || hasForceComment) {
+          if (this.shouldExtractText(text) || hasForceComment || options?.scanCalls) {
             const candidate: ScanCandidate = {
-              id: `${filePath}:${callExpr.getStart()}`,
+              id: `${filePath}:${firstArg.getStart()}`,
               kind: 'call-expression' as CandidateKind,
               filePath,
               text,
               position: {
-                line: callExpr.getStartLineNumber(),
-                column: callExpr.getStart() - callExpr.getStartLinePos(),
+                line: firstArg.getStartLineNumber(),
+                column: firstArg.getStart() - firstArg.getStartLinePos(),
               },
               suggestedKey: this.generateKey(text),
               hash: this.hashText(text),
@@ -571,15 +581,15 @@ export class ReactAdapter implements FrameworkAdapter {
             text = text.replace(/\n/g, ' ');
           }
           
-          if (this.shouldExtractText(text) || hasForceComment) {
+          if (this.shouldExtractText(text) || hasForceComment || options?.scanCalls) {
             const candidate: ScanCandidate = {
-              id: `${filePath}:${callExpr.getStart()}`,
+              id: `${filePath}:${firstArg.getStart()}`,
               kind: 'call-expression' as CandidateKind,
               filePath,
               text,
               position: {
-                line: callExpr.getStartLineNumber(),
-                column: callExpr.getStart() - callExpr.getStartLinePos(),
+                line: firstArg.getStartLineNumber(),
+                column: firstArg.getStart() - firstArg.getStartLinePos(),
               },
               suggestedKey: this.generateKey(text),
               hash: this.hashText(text),
@@ -701,7 +711,6 @@ export class ReactAdapter implements FrameworkAdapter {
       
       // Check if we're inside a call expression argument that might be a callback
       if (Node.isCallExpression(current)) {
-        const args = current.getArguments();
         const expr = current.getExpression();
         
         // Check for dynamic imports with loading callbacks

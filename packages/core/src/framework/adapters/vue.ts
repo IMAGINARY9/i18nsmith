@@ -341,12 +341,33 @@ export class VueAdapter implements FrameworkAdapter {
 
   this.extractAttributeCandidatesFromLine(line, filePath, i + 1, candidates);
 
-      // Match text content between > and <
-      const templateMatches = line.match(/>([^<]+)</g);
-      if (!templateMatches) continue;
+      // Collect text fragments on this template line. We want to capture:
+      // - text between tags on the same line (e.g. <h1>Title</h1>)
+      // - text after a closing tag on the same line (</b> trailing text)
+      // - standalone lines that contain only text (indented text on its own
+      //   line inside the template)
+      const fragments = new Set<string>();
 
-      for (const match of templateMatches) {
-        const text = match.slice(1, -1).trim();
+      // (a) between tags
+      const betweenTagRe = />[^<]+</g;
+      let m: RegExpExecArray | null;
+      while ((m = betweenTagRe.exec(line)) !== null) {
+        fragments.add(m[0].slice(1, -1));
+      }
+
+      // (b) after a '>' until next '<' or end-of-line (handles trailing text)
+      const afterTagRe = />\s*([^<\n\r]+)/g;
+      while ((m = afterTagRe.exec(line)) !== null) {
+        fragments.add(m[1]);
+      }
+
+      // (c) whole-line text (no tags on this line)
+      if (!line.includes('<') && line.trim().length > 0) {
+        fragments.add(line.trim());
+      }
+
+      for (const raw of fragments) {
+        const text = raw.trim();
         if (!text) continue;
 
         // When scanCalls is true (rename mode), capture literal key-like strings
@@ -368,8 +389,6 @@ export class VueAdapter implements FrameworkAdapter {
         }
 
         // Skip text that contains Vue template interpolations ({{ ... }}).
-        // Mixed content like "Main: {{ expr }}" needs compound i18n with named
-        // parameters — simple text extraction would produce broken output.
         if (/\{\{/.test(text)) {
           this.extractQuotedLiterals(text, filePath, i + 1, candidates, { allowSingleCharacter: false });
           continue;
@@ -393,6 +412,7 @@ export class VueAdapter implements FrameworkAdapter {
             suggestedKey: this.generateKey(text),
             hash: this.hashText(text),
           };
+
           candidates.push(candidate);
         }
       }

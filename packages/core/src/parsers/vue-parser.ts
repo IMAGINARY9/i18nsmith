@@ -32,9 +32,23 @@ export class VueParser implements Parser {
       return true;
     }
 
-    const available = workspaceRoot
+    let available = workspaceRoot
       ? isPackageResolvable('vue-eslint-parser', workspaceRoot)
       : false;
+
+    // If not resolvable from the workspace, allow using the CLI/runtime copy
+    // of the parser (useful in test environments and when the parser is a
+    // transitive dependency of the monorepo). This mirrors the runtime
+    // fallback in ReferenceExtractor.getVueEslintParser().
+    if (!available) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        require('vue-eslint-parser');
+        available = true;
+      } catch {
+        // leave available as false
+      }
+    }
 
     this.availabilityCache = { workspaceRoot, available };
 
@@ -57,8 +71,17 @@ export class VueParser implements Parser {
 
     try {
       // Lazy load vue-eslint-parser to avoid import issues when not available
-      // Lazy load vue-eslint-parser using robust workspace resolution
-      const parserModule = requireFromWorkspace('vue-eslint-parser', workspaceRoot || process.cwd());
+      // Prefer loading from the project's workspace first; if that fails,
+      // fall back to the CLI/runtime copy of the parser (mirrors
+      // ReferenceExtractor.getVueEslintParser behavior).
+      let parserModule: any;
+      try {
+        parserModule = requireFromWorkspace('vue-eslint-parser', workspaceRoot || process.cwd());
+      } catch (err) {
+        // Fallback to runtime/CLI copy
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        parserModule = require('vue-eslint-parser');
+      }
       const parse = parserModule.parse;
 
       // Parse the Vue SFC
