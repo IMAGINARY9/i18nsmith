@@ -109,17 +109,53 @@ Properly handle template literals, including those with expressions.
 {`Count: ${items.length}`}  → {t('count', { count: items.length })}
 ```
 
-### Phase 4: Adjacent Text/Expression Handling
+### Phase 4: ReactAdapter Integration
+**Status: ✅ COMPLETED**
+
+Integrate the utility functions into ReactAdapter's scanning and transformation pipeline.
+
+#### Tasks:
+- [x] 4.1 Add imports for expression-analyzer, string-concat-merger, template-literal-handler
+- [x] 4.2 Extend `ScanCandidate` interface with `interpolation` field
+- [x] 4.3 Modify `scanJsxExpressions()` to analyze expressions as units
+- [x] 4.4 Handle static concatenation → single merged candidate
+- [x] 4.5 Handle mixed concatenation → candidate with interpolation info
+- [x] 4.6 Handle template literals → candidate with proper extraction
+- [x] 4.7 Skip non-translatable patterns (JSON, SQL, format specifiers)
+- [x] 4.8 Skip pure dynamic expressions
+- [x] 4.9 Track handled positions to avoid duplicate extractions
+- [x] 4.10 Add comprehensive integration tests (13 tests passing)
+
+#### Integration Points:
+```typescript
+// ReactAdapter.scanJsxExpressions()
+// 1. Analyze expression type
+const analysis = analyzeJsxExpression(innerExpression);
+
+// 2. Handle concatenation
+if (analysis.type === ExpressionType.StaticConcatenation) {
+  const result = mergeStringConcatenation(innerExpression);
+  // Create single candidate with mergedValue
+}
+
+// 3. Handle template literals
+if (analysis.type === ExpressionType.TemplateWithExpressions) {
+  const result = handleTemplateLiteral(innerExpression);
+  // Create candidate with interpolation info
+}
+```
+
+### Phase 5: Adjacent Text/Expression Handling
 **Status: Not Started**
 
 Handle patterns where static text is adjacent to dynamic JSX expressions.
 
 #### Tasks:
-- [ ] 4.1 Analyze sibling nodes in JSX element children
-- [ ] 4.2 Identify text + expression patterns
-- [ ] 4.3 Determine extraction strategy (separate vs interpolated)
-- [ ] 4.4 Implement "label-only" mode vs "interpolation" mode
-- [ ] 4.5 Add configuration for preferred strategy
+- [ ] 5.1 Analyze sibling nodes in JSX element children
+- [ ] 5.2 Identify text + expression patterns
+- [ ] 5.3 Determine extraction strategy (separate vs interpolated)
+- [ ] 5.4 Implement "label-only" mode vs "interpolation" mode
+- [ ] 5.5 Add configuration for preferred strategy
 
 #### Patterns:
 ```jsx
@@ -138,17 +174,17 @@ Handle patterns where static text is adjacent to dynamic JSX expressions.
   // → {t('hello_messages', { name, count })}
 ```
 
-### Phase 5: Non-Translatable Pattern Detection
-**Status: Not Started**
+### Phase 6: Non-Translatable Pattern Detection Enhancement
+**Status: Partially Complete (covered by Phase 1 ExpressionAnalyzer)**
 
 Improve detection of patterns that should NOT be extracted.
 
 #### Tasks:
-- [ ] 5.1 Detect JSON-like strings: `{"{\"key\": \"value\"}"}`
-- [ ] 5.2 Detect code-like content: SQL, regex, format specifiers
-- [ ] 5.3 Detect data patterns: phone numbers, emails, URLs (when not user-facing labels)
-- [ ] 5.4 Add configuration for pattern customization
-- [ ] 5.5 Add tests for edge cases
+- [x] 6.1 Detect JSON-like strings (handled in expression-analyzer)
+- [x] 6.2 Detect code-like content: SQL, regex, format specifiers
+- [ ] 6.3 Detect data patterns: phone numbers, emails, URLs (when not user-facing labels)
+- [ ] 6.4 Add configuration for pattern customization
+- [ ] 6.5 Add tests for edge cases
 
 #### Patterns to Skip:
 ```jsx
@@ -166,19 +202,19 @@ Improve detection of patterns that should NOT be extracted.
 {"https://url.com"}  // Skip (URL)
 ```
 
-### Phase 6: Edit Collision Prevention
+### Phase 7: Edit Collision Prevention
 **Status: Not Started**
 
 Prevent overlapping edits that cause corruption.
 
 #### Tasks:
-- [ ] 6.1 Implement `EditConflictDetector` to find overlapping ranges
-- [ ] 6.2 Create hierarchical edit planning (parent expressions first)
-- [ ] 6.3 Implement edit batching for complex expressions
-- [ ] 6.4 Add validation for edit result integrity
-- [ ] 6.5 Add rollback mechanism for failed transformations
+- [ ] 7.1 Implement `EditConflictDetector` to find overlapping ranges
+- [ ] 7.2 Create hierarchical edit planning (parent expressions first)
+- [ ] 7.3 Implement edit batching for complex expressions
+- [ ] 7.4 Add validation for edit result integrity
+- [ ] 7.5 Add rollback mechanism for failed transformations
 
-### Phase 7: Vue Adapter Parity
+### Phase 8: Vue Adapter Parity
 **Status: Not Started**
 
 Apply same improvements to Vue adapter.

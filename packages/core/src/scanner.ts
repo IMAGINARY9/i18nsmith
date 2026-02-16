@@ -71,6 +71,18 @@ export interface ScanCandidate {
     line: number;
     column: number;
   };
+  /**
+   * Interpolation information for expressions with dynamic parts.
+   * Used for template literals and mixed concatenation.
+   */
+  interpolation?: {
+    /** The interpolation template (e.g., "Hello {name}!") */
+    template: string;
+    /** Variables used in the interpolation */
+    variables: Array<{ name: string; expression: string }>;
+    /** The locale value format (depends on i18n library) */
+    localeValue?: string;
+  };
 }
 
 export interface ScanSummary {

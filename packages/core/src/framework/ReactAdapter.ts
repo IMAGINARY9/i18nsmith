@@ -5,6 +5,9 @@ import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from 
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from './types.js';
 import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, decodeHtmlEntities } from './utils/text-filters.js';
+import { analyzeJsxExpression, ExpressionType } from './utils/expression-analyzer.js';
+import { mergeStringConcatenation, MergeStrategy } from './utils/string-concat-merger.js';
+import { handleTemplateLiteral } from './utils/template-literal-handler.js';
 
 /**
  * React Framework Adapter
@@ -357,6 +360,9 @@ export class ReactAdapter implements FrameworkAdapter {
   private scanJsxExpressions(sourceFile: SourceFile, candidates: ScanCandidate[], filePath: string): void {
     const jsxExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.JsxExpression);
 
+    // Track positions that have been handled as part of larger expressions
+    const handledPositions = new Set<number>();
+
     for (const jsxExpr of jsxExpressions) {
       const attributeParent = jsxExpr.getParentIfKind(SyntaxKind.JsxAttribute);
       const attributeName = attributeParent?.getNameNode().getText();
@@ -385,9 +391,127 @@ export class ReactAdapter implements FrameworkAdapter {
         skipReason = 'directive_skip';
       }
 
-      // Look for string literals inside the expression
+      // Get the expression inside JSX braces
+      const innerExpression = jsxExpr.getExpression();
+      if (!innerExpression) {
+        continue;
+      }
+
+      // Analyze the full expression to determine how to handle it
+      const analysis = analyzeJsxExpression(innerExpression);
+
+      // Handle based on expression type
+      if (analysis.type === ExpressionType.NonTranslatable) {
+        // Skip non-translatable patterns (JSON, SQL, format specifiers, etc.)
+        continue;
+      }
+
+      if (analysis.type === ExpressionType.PureDynamic) {
+        // Pure dynamic expressions can't be translated
+        continue;
+      }
+
+      // Handle concatenation expressions
+      if (analysis.type === ExpressionType.StaticConcatenation || analysis.type === ExpressionType.MixedConcatenation) {
+        const mergeResult = mergeStringConcatenation(innerExpression);
+        
+        if (mergeResult.strategy === MergeStrategy.FullMerge || mergeResult.strategy === MergeStrategy.Interpolation) {
+          // Mark all string literal positions as handled
+          const stringLiterals = innerExpression.getDescendantsOfKind(SyntaxKind.StringLiteral);
+          for (const lit of stringLiterals) {
+            handledPositions.add(lit.getStart());
+          }
+
+          // Use mergedValue for full merge, interpolationTemplate for interpolation
+          const text = mergeResult.strategy === MergeStrategy.FullMerge 
+            ? mergeResult.mergedValue 
+            : mergeResult.interpolationTemplate;
+            
+          if (text && (this.shouldExtractText(text, attributeName ? { attribute: attributeName } : undefined) || force)) {
+            const candidate: ScanCandidate = {
+              id: `${filePath}:${jsxExpr.getStart()}`,
+              kind: 'jsx-expression' as CandidateKind,
+              filePath,
+              text,
+              position: {
+                line: jsxExpr.getStartLineNumber(),
+                column: jsxExpr.getStart() - jsxExpr.getStartLinePos(),
+              },
+              suggestedKey: this.generateKey(text),
+              hash: this.hashText(text),
+              forced: force,
+              skipReason,
+            };
+
+            // Add interpolation info for mixed concatenation
+            if (mergeResult.strategy === MergeStrategy.Interpolation && mergeResult.variables && mergeResult.variables.length > 0) {
+              candidate.interpolation = {
+                template: mergeResult.interpolationTemplate || text,
+                variables: mergeResult.variables.map(v => ({ name: v.name, expression: v.expression })),
+                localeValue: mergeResult.interpolationTemplate || text,
+              };
+            }
+
+            candidates.push(candidate);
+          }
+          continue;
+        }
+      }
+
+      // Handle template literals
+      if (analysis.type === ExpressionType.SimpleTemplateLiteral || analysis.type === ExpressionType.TemplateWithExpressions) {
+        const templateResult = handleTemplateLiteral(innerExpression);
+        
+        if (templateResult.canTransform) {
+          // Mark template literal position as handled
+          const noSubNodes = innerExpression.getDescendantsOfKind(SyntaxKind.NoSubstitutionTemplateLiteral);
+          const templateExprNodes = innerExpression.getDescendantsOfKind(SyntaxKind.TemplateExpression);
+          for (const node of [...noSubNodes, ...templateExprNodes]) {
+            handledPositions.add(node.getStart());
+          }
+
+          // Use staticValue for simple templates, interpolationTemplate for complex ones
+          const text = templateResult.staticValue || templateResult.interpolationTemplate;
+          if (text && (this.shouldExtractText(text, attributeName ? { attribute: attributeName } : undefined) || force)) {
+            const candidate: ScanCandidate = {
+              id: `${filePath}:${jsxExpr.getStart()}`,
+              kind: 'jsx-expression' as CandidateKind,
+              filePath,
+              text,
+              position: {
+                line: jsxExpr.getStartLineNumber(),
+                column: jsxExpr.getStart() - jsxExpr.getStartLinePos(),
+              },
+              suggestedKey: this.generateKey(text),
+              hash: this.hashText(text),
+              forced: force,
+              skipReason,
+            };
+
+            // Add interpolation info for template literals with expressions
+            if (templateResult.variables && templateResult.variables.length > 0) {
+              candidate.interpolation = {
+                template: templateResult.interpolationTemplate || text,
+                variables: templateResult.variables.map(v => ({ name: v.name, expression: v.expression })),
+                localeValue: templateResult.localeValue || templateResult.interpolationTemplate || text,
+              };
+            }
+
+            candidates.push(candidate);
+          }
+          continue;
+        }
+      }
+
+      // Fall back to extracting individual string literals (legacy behavior)
+      // Only for SimpleString type or if above handlers didn't process
       const stringLiterals = jsxExpr.getDescendantsOfKind(SyntaxKind.StringLiteral);
       for (const stringLiteral of stringLiterals) {
+        // Skip if this position was already handled
+        if (handledPositions.has(stringLiteral.getStart())) {
+          continue;
+        }
+
         if (this.isTranslationFallback(stringLiteral)) {
           continue;
         }
