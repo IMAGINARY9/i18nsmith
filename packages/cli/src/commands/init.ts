@@ -112,7 +112,7 @@ async function runNonInteractiveInit(commandOptions: InitCommandOptions): Promis
   let suggestedConfig: SuggestedConfig;
 
   if (intelligence) {
-    const { framework, locales, filePatterns, confidence } = intelligence;
+    const { framework, locales, filePatterns } = intelligence;
     
     // Report detection results
     if (framework.type !== 'unknown') {
@@ -510,6 +510,13 @@ export function registerInit(program: Command) {
             return !isNaN(num) && num > 0 ? true : 'Please enter a positive number';
           },
         },
+        {
+          type: 'confirm',
+          name: 'seedTargetLocales',
+          message: 'Seed target locale files with placeholders for missing keys?',
+          when: () => true,
+          default: false,
+        },
       ]);
 
 
@@ -643,6 +650,12 @@ export function registerInit(program: Command) {
           },
           seedTargetLocales: answers.seedTargetLocales,
         };
+      }
+
+      // Honor explicit interactive answer for seeding target locales regardless
+      // of which setup mode (auto/template/manual) produced the initial config.
+      if (typeof (answers as InitAnswers).seedTargetLocales === 'boolean' && config) {
+        config.seedTargetLocales = (answers as InitAnswers).seedTargetLocales;
       }
 
       const mergeDecision = await maybePromptMergeStrategy(config, workspaceRoot, Boolean(commandOptions.merge));
@@ -787,35 +800,33 @@ async function maybePromptMergeStrategy(
       }
     }
 
-    if (!mergeRequested) {
-      const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
-        {
-          type: 'confirm',
-          name: 'proceed',
-          message: 'Merge with the existing setup instead of overwriting?',
-          default: true,
-        },
-      ]);
-      if (!proceed) {
-        return { strategy: null, aborted: true };
-      }
-    }
+    // Single consolidated prompt for both --merge and interactive flows. When
+    // `--merge` is provided we omit the 'Abort' choice and default to
+    // 'keep-source'; otherwise include an explicit 'Abort' option (last).
+    const baseChoices = [
+      { name: 'Keep source values (append new keys only)', value: 'keep-source' },
+      { name: 'Overwrite with placeholders (backup first)', value: 'overwrite' },
+      { name: 'Prompt during sync to review changes interactively', value: 'interactive' },
+    ];
 
-    const { strategy } = await inquirer.prompt<{ strategy: MergeStrategy }>([
+    const choices = mergeRequested ? baseChoices : [...baseChoices, { name: 'Abort (do not touch existing files)', value: 'abort' }];
+
+    const { strategy } = await inquirer.prompt<{
+      strategy: 'abort' | MergeStrategy;
+    }>([
       {
         type: 'list',
         name: 'strategy',
-        message: 'Choose a merge strategy for existing locale keys',
-        choices: [
-          { name: 'Keep source values (append new keys only)', value: 'keep-source' },
-          { name: 'Overwrite with placeholders (backup first)', value: 'overwrite' },
-          { name: 'Interactive review during sync', value: 'interactive' },
-        ],
+        message: 'Existing i18n assets detected — choose how to proceed',
+        choices,
         default: 'keep-source',
       },
     ]);
 
-    return { strategy, aborted: false };
+    if (strategy === 'abort') {
+      return { strategy: null, aborted: true };
+    }
+    return { strategy: strategy as MergeStrategy, aborted: false };
   } catch (error) {
     console.warn(chalk.gray(`Skipping merge diagnostics: ${(error as Error).message}`));
     return { strategy: null, aborted: false };

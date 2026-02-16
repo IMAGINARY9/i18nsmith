@@ -160,6 +160,7 @@ vi.mock('inquirer', () => ({
       sourceLanguage: 'en',
       adapter: 'custom',
       localesDir: 'locales',
+      seedTargetLocales: false,
     }),
   },
 }));
@@ -254,6 +255,85 @@ describe('init command', () => {
         expect.stringContaining('locales/en.json'),
         expect.stringContaining('common.button.hello-world.abc123')
       );
+    });
+  });
+
+  describe('interactive mode', () => {
+    it('writes seedTargetLocales into config when user enables it', async () => {
+      const program = new Command();
+      registerInit(program);
+      const command = program.commands.find((cmd) => cmd.name() === 'init')!;
+
+      // Mock process.cwd to return a test directory
+      const originalCwd = process.cwd;
+      process.cwd = vi.fn().mockReturnValue('/test/project');
+
+      // Make fs.access throw so init thinks config doesn't exist
+      vi.mocked(fs.access).mockRejectedValueOnce(new Error('File not found'));
+
+      // Override inquirer for this run to enable seedTargetLocales
+      const inquirer = await import('inquirer');
+      vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({
+        setupMode: 'auto',
+        sourceLanguage: 'en',
+        localesDir: 'locales',
+        seedTargetLocales: true,
+      } as any);
+
+      try {
+        await (command as any).parseAsync([], { from: 'user' });
+      } finally {
+        process.cwd = originalCwd;
+      }
+
+      // Find the writeFile call that wrote i18n.config.json
+      const wroteConfig = vi.mocked(fs.writeFile).mock.calls.find((c) => String(c[0]).endsWith('i18n.config.json'));
+      expect(wroteConfig).toBeDefined();
+      expect(String(wroteConfig![1])).toContain('"seedTargetLocales": true');
+    });
+
+    it('continues when user chooses Overwrite for existing assets and records mergeStrategy', async () => {
+      const program = new Command();
+      registerInit(program);
+      const command = program.commands.find((cmd) => cmd.name() === 'init')!;
+
+      const originalCwd = process.cwd;
+      process.cwd = vi.fn().mockReturnValue('/test/project');
+
+      // Make fs.access throw so init thinks config doesn't exist
+      vi.mocked(fs.access).mockRejectedValueOnce(new Error('File not found'));
+
+      // Make diagnoseWorkspace report existing locale files so merge prompt appears
+      const core = await import('@i18nsmith/core');
+      vi.mocked(core.diagnoseWorkspace).mockResolvedValueOnce({
+        localesDir: 'locales',
+        localeFiles: [{ locale: 'en', missing: false, parseError: false }],
+        detectedLocales: [],
+        runtimePackages: [],
+        providerFiles: [],
+        adapterFiles: [],
+        translationUsage: { hookName: 'useTranslation', translationIdentifier: 't', filesExamined: 0, hookOccurrences: 0, identifierOccurrences: 0, hookExampleFiles: [], identifierExampleFiles: [] },
+        actionableItems: [],
+        conflicts: [],
+        recommendations: [],
+      } as any);
+
+      // Sequence of prompts: first the main answers, then the merge strategy choice
+      const inquirer = await import('inquirer');
+      vi.mocked(inquirer.default.prompt)
+        .mockResolvedValueOnce({ setupMode: 'auto', sourceLanguage: 'en', localesDir: 'locales', seedTargetLocales: false } as any)
+        .mockResolvedValueOnce({ strategy: 'overwrite' } as any);
+
+      try {
+        await (command as any).parseAsync([], { from: 'user' });
+      } finally {
+        process.cwd = originalCwd;
+      }
+
+      // Ensure config was written with mergeStrategy set to overwrite
+      const wroteConfig = vi.mocked(fs.writeFile).mock.calls.find((c) => String(c[0]).endsWith('i18n.config.json'));
+      expect(wroteConfig).toBeDefined();
+      expect(String(wroteConfig![1])).toContain('"mergeStrategy": "overwrite"');
     });
   });
 });
