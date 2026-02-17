@@ -146,16 +146,22 @@ if (analysis.type === ExpressionType.TemplateWithExpressions) {
 ```
 
 ### Phase 5: Adjacent Text/Expression Handling
-**Status: Not Started**
+**Status: ✅ COMPLETED**
 
 Handle patterns where static text is adjacent to dynamic JSX expressions.
 
 #### Tasks:
-- [ ] 5.1 Analyze sibling nodes in JSX element children
-- [ ] 5.2 Identify text + expression patterns
-- [ ] 5.3 Determine extraction strategy (separate vs interpolated)
-- [ ] 5.4 Implement "label-only" mode vs "interpolation" mode
-- [ ] 5.5 Add configuration for preferred strategy
+- [x] 5.1 Analyze sibling nodes in JSX element children
+- [x] 5.2 Identify text + expression patterns
+- [x] 5.3 Determine extraction strategy (separate vs interpolated)
+- [x] 5.4 Implement "label-only" mode vs "interpolation" mode
+- [x] 5.5 Add configuration for preferred strategy
+- [x] 5.6 Handle property access expressions (user.name → name)
+- [x] 5.7 Handle array access expressions (items[0] → item)
+- [x] 5.8 Detect complex expressions that can't be interpolated
+- [x] 5.9 Detect nested elements that prevent interpolation
+- [x] 5.10 Generate proper interpolation templates for i18next/ICU/Vue formats
+- [x] 5.11 Add comprehensive test suite (32 tests passing)
 
 #### Patterns:
 ```jsx
