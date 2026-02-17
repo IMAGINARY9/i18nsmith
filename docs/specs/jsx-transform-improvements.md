@@ -228,16 +228,49 @@ Created `PatternDetector` class (`packages/core/src/framework/utils/pattern-dete
 ```
 
 ### Phase 7: Edit Collision Prevention
-**Status: Not Started**
+**Status: ✅ COMPLETED**
 
-Prevent overlapping edits that cause corruption.
+Prevent overlapping edits that cause corruption with EditConflictDetector.
 
 #### Tasks:
-- [ ] 7.1 Implement `EditConflictDetector` to find overlapping ranges
-- [ ] 7.2 Create hierarchical edit planning (parent expressions first)
-- [ ] 7.3 Implement edit batching for complex expressions
-- [ ] 7.4 Add validation for edit result integrity
-- [ ] 7.5 Add rollback mechanism for failed transformations
+- [x] 7.1 Implement `EditConflictDetector` to find overlapping ranges
+- [x] 7.2 Create hierarchical edit planning (parent expressions first)
+- [x] 7.3 Implement edit batching for complex expressions
+- [x] 7.4 Add validation for edit result integrity
+- [x] 7.5 Add rollback mechanism for failed transformations (53 tests passing)
+
+#### Implementation:
+Created `EditConflictDetector` class (`packages/core/src/framework/utils/edit-conflict-detector.ts`) with:
+
+**Conflict Types:**
+- `Containment`: One edit completely contains another
+- `Overlap`: Edits partially overlap
+- `Adjacent`: Adjacent edits that might merge incorrectly
+- `Duplicate`: Duplicate edits targeting the same range
+
+**Features:**
+- Range utility functions (rangesOverlap, rangeContains, rangesAdjacent, rangesEqual)
+- `detectConflicts()`: Find all conflicts in edit list
+- `planEdits()`: Sort edits for safe application (end-first order)
+- Auto-resolve containment (exclude child edits when parent exists)
+- `applyEdits()`: Apply edits with position shift handling
+- `validateEditPlan()`: Validate before execution
+- `createRollbackPlan()`: Create inverse edits for restoration
+
+**Usage:**
+```typescript
+const detector = new EditConflictDetector({ autoResolveContainment: true });
+detector.addEdits([
+  createEdit('outer', 0, 50, '{t("outer")}'),
+  createEdit('inner', 10, 20, 't("inner")'),
+]);
+
+// Automatically filters out inner edit
+const planned = detector.plan();
+
+// Apply safely
+const { result, appliedEdits } = detector.apply(sourceCode);
+```
 
 ### Phase 8: Vue Adapter Parity
 **Status: Not Started**
