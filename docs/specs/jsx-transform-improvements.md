@@ -181,31 +181,50 @@ Handle patterns where static text is adjacent to dynamic JSX expressions.
 ```
 
 ### Phase 6: Non-Translatable Pattern Detection Enhancement
-**Status: Partially Complete (covered by Phase 1 ExpressionAnalyzer)**
+**Status: ✅ COMPLETED**
 
-Improve detection of patterns that should NOT be extracted.
+Enhanced detection of patterns that should NOT be extracted with comprehensive PatternDetector.
 
 #### Tasks:
-- [x] 6.1 Detect JSON-like strings (handled in expression-analyzer)
-- [x] 6.2 Detect code-like content: SQL, regex, format specifiers
-- [ ] 6.3 Detect data patterns: phone numbers, emails, URLs (when not user-facing labels)
-- [ ] 6.4 Add configuration for pattern customization
-- [ ] 6.5 Add tests for edge cases
+- [x] 6.1 Detect JSON-like strings (handled in expression-analyzer + PatternDetector)
+- [x] 6.2 Detect code-like content: SQL, regex, XPath, CSS selectors
+- [x] 6.3 Detect data patterns: phone numbers, emails, URLs, UUIDs, hex colors
+- [x] 6.4 Add configuration for pattern customization (enabledPatterns, disabledPatterns, customPatterns)
+- [x] 6.5 Add tests for edge cases (38 tests passing)
+
+#### Implementation:
+Created `PatternDetector` class (`packages/core/src/framework/utils/pattern-detector.ts`) with:
+
+**Pattern Categories:**
+- `DataStructure`: JSON objects, arrays, XML/HTML
+- `Code`: SQL, regex, CSS selectors, XPath
+- `Technical`: Format specifiers, log formats, version strings, date formats
+- `DataValue`: Phone numbers, emails, URLs, UUIDs, hex colors, file paths
+- `AlreadyI18n`: Existing i18n calls, translation keys
+- `UIElement`: Emoji-only, symbol-only, HTML entities
+- `UserContent`: Placeholder patterns
+
+**Features:**
+- Configurable patterns (enable/disable by name)
+- Custom pattern support via configuration
+- Category-based filtering
+- Confidence scoring for fuzzy matches
+- `detect()` for single match, `detectAll()` for all matches
 
 #### Patterns to Skip:
 ```jsx
 // JSON data strings
-{"{\"key\": \"value\"}"}  // Skip
+{"{\"key\": \"value\"}"}  // Skip (DataStructure)
 
 // SQL/Code patterns
-{"SELECT * FROM users"}  // Skip
-{/regex/}  // Skip
-{"%s %d %f"}  // Skip (format specifiers)
+{"SELECT * FROM users"}  // Skip (Code)
+{/regex/}  // Skip (Code)
+{"%s %d %f"}  // Skip (Technical)
 
-// Data patterns (configurable)
-{"+1 (555) 123-4567"}  // Skip (phone)
-{"contact@email.com"}  // Skip (email)
-{"https://url.com"}  // Skip (URL)
+// Data patterns
+{"+1 (555) 123-4567"}  // Skip (DataValue)
+{"contact@email.com"}  // Skip (DataValue)
+{"https://url.com"}  // Skip (DataValue)
 ```
 
 ### Phase 7: Edit Collision Prevention
