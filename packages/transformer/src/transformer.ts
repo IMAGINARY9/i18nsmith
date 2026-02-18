@@ -303,6 +303,7 @@ export class Transformer {
           if (plan.status === 'applied') {
             const sourceValue =
               (await this.findLegacyLocaleValue(this.sourceLocale, plan.text)) ??
+              plan.interpolation?.localeValue ??
               plan.text ??
               generateValueFromKey(plan.suggestedKey);
             await this.localeStore.upsert(this.sourceLocale, plan.suggestedKey, sourceValue);

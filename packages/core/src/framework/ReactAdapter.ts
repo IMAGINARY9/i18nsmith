@@ -1,4 +1,4 @@
-import { Node, JsxAttribute, JsxElement, SourceFile, SyntaxKind } from 'ts-morph';
+import { Node, JsxAttribute, JsxElement, JsxText, SourceFile, SyntaxKind } from 'ts-morph';
 import type { I18nConfig } from '../config.js';
 import { createScannerProject } from '../project-factory.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../scanner.js';
@@ -172,14 +172,58 @@ export class ReactAdapter implements FrameworkAdapter {
             }
           }
           
-          const start = node.getStart();
-          const end = node.getEnd();
+          let start = node.getStart();
+          let end = node.getEnd();
+          let replacement = keyCall;
 
-          // Replace the node with the translation call
+          // For jsx-text nodes we need special handling:
+          // 1. Preserve trailing whitespace that was stripped during extraction
+          // 2. Preserve any suffix that was stripped (e.g. "(" from "Items (")
+          // 3. Preserve non-translatable suffix (e.g. SQL code after a prefix)
+          if (candidate.kind === 'jsx-text' && Node.isJsxText(node)) {
+            const rawNodeText = (node as JsxText).getLiteralText();
+            const rawTrimmed = rawNodeText.trim();
+            const extractedText = candidate.text;
+
+            // Check if the raw node text has trailing whitespace that should be preserved
+            // as a space between {t(...)} and the next sibling expression
+            const hasTrailingSpace = rawNodeText !== rawNodeText.trimEnd();
+
+            // Check if we only extracted a prefix (e.g. "SQL-like:" from "SQL-like: WHERE ...")
+            // In that case we need to keep the suffix as plain text in the output
+            const suffixAfterExtracted = rawTrimmed.length > extractedText.length
+              ? rawTrimmed.slice(extractedText.length)
+              : '';
+
+            // Build the replacement: {t('key')} + any suffix + trailing space
+            let suffix = '';
+            if (suffixAfterExtracted) {
+              // Keep the non-translatable suffix as plain text JSX
+              suffix += suffixAfterExtracted;
+            }
+            if (hasTrailingSpace && !suffix.startsWith(' ') && !suffixAfterExtracted) {
+              suffix += ' ';
+            }
+            replacement = keyCall + suffix;
+          }
+
+          // For jsx-expression candidates that target a JsxElement (combined adjacent content):
+          // Replace the element's INNER content (between > and </tag>), keeping the wrapper.
+          if (candidate.kind === 'jsx-expression' && Node.isJsxElement(node)) {
+            const openingElement = node.getOpeningElement();
+            const closingElement = node.getClosingElement();
+            // Inner content runs from end of opening tag to start of closing tag
+            start = openingElement.getEnd();
+            end = closingElement.getStart();
+            // Remove outer braces from keyCall since we're inside a JSX element
+            replacement = keyCall;
+          }
+
+          // Replace the node (or inner content) with the translation call
           edits.push({
             start,
             end,
-            replacement: keyCall,
+            replacement,
           });
 
           didMutate = true;
@@ -456,6 +500,7 @@ export class ReactAdapter implements FrameworkAdapter {
 
         // If the line contains an embedded code-like fragment (SQL etc.),
         // prefer the human-readable prefix for translation extraction.
+        // The mutation will preserve the non-translatable suffix in the output.
         const textToCheck = extractTranslatablePrefix(line);
         if ((!textToCheck || textToCheck.trim().length === 0) && !force) continue;
 
@@ -994,6 +1039,9 @@ export class ReactAdapter implements FrameworkAdapter {
     if (candidate.kind === 'jsx-expression') {
       const jsxExpr = sourceFile.getDescendantsOfKind(SyntaxKind.JsxExpression).find(matchesPosition);
       if (jsxExpr) return jsxExpr;
+      // Combined adjacent-content candidates target a JsxElement, not a JsxExpression
+      const jsxElem = sourceFile.getDescendantsOfKind(SyntaxKind.JsxElement).find(matchesPosition);
+      if (jsxElem) return jsxElem;
     }
 
     if (candidate.kind === 'jsx-attribute') {
