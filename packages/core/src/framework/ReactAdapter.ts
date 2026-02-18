@@ -1,13 +1,15 @@
-import { Node, JsxAttribute, SourceFile, SyntaxKind } from 'ts-morph';
+import { Node, JsxAttribute, JsxElement, SourceFile, SyntaxKind } from 'ts-morph';
 import type { I18nConfig } from '../config.js';
 import { createScannerProject } from '../project-factory.js';
 import type { ScanCandidate, CandidateKind, SkipReason, SkippedCandidate } from '../scanner.js';
 import { DEFAULT_TRANSLATABLE_ATTRIBUTES } from '../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from './types.js';
-import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, decodeHtmlEntities } from './utils/text-filters.js';
+import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, decodeHtmlEntities, extractTranslatablePrefix } from './utils/text-filters.js';
 import { analyzeJsxExpression, ExpressionType } from './utils/expression-analyzer.js';
+import { analyzeAdjacentContent, AdjacentStrategy } from './utils/adjacent-text-handler.js';
 import { mergeStringConcatenation, MergeStrategy } from './utils/string-concat-merger.js';
 import { handleTemplateLiteral } from './utils/template-literal-handler.js';
+import { planEdits as planConflictEdits, validateEditPlan } from './utils/edit-conflict-detector.js';
 
 /**
  * React Framework Adapter
@@ -34,6 +36,8 @@ export class ReactAdapter implements FrameworkAdapter {
   private translatableAttributes: Set<string>;
   private activeSkipLog?: SkippedCandidate[];
   private lastSkipped: SkippedCandidate[] = [];
+  // Track JSX elements that have been handled as combined adjacent-content
+  private handledAdjacentElements: Set<number> = new Set();
 
   constructor(config: I18nConfig, workspaceRoot: string) {
     this.config = config;
@@ -69,6 +73,8 @@ export class ReactAdapter implements FrameworkAdapter {
 
     this.activeSkipLog = [];
     this.lastSkipped = [];
+    // Reset per-scan state for adjacent-element handling
+    this.handledAdjacentElements.clear();
 
     // Scan JSX elements and their attributes
     this.scanJsxElements(sourceFile, candidates, filePath);
@@ -140,13 +146,32 @@ export class ReactAdapter implements FrameworkAdapter {
         const node = this.findNodeByPosition(sourceFile, candidate);
         if (node) {
           let keyCall: string;
-          if (candidate.kind === 'jsx-text' || candidate.kind === 'jsx-attribute') {
-            // JSX text and attributes need curly braces for JavaScript expressions
-            keyCall = `{t('${candidate.suggestedKey}')}`;
+          
+          // Check if candidate has interpolation parameters
+          const hasInterpolation = candidate.interpolation && 
+                                   candidate.interpolation.variables && 
+                                   candidate.interpolation.variables.length > 0;
+          
+          if (hasInterpolation) {
+            // Build params object for t() call
+            const params = candidate.interpolation!.variables!
+              .map(v => v.name === v.expression ? v.name : `${v.name}: ${v.expression}`)
+              .join(', ');
+            
+            if (candidate.kind === 'jsx-text' || candidate.kind === 'jsx-attribute' || candidate.kind === 'jsx-expression') {
+              keyCall = `{t('${candidate.suggestedKey}', { ${params} })}`;
+            } else {
+              keyCall = `t('${candidate.suggestedKey}', { ${params} })`;
+            }
           } else {
-            // jsx-expression and other contexts might not need braces
-            keyCall = `t('${candidate.suggestedKey}')`;
+            // Simple translation without parameters
+            if (candidate.kind === 'jsx-text' || candidate.kind === 'jsx-attribute' || candidate.kind === 'jsx-expression') {
+              keyCall = `{t('${candidate.suggestedKey}')}`;
+            } else {
+              keyCall = `t('${candidate.suggestedKey}')`;
+            }
           }
+          
           const start = node.getStart();
           const end = node.getEnd();
 
@@ -162,7 +187,31 @@ export class ReactAdapter implements FrameworkAdapter {
       }
     }
 
-    let mutatedContent = didMutate ? this.applyEdits(content, edits) : content;
+    let mutatedContent = content;
+    if (didMutate) {
+      const planned = planConflictEdits(
+        edits.map((edit, index) => ({
+          id: `${filePath}:${index}:${edit.start}-${edit.end}`,
+          range: { start: edit.start, end: edit.end },
+          replacement: edit.replacement,
+          priority: 0,
+        })),
+        { autoResolveContainment: true }
+      );
+
+      const validation = validateEditPlan(planned, content.length);
+      if (!validation.isValid) {
+        return { didMutate: false, content, edits: [] };
+      }
+
+      const plannedSimpleEdits = planned.map((edit) => ({
+        start: edit.range.start,
+        end: edit.range.end,
+        replacement: edit.replacement,
+      }));
+
+      mutatedContent = this.applyEdits(content, plannedSimpleEdits);
+    }
 
     const mode = options.mode ?? 'transform';
 
@@ -248,6 +297,51 @@ export class ReactAdapter implements FrameworkAdapter {
           this.processJsxAttribute(attr, candidates, filePath, skipReason, shouldForce);
         }
       }
+
+      // If this element contains a mix of text + expression children treat it
+      // as an adjacent-content candidate (prefer a single interpolated string)
+      const jsxChildren = element.getJsxChildren();
+      const hasTextChild = jsxChildren.some(c => Node.isJsxText(c));
+      const hasExprChild = jsxChildren.some(c => Node.isJsxExpression(c));
+
+      if (hasTextChild && hasExprChild) {
+        const adj = analyzeAdjacentContent(element as JsxElement, { strategy: AdjacentStrategy.Interpolate, format: 'i18next', translationFn: 't', keyGenerator: (t: string) => this.generateKey(t) });
+
+        // Only emit a combined/interpolated candidate when the analysis
+        // strongly indicates interpolation is desirable (e.g. multiple
+        // dynamic expressions). For simple "text + single variable" cases
+        // prefer leaving separate jsx-text / jsx-expression candidates so
+        // callers can extract the static label independently.
+        const shouldEmitCombined = adj.hasAdjacentPattern && adj.canInterpolate && adj.suggestedStrategy === AdjacentStrategy.Interpolate && (adj.expressions.length > 1 || (adj.interpolationTemplate && adj.staticText && adj.staticText.length === 0));
+
+        if (shouldEmitCombined && (adj.interpolationTemplate || adj.staticText)) {
+          const text = adj.interpolationTemplate || adj.staticText;
+          // Prefer the static-only derived key (adj.suggestedKey) when available
+          // so we don't accidentally generate a key from a merged/interpolation
+          // string that may include structural punctuation or placeholders.
+          const suggestedKey = adj.suggestedKey || (adj.staticText ? this.generateKey(adj.staticText) : this.generateKey(text));
+
+          const candidate: ScanCandidate = {
+            id: `${filePath}:${element.getStartLineNumber()}:${element.getStart()}`,
+            kind: 'jsx-expression' as CandidateKind,
+            filePath,
+            text,
+            position: {
+              line: element.getStartLineNumber(),
+              column: element.getStart() - element.getStartLinePos(),
+            },
+            suggestedKey,
+            hash: this.hashText(text),
+            interpolation: adj.interpolationTemplate || adj.localeValue
+              ? { template: adj.interpolationTemplate || text, variables: adj.expressions.map(e => ({ name: e.name, expression: e.expression })), localeValue: adj.localeValue || adj.interpolationTemplate || text }
+              : undefined,
+          };
+
+          candidates.push(candidate);
+          // mark element as handled so child text/expression scanners skip individual nodes
+          this.handledAdjacentElements.add(element.getStart());
+        }
+      }
     }
 
     // Handle self-closing JSX elements
@@ -306,6 +400,10 @@ export class ReactAdapter implements FrameworkAdapter {
     for (const jsxText of jsxTexts) {
       // Check if parent element has directive attributes
       const parent = jsxText.getParent();
+      // Skip if parent element was already handled as an adjacent-content unit
+      if (parent && (Node.isJsxElement(parent) || Node.isJsxSelfClosingElement(parent))) {
+        if (this.handledAdjacentElements.has(parent.getStart())) continue;
+      }
       let skipReason: SkipReason | undefined;
       let force = false;
       
@@ -334,19 +432,46 @@ export class ReactAdapter implements FrameworkAdapter {
       // Split by lines and process each line separately
       const lines = rawText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-      for (const line of lines) {
-        if (this.shouldExtractText(line) || force) {
+      for (const rawLine of lines) {
+        // Work on a copy so we can trim structural punctuation when needed
+        let line = rawLine;
+
+        // If the NEXT sibling is a dynamic JSX expression, trim any
+        // trailing opening structural punctuation from this text fragment
+        // (e.g. "Items (" -> "Items") so the extracted value doesn't
+        // include punctuation that belongs to the syntax rather than the
+        // human-readable label.
+        const src = jsxText.getSourceFile().getFullText();
+        const afterPos = jsxText.getEnd();
+        const m = src.slice(afterPos).match(/^\s*(.)/s);
+        const nextChar = m ? m[1] : undefined;
+        if (nextChar === '{') {
+          const openingPunctMatch = line.match(/[([{<]+\s*$/);
+          if (openingPunctMatch) {
+            line = line.slice(0, -openingPunctMatch[0].length).trimEnd();
+          }
+        }
+
+        if (!line || line.length === 0) continue;
+
+        // If the line contains an embedded code-like fragment (SQL etc.),
+        // prefer the human-readable prefix for translation extraction.
+        const textToCheck = extractTranslatablePrefix(line);
+        if ((!textToCheck || textToCheck.trim().length === 0) && !force) continue;
+
+        // Note: generateKey() now automatically strips structural punctuation via toKeySafeText()
+        if (this.shouldExtractText(textToCheck) || force) {
           const candidate: ScanCandidate = {
             id: `${filePath}:${jsxText.getStart()}`,
             kind: 'jsx-text' as CandidateKind,
             filePath,
-            text: line,
+            text: textToCheck,
             position: {
               line: jsxText.getStartLineNumber(),
               column: jsxText.getStart() - jsxText.getStartLinePos(),
             },
-            suggestedKey: this.generateKey(line),
-            hash: this.hashText(line),
+            suggestedKey: this.generateKey(textToCheck),
+            hash: this.hashText(textToCheck),
             forced: force,
             skipReason,
           };
@@ -437,7 +562,10 @@ export class ReactAdapter implements FrameworkAdapter {
                 line: jsxExpr.getStartLineNumber(),
                 column: jsxExpr.getStart() - jsxExpr.getStartLinePos(),
               },
-              suggestedKey: this.generateKey(text),
+              // Use the merger's suggestedKey when available (it derives the key
+              // from static parts) otherwise fall back to generating from the
+              // final text.
+              suggestedKey: mergeResult.suggestedKey || this.generateKey(text),
               hash: this.hashText(text),
               forced: force,
               skipReason,
@@ -482,7 +610,9 @@ export class ReactAdapter implements FrameworkAdapter {
                 line: jsxExpr.getStartLineNumber(),
                 column: jsxExpr.getStart() - jsxExpr.getStartLinePos(),
               },
-              suggestedKey: this.generateKey(text),
+              // Prefer the handler-provided suggestedKey (from static parts)
+              // to avoid keys that include interpolation/punctuation.
+              suggestedKey: templateResult.suggestedKey || this.generateKey(text),
               hash: this.hashText(text),
               forced: force,
               skipReason,
@@ -850,14 +980,46 @@ export class ReactAdapter implements FrameworkAdapter {
   }
 
   private findNodeByPosition(sourceFile: SourceFile, candidate: TransformCandidate): Node | null {
-    // Find node matching based on the candidate's position and content
-    const descendants = sourceFile.getDescendants();
-
-    for (const node of descendants) {
+    const matchesPosition = (node: Node) => {
       const startLine = node.getStartLineNumber();
       const startColumn = node.getStart() - node.getStartLinePos();
+      return startLine === candidate.position.line && startColumn === candidate.position.column;
+    };
 
-      if (startLine === candidate.position.line && startColumn === candidate.position.column) {
+    if (candidate.kind === 'jsx-text') {
+      const jsxText = sourceFile.getDescendantsOfKind(SyntaxKind.JsxText).find(matchesPosition);
+      if (jsxText) return jsxText;
+    }
+
+    if (candidate.kind === 'jsx-expression') {
+      const jsxExpr = sourceFile.getDescendantsOfKind(SyntaxKind.JsxExpression).find(matchesPosition);
+      if (jsxExpr) return jsxExpr;
+    }
+
+    if (candidate.kind === 'jsx-attribute') {
+      const literal = sourceFile
+        .getDescendants()
+        .find((node) =>
+          (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) &&
+          matchesPosition(node)
+        );
+      if (literal) return literal;
+    }
+
+    if (candidate.kind === 'call-expression') {
+      const literal = sourceFile
+        .getDescendants()
+        .find((node) =>
+          (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) &&
+          matchesPosition(node)
+        );
+      if (literal) return literal;
+    }
+
+    // Fallback: any node matching position
+    const descendants = sourceFile.getDescendants();
+    for (const node of descendants) {
+      if (matchesPosition(node)) {
         return node;
       }
     }

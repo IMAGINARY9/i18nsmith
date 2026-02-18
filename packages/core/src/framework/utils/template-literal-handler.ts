@@ -6,6 +6,7 @@
  */
 
 import { Node } from 'ts-morph';
+import { generateKey as sharedGenerateKey } from './text-filters.js';
 
 /**
  * Interpolation format for generated locale values
@@ -330,13 +331,8 @@ function checkNonTranslatablePattern(text: string): string | null {
   return null;
 }
 
-function generateKey(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .substring(0, 50);
-}
+// Use the shared generateKey from text-filters which includes toKeySafeText cleanup
+const generateKey = sharedGenerateKey;
 
 function camelCase(str: string): string {
   return str

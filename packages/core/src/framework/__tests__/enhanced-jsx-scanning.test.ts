@@ -190,6 +190,21 @@ describe('Enhanced JSX Scanning', () => {
       const formatCandidate = candidates.find(c => c.text?.includes('%s'));
       expect(formatCandidate).toBeUndefined();
     });
+
+    it('should extract only the label when text contains SQL-like fragment', () => {
+      const content = `
+        function Component() {
+          return <p>SQL-like: WHERE name = 'O\'Reilly'</p>;
+        }
+      `;
+
+      const candidates = adapter.scan('/test.tsx', content);
+
+      const labelCandidate = candidates.find(c => c.text?.startsWith('SQL-like'));
+      expect(labelCandidate).toBeDefined();
+      // Should NOT include the SQL fragment in the extracted text
+      expect(labelCandidate?.text).toBe('SQL-like:');
+    });
   });
 
   describe('Adjacent Text and Expression Handling', () => {

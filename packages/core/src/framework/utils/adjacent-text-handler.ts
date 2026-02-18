@@ -9,7 +9,7 @@
  */
 
 import { Node, JsxElement, JsxSelfClosingElement } from 'ts-morph';
-import { generateKey as defaultKeyGen } from './text-filters.js';
+import { generateKey as defaultKeyGen, stripAdjacentPunctuation } from './text-filters.js';
 
 /**
  * Strategy for handling adjacent text and expressions
@@ -156,10 +156,12 @@ export function analyzeAdjacentContent(
   const hasExpressions = meaningfulChildren.some(c => c.type === 'expression' && !c.isStaticExpression);
   const hasAdjacentPattern = hasText && hasExpressions;
 
-  // Extract static text from meaningful children (for key generation)
+  // Extract static text from meaningful children (for key generation).
+  // Note: generateKey() will automatically clean structural punctuation via toKeySafeText()
   const staticTextParts = meaningfulChildren
     .filter(c => c.type === 'text' || c.isStaticExpression)
-    .map(c => c.cleanedText || c.text || '');
+    .map(c => c.cleanedText || c.text || '')
+    .filter(t => t.length > 0);
   const staticText = staticTextParts.join(' ').trim();
 
   // Extract expressions from meaningful children
@@ -378,7 +380,24 @@ function buildInterpolationTemplate(
 
   for (const child of children) {
     if (child.type === 'text') {
-      const text = child.cleanedText || child.text || '';
+      let text = child.cleanedText || child.text || '';
+      if (!text) continue;
+
+      // If this text contains an embedded SQL-like fragment, only keep the
+      // prefix up to the SQL keyword for translation (e.g. "SQL-like: WHERE ...").
+      const sqlMatch = text.match(/\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|ORDER\s+BY|GROUP\s+BY|CREATE|DROP|ALTER|TRUNCATE)\b/i);
+      if (sqlMatch && sqlMatch.index !== undefined) {
+        const matchedToken = text.substr(sqlMatch.index, sqlMatch[0].length);
+        const looksLikeSql = matchedToken === matchedToken.toUpperCase() || /[=*'"()]/.test(text);
+        if (looksLikeSql) {
+          text = text.slice(0, sqlMatch.index).trimEnd();
+        }
+      }
+
+      // Note: We intentionally keep structural punctuation in the locale value
+      // for better translator context. The key generation via generateKey()
+      // will automatically strip it via toKeySafeText().
+
       if (text) {
         parts.push(text);
         localeParts.push(text);
@@ -420,8 +439,9 @@ function buildInterpolationTemplate(
     return result.replace(/\s+/g, ' ').trim();
   };
 
-  const template = joinParts(parts);
-  const localeValue = joinParts(localeParts);
+  // Join and strip structural punctuation adjacent to placeholders
+  const template = stripAdjacentPunctuation(joinParts(parts));
+  const localeValue = stripAdjacentPunctuation(joinParts(localeParts));
   const key = keyGenerator(template.replace(/\{[^}]+\}/g, '').trim());
 
   // Build replacement code

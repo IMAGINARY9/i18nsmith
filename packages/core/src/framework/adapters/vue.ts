@@ -2,7 +2,8 @@ import MagicString from 'magic-string';
 import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
-import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig } from '../utils/text-filters.js';
+import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, extractTranslatablePrefix } from '../utils/text-filters.js';
+import { analyzeVueExpression, analyzeVueAdjacentContent, generateVueReplacement, generateVueAttributeReplacement } from '../utils/vue-expression-handler.js';
 import { requireFromWorkspace, isPackageResolvable } from '../../utils/dependency-resolution.js';
 
 const LETTER_REGEX_GLOBAL = /\p{L}/gu;
@@ -311,7 +312,15 @@ export class VueAdapter implements FrameworkAdapter {
     try {
       return requireFromWorkspace('vue-eslint-parser', this.workspaceRoot);
     } catch {
-      return null;
+      // Fallback to the package bundled with this library (useful for tests
+      // and environments where workspaceRoot doesn't point to project root).
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line global-require
+        return require('vue-eslint-parser');
+      } catch (err) {
+        return null;
+      }
     }
   }
 
@@ -437,27 +446,82 @@ export class VueAdapter implements FrameworkAdapter {
         continue;
       }
 
-      const extractedStrings = isBound
-        ? this.extractStringsFromExpression(value)
-        : [value.trim()];
-      for (const extracted of extractedStrings) {
-        if (!this.shouldExtractText(extracted, { attribute: attrName })) {
-          continue;
+      if (isBound) {
+        // Try to analyze the bound expression to see if it can be extracted
+        try {
+          const analysis = analyzeVueExpression(value);
+          if (analysis.canExtract && analysis.mergedText) {
+            const interp = analysis.interpolationParams
+              ? Object.entries(analysis.interpolationParams).map(([name, expression]) => ({ name, expression }))
+              : undefined;
+
+            const extracted = analysis.mergedText;
+            if (this.shouldExtractText(extracted, { attribute: attrName })) {
+              // Use static-only text parts (when available) to generate suggestion
+              const keyText = (analysis.textParts && analysis.textParts.length > 0)
+                ? analysis.textParts.join(' ').replace(/\s{2,}/g, ' ').trim()
+                : extracted;
+
+              candidates.push({
+                id: `${filePath}:${lineNumber}:${attrName}:${extracted}`,
+                kind: 'jsx-attribute' as CandidateKind,
+                filePath,
+                text: extracted,
+                position: {
+                  line: lineNumber,
+                  column: Math.max(line.indexOf(quotedValue), 0),
+                },
+                suggestedKey: this.generateKey(keyText),
+                hash: this.hashText(extracted),
+                context: attrName,
+                interpolation: interp && interp.length > 0 ? { template: analysis.mergedText, variables: interp, localeValue: analysis.mergedText } : undefined,
+              });
+            }
+            continue;
+          }
+        } catch (err) {
+          // Fall back to simple extraction if analysis fails
         }
 
-        candidates.push({
-          id: `${filePath}:${lineNumber}:${attrName}:${extracted}`,
-          kind: 'jsx-attribute' as CandidateKind,
-          filePath,
-          text: extracted,
-          position: {
-            line: lineNumber,
-            column: Math.max(line.indexOf(quotedValue), 0),
-          },
-          suggestedKey: this.generateKey(extracted),
-          hash: this.hashText(extracted),
-          context: attrName,
-        });
+        // Fall back: extract quoted literals from the expression string
+        const extractedStrings = this.extractStringsFromExpression(value);
+        for (const extracted of extractedStrings) {
+          if (!this.shouldExtractText(extracted, { attribute: attrName })) continue;
+          candidates.push({
+            id: `${filePath}:${lineNumber}:${attrName}:${extracted}`,
+            kind: 'jsx-attribute' as CandidateKind,
+            filePath,
+            text: extracted,
+            position: {
+              line: lineNumber,
+              column: Math.max(line.indexOf(quotedValue), 0),
+            },
+            suggestedKey: this.generateKey(extracted),
+            hash: this.hashText(extracted),
+            context: attrName,
+          });
+        }
+      } else {
+        const extractedStrings = [value.trim()];
+        for (const extracted of extractedStrings) {
+          if (!this.shouldExtractText(extracted, { attribute: attrName })) {
+            continue;
+          }
+
+          candidates.push({
+            id: `${filePath}:${lineNumber}:${attrName}:${extracted}`,
+            kind: 'jsx-attribute' as CandidateKind,
+            filePath,
+            text: extracted,
+            position: {
+              line: lineNumber,
+              column: Math.max(line.indexOf(quotedValue), 0),
+            },
+            suggestedKey: this.generateKey(extracted),
+            hash: this.hashText(extracted),
+            context: attrName,
+          });
+        }
       }
     }
   }
@@ -710,11 +774,67 @@ export class VueAdapter implements FrameworkAdapter {
         break;
       case 'VElement':
         this.extractElementAttributes(node, content, filePath, candidates, scanCalls);
-        // Process children with sibling awareness: VText nodes adjacent to
-        // VExpressionContainers are fragments of compound expressions
-        // (e.g. "ID: {{ id }} | Images: {{ count }}") and should be skipped.
+        // Process children with sibling awareness. If an element contains a mix
+        // of VText and VExpressionContainer nodes we try to extract the whole
+        // fragment as a single interpolated candidate (e.g. "User name: {{ id }}").
         if (node.children) {
           const hasExpressionChild = node.children.some((c: any) => c.type === 'VExpressionContainer');
+
+          if (hasExpressionChild) {
+            // Map children to the lightweight shape expected by
+            // analyzeVueAdjacentContent()
+            const adjacentChildren = node.children.map((c: any) => {
+              if (c.type === 'VText') {
+                return { type: 'VText', text: content.slice(c.range[0], c.range[1]), range: c.range };
+              }
+              if (c.type === 'VExpressionContainer') {
+                const expr = c.expression;
+                const exprText = expr && expr.range ? content.slice(expr.range[0], expr.range[1]) : (expr && expr.name) || '';
+                return { type: 'VExpressionContainer', expression: exprText, range: c.range };
+              }
+              return { type: 'VElement', range: c.range };
+            });
+
+            try {
+              const adj = analyzeVueAdjacentContent(adjacentChildren);
+              // (debug logs removed)
+              if (adj && adj.canInterpolate && adj.mergedText) {
+                // Accept merged adjacent content when either the full merged
+                // text passes the text-filter, or when there is at least one
+                // meaningful static child part (defensive fallback to handle
+                // cases like template-literals inside mustache).
+                const mergedPasses = this.shouldExtractText(adj.mergedText);
+                const hasMeaningfulStaticPart = Array.isArray(adj.textParts) && adj.textParts.some(p => /[A-Za-z]{2,}/.test(p));
+
+                if (mergedPasses || hasMeaningfulStaticPart) {
+                  const candidate: ScanCandidate = {
+                    id: `${filePath}:${node.loc.start.line}:${node.loc.start.column}`,
+                    kind: 'jsx-expression' as CandidateKind,
+                    filePath,
+                    text: adj.mergedText,
+                    position: {
+                      line: node.loc.start.line,
+                      column: node.loc.start.column,
+                    },
+                    suggestedKey: this.generateKey(adj.keyText || adj.mergedText),
+                    hash: this.hashText(adj.mergedText),
+                    fullRange: [node.range[0], node.range[1]],
+                    interpolation: adj.interpolationParams && Object.keys(adj.interpolationParams).length > 0
+                      ? { template: adj.mergedText, variables: Object.entries(adj.interpolationParams).map(([name, expression]) => ({ name, expression })), localeValue: adj.mergedText }
+                      : undefined,
+                  } as ScanCandidate & { fullRange?: [number, number] };
+
+                  candidates.push(candidate);
+                  // We've handled the whole children block — skip individual child processing
+                  return;
+                }
+              }
+            } catch (err) {
+              // If adjacent analysis fails fall back to per-child processing below
+            }
+          }
+
+          // Fallback: process children individually
           for (const child of node.children) {
             if (child.type === 'VText') {
               this.extractTextNode(child, content, filePath, candidates, hasExpressionChild, scanCalls);
@@ -781,14 +901,52 @@ export class VueAdapter implements FrameworkAdapter {
       } as ScanCandidate & { fullRange?: [number, number] };
 
       candidates.push(candidate);
+      return;
     }
 
-    // TODO: Handle template literals, concatenations, etc. if needed
+    // Handle template literals, concatenations and mixed expressions by delegating
+    // to the Vue expression analyzer which mirrors React adapter capabilities.
+    try {
+      const expressionText = content.slice(expr.range[0], expr.range[1]);
+  const analysis = analyzeVueExpression(expressionText);
+
+      if (analysis.canExtract && analysis.mergedText) {
+        const interp = analysis.interpolationParams ? Object.entries(analysis.interpolationParams).map(([name, expression]) => ({ name, expression })) : undefined;
+
+          const keyText = (analysis.textParts && analysis.textParts.length > 0)
+            ? analysis.textParts.join(' ').replace(/\s{2,}/g, ' ').trim()
+            : analysis.mergedText;
+
+          const candidate: ScanCandidate = {
+          id: `${filePath}:${expr.loc.start.line}:${expr.loc.start.column}`,
+          kind: 'jsx-expression' as CandidateKind,
+          filePath,
+          text: analysis.mergedText,
+          position: {
+            line: expr.loc.start.line,
+            column: expr.loc.start.column,
+          },
+          suggestedKey: this.generateKey(keyText),
+          hash: this.hashText(analysis.mergedText),
+          fullRange: [expr.range[0], expr.range[1]],
+          interpolation: interp && interp.length > 0 ? { template: analysis.mergedText, variables: interp, localeValue: analysis.mergedText } : undefined,
+        } as ScanCandidate & { fullRange?: [number, number] };
+
+        candidates.push(candidate);
+        return;
+      }
+    } catch (err) {
+      // Fall through and ignore analysis errors — conservative behavior
+    }
   }
 
   private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean, scanCalls: boolean): void {
-    const rawText = content.slice(node.range[0], node.range[1]);
-    const trimmedText = rawText.trim();
+  const rawText = content.slice(node.range[0], node.range[1]);
+  let trimmedText = rawText.trim();
+
+  // If the text contains an embedded SQL-like fragment, only keep the
+  // human-facing prefix for extraction (don't extract SQL snippets).
+  trimmedText = extractTranslatablePrefix(trimmedText);
 
     // When scanCalls is true (rename mode), capture literal key-like text
     if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(trimmedText)) {
@@ -810,7 +968,11 @@ export class VueAdapter implements FrameworkAdapter {
       return;
     }
 
-  if (!this.shouldExtractText(trimmedText)) return;
+    // DEBUG: log why a text node might be skipped
+    // eslint-disable-next-line no-console
+    // console.log('DEBUG extractTextNode:', { rawText, trimmedText, canExtract: this.shouldExtractText(trimmedText) });
+
+    if (!this.shouldExtractText(trimmedText)) return;
 
     // If this text node is a sibling of a {{ }} expression container,
     // it's a fragment of a compound expression like "ID: {{ id }}".
@@ -841,15 +1003,103 @@ export class VueAdapter implements FrameworkAdapter {
 
   private extractElementAttributes(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
     if (!node.startTag || !node.startTag.attributes) return;
-
     for (const attr of node.startTag.attributes) {
+      // Handle bound attributes (v-bind / :attr) which appear as VDirective
+        if (attr.type === 'VDirective' && attr.key && attr.key.name && attr.key.name.name === 'bind') {
+          const arg = attr.key.argument;
+          const argName = arg && (arg.name?.name || arg.name);
+          if (argName && typeof argName === 'string' && this.isTranslatableAttribute(argName)) {
+            if (attr.value && attr.value.type === 'VExpressionContainer' && attr.value.expression && attr.value.expression.range) {
+            const exprNode = attr.value.expression;
+            const expressionText = content.slice(exprNode.range[0], exprNode.range[1]);
+            try {
+              const analysis = analyzeVueExpression(expressionText);
+              if (analysis.canExtract && analysis.mergedText && this.shouldExtractText(analysis.mergedText, { attribute: argName })) {
+                const interp = analysis.interpolationParams ? Object.entries(analysis.interpolationParams).map(([name, expression]) => ({ name, expression })) : undefined;
+                const keyText = (analysis.textParts && analysis.textParts.length > 0)
+                  ? analysis.textParts.join(' ').replace(/\s{2,}/g, ' ').trim()
+                  : analysis.mergedText;
+
+                const candidate: ScanCandidate = {
+                  id: `${filePath}:${attr.loc.start.line}:${attr.loc.start.column}`,
+                  kind: 'jsx-attribute' as CandidateKind,
+                  filePath,
+                  text: analysis.mergedText,
+                  position: {
+                    line: attr.loc.start.line,
+                    column: attr.loc.start.column,
+                  },
+                  suggestedKey: this.generateKey(keyText),
+                  hash: this.hashText(analysis.mergedText),
+                  context: argName,
+                  interpolation: interp && interp.length > 0 ? { template: analysis.mergedText, variables: interp, localeValue: analysis.mergedText } : undefined,
+                } as ScanCandidate & { fullRange?: [number, number] };
+
+                candidates.push(candidate);
+                continue;
+              }
+            } catch (err) {
+              // ignore analysis errors and fall through
+            }
+          }
+        }
+        continue;
+      }
+
       if (attr.type !== 'VAttribute' || !attr.key || !attr.value) continue;
 
-      const attrName = attr.key.name?.name || attr.key.name;
+      // Support bound attributes using shorthand (:alt) or v-bind:alt. In
+      // the parsed AST these appear as VAttribute with key.name === 'bind'
+      // and the actual argument stored in key.argument.
+      let isBound = false;
+      let attrName: string | undefined = undefined;
+
+      if (attr.key && attr.key.name && (attr.key.name.name === 'bind' || attr.key.name === 'v-bind')) {
+        isBound = true;
+        attrName = attr.key.argument && (attr.key.argument.name?.name || attr.key.argument.name);
+      } else {
+        attrName = attr.key.name?.name || attr.key.name;
+      }
+
       if (!attrName || typeof attrName !== 'string') continue;
 
       // Check if this attribute should be translated
       if (!this.isTranslatableAttribute(attrName)) continue;
+
+      // Handle bound attribute expression: :attr="..."
+      if (isBound && attr.value.type === 'VExpressionContainer' && attr.value.expression && attr.value.expression.range) {
+        const exprNode = attr.value.expression;
+        const expressionText = content.slice(exprNode.range[0], exprNode.range[1]);
+        try {
+          const analysis = analyzeVueExpression(expressionText);
+          if (analysis.canExtract && analysis.mergedText && this.shouldExtractText(analysis.mergedText, { attribute: attrName })) {
+            const interp = analysis.interpolationParams ? Object.entries(analysis.interpolationParams).map(([name, expression]) => ({ name, expression })) : undefined;
+              const keyText = (analysis.textParts && analysis.textParts.length > 0)
+                ? analysis.textParts.join(' ').replace(/\s{2,}/g, ' ').trim()
+                : analysis.mergedText;
+
+              const candidate: ScanCandidate = {
+              id: `${filePath}:${attr.loc.start.line}:${attr.loc.start.column}`,
+              kind: 'jsx-attribute' as CandidateKind,
+              filePath,
+              text: analysis.mergedText,
+              position: {
+                line: attr.loc.start.line,
+                column: attr.loc.start.column,
+              },
+              suggestedKey: this.generateKey(keyText),
+              hash: this.hashText(analysis.mergedText),
+              context: attrName,
+              interpolation: interp && interp.length > 0 ? { template: analysis.mergedText, variables: interp, localeValue: analysis.mergedText } : undefined,
+            } as ScanCandidate & { fullRange?: [number, number] };
+
+            candidates.push(candidate);
+            continue;
+          }
+        } catch (err) {
+          // ignore and fall through to other handlers
+        }
+      }
 
       if (attr.value.type === 'VLiteral' && typeof attr.value.value === 'string') {
         const text = attr.value.value;
@@ -920,7 +1170,9 @@ export class VueAdapter implements FrameworkAdapter {
       skipHexColors: false, // Vue doesn't typically have hex colors in templates
       context,
     };
-    return shouldExtractText(text, config).shouldExtract;
+    const result = shouldExtractText(text, config);
+    // (debug logging removed)
+    return result.shouldExtract;
   }
 
   private generateKey(text: string): string {
@@ -1021,8 +1273,15 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private transformText(candidate: TransformCandidate, startPos: number, endPos: number, magicString: MagicString): boolean {
-    // Replace text content with {{ $t('key') }}
-    const translationCall = `{{ $t('${candidate.suggestedKey}') }}`;
+    // Replace text content with {{ $t('key') }} or with params when interpolation present
+    let translationCall: string;
+    if (candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0) {
+      const params: Record<string, string> = {};
+      for (const v of candidate.interpolation.variables) params[v.name] = v.expression;
+      translationCall = generateVueReplacement(candidate.suggestedKey || '', params, { useDoubleQuotes: false });
+    } else {
+      translationCall = `{{ $t('${candidate.suggestedKey}') }}`;
+    }
     magicString.overwrite(startPos, endPos, translationCall);
     return true;
   }
@@ -1031,19 +1290,50 @@ export class VueAdapter implements FrameworkAdapter {
     // For Vue attributes, we need to replace the entire attribute with dynamic binding
     // e.g., placeholder="value" becomes :placeholder="$t('key')"
     const attrName = candidate.context || 'value';
-    const translationCall = `:${attrName}="$t('${candidate.suggestedKey}')"`;
+    // Build attribute translation call, including params if present
+    const inner = candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0
+      ? generateVueAttributeReplacement(candidate.suggestedKey || '', Object.fromEntries(candidate.interpolation.variables.map(v => [v.name, v.expression])), { useDoubleQuotes: false })
+      : `$t('${candidate.suggestedKey}')`;
+    const translationCall = `:${attrName}="${inner}"`;
 
     // We need to find the full attribute range, not just the value
     // This is a simplified approach - in a real implementation, we'd need AST positions
     const content = magicString.original;
-    const attrPattern = new RegExp(`${attrName}\\s*=\\s*["']${this.escapeRegExp(candidate.text)}["']`, 'g');
-    const match = attrPattern.exec(content);
+    // Match either bound or static attribute form and choose the one that contains the candidate text
+  const attrPattern = new RegExp(`(?:(:|v-bind:)${attrName}|${attrName})\\s*=\\s*(['"])([\\s\\S]*?)\\2`, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = attrPattern.exec(content)) !== null) {
+      const value = m[3] ?? '';
 
-    if (match) {
-      const attrStart = match.index;
-      const attrEnd = attrStart + match[0].length;
-      magicString.overwrite(attrStart, attrEnd, translationCall);
-      return true;
+      // Determine whether this attribute match corresponds to our candidate.
+      // Candidate text for interpolations uses placeholders (e.g. "Hello {name}")
+      // while the attribute expression may be a concatenation ('Hello ' + name).
+      // Match if any of the following hold:
+      // - attribute value contains the exact candidate.text
+      // - attribute value contains at least one interpolation variable expression/name
+      // - attribute value contains a static fragment from the candidate text
+      let matchesCandidate = false;
+      if (candidate.text && value.includes(candidate.text)) matchesCandidate = true;
+      if (!matchesCandidate && candidate.interpolation && candidate.interpolation.variables) {
+        for (const v of candidate.interpolation.variables) {
+          if (!v) continue;
+          if ((v.expression && value.includes(v.expression)) || (v.name && value.includes(v.name))) {
+            matchesCandidate = true;
+            break;
+          }
+        }
+      }
+      if (!matchesCandidate && candidate.text) {
+        const staticFragment = candidate.text.replace(/\{[^}]+\}/g, '').trim();
+        if (staticFragment && value.includes(staticFragment)) matchesCandidate = true;
+      }
+
+      if (matchesCandidate) {
+        const attrStart = m.index;
+        const attrEnd = attrStart + m[0].length;
+        magicString.overwrite(attrStart, attrEnd, translationCall);
+        return true;
+      }
     }
 
     return false;
@@ -1053,8 +1343,21 @@ export class VueAdapter implements FrameworkAdapter {
     // For template expressions like {{ 'text' }}, we replace just the string literal
     // with $t('key'), keeping the {{ }} wrapper intact.
     // The fullRange should point to the literal including quotes.
-    const translationCall = `$t('${candidate.suggestedKey}')`;
-    magicString.overwrite(startPos, endPos, translationCall);
+    const original = magicString.original.slice(startPos, endPos);
+    const hasMustache = original.includes('{{') || original.includes('}}') || original.trim().startsWith('{{');
+
+    // Build replacement (use full {{ $t(...) }} when the original content
+    // was a template interpolation; otherwise use attribute-style $t(...).
+    if (candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0) {
+      const params = Object.fromEntries(candidate.interpolation.variables.map(v => [v.name, v.expression]));
+      const attrReplacement = generateVueAttributeReplacement(candidate.suggestedKey || '', params, { useDoubleQuotes: false });
+      const tmplReplacement = generateVueReplacement(candidate.suggestedKey || '', params, { useDoubleQuotes: false });
+      magicString.overwrite(startPos, endPos, hasMustache ? tmplReplacement : attrReplacement);
+    } else {
+      const simpleAttr = `$t('${candidate.suggestedKey}')`;
+      const simpleTmpl = `{{ $t('${candidate.suggestedKey}') }}`;
+      magicString.overwrite(startPos, endPos, hasMustache ? simpleTmpl : simpleAttr);
+    }
     return true;
   }
 
@@ -1071,9 +1374,13 @@ export class VueAdapter implements FrameworkAdapter {
           edits.push({
             start: startPos,
             end: endPos,
-            replacement: candidate.kind === 'jsx-text'
-              ? `{{ $t('${candidate.suggestedKey}') }}`
-              : `:${candidate.context || 'value'}="$t('${candidate.suggestedKey}')"`
+        replacement: candidate.kind === 'jsx-text'
+          ? (candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0
+            ? generateVueReplacement(candidate.suggestedKey || '', Object.fromEntries(candidate.interpolation.variables.map(v => [v.name, v.expression])), { useDoubleQuotes: false })
+            : `{{ $t('${candidate.suggestedKey}') }}`)
+          : (`:${candidate.context || 'value'}="${candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0
+            ? generateVueAttributeReplacement(candidate.suggestedKey || '', Object.fromEntries(candidate.interpolation.variables.map(v => [v.name, v.expression])), { useDoubleQuotes: true })
+            : `$t('${candidate.suggestedKey}')`}"`)
           });
         }
       }

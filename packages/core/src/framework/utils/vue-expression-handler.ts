@@ -17,6 +17,10 @@ import {
 import {
   PatternDetector,
 } from './pattern-detector.js';
+import {
+  stripAdjacentPunctuation,
+  toKeySafeText,
+} from './text-filters.js';
 
 /**
  * Result of analyzing a Vue template expression
@@ -298,13 +302,27 @@ function analyzeStringConcatenation(
   let paramIndex = 0;
   let hasStaticPart = false;
 
-  for (const part of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
     const trimmed = part.trim();
     
     // String literal: 'text' or "text"
     const stringMatch = trimmed.match(/^(['"])(.+?)\1$/);
     if (stringMatch) {
-      const text = stringMatch[2];
+      let text = stringMatch[2];
+      
+      // If next part is dynamic and current text ends with opening punctuation,
+      // trim it (it's likely structural, not translatable)
+      const nextPart = i + 1 < parts.length ? parts[i + 1].trim() : null;
+      const isNextDynamic = nextPart && !nextPart.match(/^(['"`])/);
+      
+      if (isNextDynamic && text.match(/[([{<]+$/)) {
+        const trailingMatch = text.match(/([([{<]+)$/);
+        if (trailingMatch) {
+          text = text.slice(0, -trailingMatch[1].length);
+        }
+      }
+      
       textParts.push(text);
       mergedText += text;
       hasStaticPart = true;
@@ -314,7 +332,19 @@ function analyzeStringConcatenation(
     // Template literal (backticks without ${})
     const templateMatch = trimmed.match(/^`([^`]*)`$/);
     if (templateMatch) {
-      const text = templateMatch[1];
+      let text = templateMatch[1];
+      
+      // Same check for template literals
+      const nextPart = i + 1 < parts.length ? parts[i + 1].trim() : null;
+      const isNextDynamic = nextPart && !nextPart.match(/^(['"`])/);
+      
+      if (isNextDynamic && text.match(/[([{<]+$/)) {
+        const trailingMatch = text.match(/([([{<]+)$/);
+        if (trailingMatch) {
+          text = text.slice(0, -trailingMatch[1].length);
+        }
+      }
+      
       textParts.push(text);
       mergedText += text;
       hasStaticPart = true;
@@ -423,7 +453,7 @@ function getParamName(expression: string, index: number): string {
   }
 
   // Fallback to indexed name
-  return `param${index}`;
+  return `arg${index}`;
 }
 
 /**
@@ -455,8 +485,13 @@ export interface VueAdjacentAnalysis {
   textParts: string[];
   /** Dynamic expressions */
   expressions: string[];
-  /** The merged template text for locale files */
+  /** The merged template text for locale files (static parts + interpolation placeholders) */
   mergedText?: string;
+  /**
+   * Text used for key generation — derived from the static text parts only,
+   * so that dynamic expression content does not pollute the suggested key.
+   */
+  keyText?: string;
   /** Interpolation parameters for the t() call */
   interpolationParams?: Record<string, string>;
   /** Reason if cannot interpolate */
@@ -479,27 +514,105 @@ export function analyzeVueAdjacentContent(
   const textParts: string[] = [];
   const expressions: string[] = [];
   const interpolationParams: Record<string, string> = {};
+  // mergedText is built directly as a string to preserve original source spacing.
   let mergedText = '';
   let paramIndex = 0;
   let hasStaticText = false;
 
-  for (const child of children) {
+  for (let ci = 0; ci < children.length; ci++) {
+    const child = children[ci];
+
     if (child.type === 'VText' && child.text) {
-      const trimmed = child.text.trim();
+      let raw = child.text; // preserve original spacing
+      let trimmed = raw.trim();
       if (trimmed) {
-        textParts.push(trimmed);
-        mergedText += child.text; // Preserve whitespace in merged text
-        hasStaticText = true;
-      } else if (child.text) {
-        mergedText += child.text; // Preserve spacing
+        // If the static text contains an SQL-like fragment, only keep the
+        // prefix up to the SQL keyword for the locale text (avoid extracting
+        // code snippets as translatable strings).
+        const sqlMatch = trimmed.match(/\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|ORDER\s+BY|GROUP\s+BY|CREATE|DROP|ALTER|TRUNCATE)\b/i);
+        if (sqlMatch && sqlMatch.index !== undefined) {
+          const matchedToken = trimmed.substr(sqlMatch.index, sqlMatch[0].length);
+          const looksLikeSql = matchedToken === matchedToken.toUpperCase() || /[=*'"()[\]{}]/.test(trimmed);
+          if (looksLikeSql) {
+            trimmed = trimmed.slice(0, sqlMatch.index).trimEnd();
+            // Rebuild raw to only contain the trimmed prefix plus surrounding whitespace
+            raw = raw.replace(child.text.trim(), trimmed);
+          }
+        }
+
+        // Clean the static text for keyText (strip structural punctuation that's adjacent to expressions)
+        // We use toKeySafeText to ensure the key doesn't include trailing "(" or leading ")"
+
+        if (trimmed) {
+          // For textParts (used in keyText), strip structural punctuation
+          const cleanedForKey = toKeySafeText(trimmed);
+          if (cleanedForKey) {
+            textParts.push(cleanedForKey);
+          }
+          mergedText += raw;
+          hasStaticText = true;
+        }
+      } else if (raw.trim() === '') {
+        // Whitespace-only VText: preserve as spacing in mergedText
+        mergedText += raw;
       }
     } else if (child.type === 'VExpressionContainer' && child.expression) {
       const expr = child.expression.trim();
-      expressions.push(expr);
-      
-      const paramName = getParamName(expr, paramIndex++);
-      interpolationParams[paramName] = expr;
-      mergedText += formatPlaceholder(paramName, interpolationFormat);
+
+      // If the expression itself is a simple template-literal or concatenation
+      // that can be extracted AND has only simple (non-complex) dynamic params,
+      // expand it inline so the locale value contains both the surrounding static
+      // text AND the inner literal structure.
+      //
+      // For complex expressions (template-literals whose sub-expressions are
+      // themselves non-trivial, e.g. `text ${items.join(', ')}`) we intentionally
+      // treat the whole expression as a single opaque interpolation parameter so
+      // that the static prefix drives key generation and the locale value remains
+      // clean and human-readable.
+      let inlined = false;
+      try {
+        const inner = analyzeVueExpression(expr, { interpolationFormat });
+        if (inner.canExtract && inner.mergedText && inner.dynamicExpressions.length === 0) {
+          // Purely static inner expression (e.g. `Hello World`) — inline as text
+          mergedText += inner.mergedText;
+          if (!hasStaticText) {
+            textParts.push(inner.mergedText);
+            hasStaticText = true;
+          }
+          inlined = true;
+        } else if (inner.canExtract && inner.mergedText && inner.dynamicExpressions.length > 0) {
+          // Template-literal or concat with simple variable interpolations.
+          // Only inline if ALL dynamic sub-expressions are simple identifiers
+          // or property accesses — never function calls.
+          const allSimple = inner.dynamicExpressions.every(
+            dex => /^[a-zA-Z_$][a-zA-Z0-9_$.]*$/.test(dex.trim())
+          );
+          if (allSimple) {
+            // Inline: expand the inner template into the outer mergedText
+            mergedText += inner.mergedText;
+            for (const [innerName, innerExpr] of Object.entries(inner.interpolationParams || {})) {
+              let finalName = innerName;
+              let suffix = 0;
+              while (interpolationParams[finalName]) {
+                finalName = `${innerName}${suffix++}`;
+              }
+              interpolationParams[finalName] = innerExpr;
+            }
+            for (const dex of inner.dynamicExpressions) expressions.push(dex);
+            inlined = true;
+          }
+        }
+      } catch (_err) {
+        // fall through
+      }
+
+      if (!inlined) {
+        // Treat the whole expression as a single opaque interpolation param
+        expressions.push(expr);
+        const paramName = getParamName(expr, paramIndex++);
+        interpolationParams[paramName] = expr;
+        mergedText += formatPlaceholder(paramName, interpolationFormat);
+      }
     }
   }
 
@@ -526,12 +639,18 @@ export function analyzeVueAdjacentContent(
     };
   }
 
+  const finalMergedText = stripAdjacentPunctuation(mergedText.replace(/\s{2,}/g, ' ').trim());
+  // keyText uses only the static label parts so the generated key is not
+  // polluted by interpolation placeholders or inner expression content.
+  const keyText = stripAdjacentPunctuation(textParts.join(' ').replace(/\s{2,}/g, ' ').trim());
+
   return {
     canInterpolate: true,
     strategy: expressions.length > 0 ? AdjacentStrategy.Interpolate : AdjacentStrategy.TextOnly,
     textParts,
     expressions,
-    mergedText: mergedText.trim(),
+    mergedText: finalMergedText,
+    keyText,
     interpolationParams,
   };
 }

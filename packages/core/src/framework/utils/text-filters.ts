@@ -91,6 +91,87 @@ export interface TextFilterConfig {
 }
 
 /**
+ * Extract a translatable prefix from a text that may contain code-like fragments
+ * (e.g. SQL queries). If a code-like keyword is found, return the substring
+ * before the keyword; otherwise return the original text.
+ */
+export function extractTranslatablePrefix(text: string): string {
+  if (!text || !text.trim()) return text;
+
+  const sqlKeywordRegex = /\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|ORDER\s+BY|GROUP\s+BY|CREATE|DROP|ALTER|TRUNCATE)\b/i;
+  const m = text.match(sqlKeywordRegex);
+  if (m && m.index !== undefined) {
+    // Only treat as SQL-like when the matched keyword appears to be code
+    // (commonly uppercase) or the surrounding text contains SQL-like tokens
+    // such as '=' or '*' or quoted identifiers. This avoids false-positives
+    // on UI labels like "Select the travel dates".
+    const matchedToken = text.substr(m.index, m[0].length);
+    const looksLikeSql = matchedToken === matchedToken.toUpperCase() || /[=*\'"]/.test(text);
+    if (looksLikeSql) {
+      return text.slice(0, m.index).trimEnd();
+    }
+  }
+
+  return text;
+}
+
+/**
+ * Strip structural punctuation that appears adjacent to placeholders.
+ * 
+ * This function removes opening brackets/parens that immediately precede
+ * a placeholder and closing brackets/parens that immediately follow one.
+ * Used for both key generation AND locale value generation.
+ * 
+ * Examples:
+ * - "Items ({count})" → "Items {count})"
+ * - "Items ({count}): {label}" → "Items {count}): {label}"
+ * 
+ * @param text - Text that may contain placeholders with adjacent punctuation
+ * @returns Text with structural punctuation stripped around placeholders
+ */
+export function stripAdjacentPunctuation(text: string): string {
+  if (!text) return '';
+  
+  return text
+    // Remove opening punctuation immediately before a placeholder: "( {" → " {"
+    .replace(/\(\s*\{/g, '{')
+    .replace(/\[\s*\{/g, '{')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Normalize text for translation key generation by removing structural punctuation.
+ * 
+ * This is the SINGLE SOURCE OF TRUTH for key-safe text preparation.
+ * All key generation flows should use this function.
+ * 
+ * Removes:
+ * - Trailing opening punctuation: ( [ { < that precede dynamic content
+ * - Leading closing punctuation: ) ] } > that follow dynamic content  
+ * - Excess whitespace
+ * 
+ * Examples:
+ * - "Items (" → "Items"
+ * - "Items ({count})" → "Items" (for key)
+ * - ") remaining" → "remaining"
+ * 
+ * @param text - Raw text that may contain structural punctuation
+ * @returns Clean text suitable for key generation
+ */
+export function toKeySafeText(text: string): string {
+  if (!text) return '';
+  
+  return text
+    .trim()
+    .replace(/[([{<]+\s*$/, '')  // Remove trailing opening punctuation
+    .replace(/^\s*[)\]}>]+/, '') // Remove leading closing punctuation
+    .replace(/\s+/g, ' ')        // Collapse whitespace
+    .trim();
+}
+
+/**
  * Determine if text content should be extracted for translation.
  *
  * This function encapsulates the common heuristics used across all framework adapters
@@ -357,33 +438,40 @@ function isLikelySingleTokenTailwindClass(text: string): boolean {
  *
  * This is a simple key generation algorithm that can be shared across adapters.
  * More sophisticated implementations could use machine learning or custom rules.
+ * 
+ * IMPORTANT: This function automatically applies toKeySafeText() to remove
+ * structural punctuation (like trailing '(' before dynamic content) from the key.
  */
 export function generateKey(text: string, style: 'snake' | 'camel' | 'kebab' = 'snake', maxLength: number = 50): string {
   if (!text) return '';
+
+  // First, clean the text of structural punctuation for key generation
+  const safeText = toKeySafeText(text);
+  if (!safeText) return '';
 
   let key: string;
 
   switch (style) {
     case 'snake':
-      key = text.toLowerCase()
+      key = safeText.toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
       break;
 
     case 'camel':
-      key = text.toLowerCase()
+      key = safeText.toLowerCase()
         .replace(/[^a-z0-9]+(.)/g, (_, char) => char.toUpperCase())
         .replace(/^./, char => char.toLowerCase());
       break;
 
     case 'kebab':
-      key = text.toLowerCase()
+      key = safeText.toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
       break;
 
     default:
-      key = text.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      key = safeText.toLowerCase().replace(/[^a-z0-9]+/g, '_');
   }
 
   return key.substring(0, maxLength);

@@ -289,6 +289,109 @@ export default Search;
       expect(result.didMutate).toBe(true);
       expect(result.edits).toHaveLength(candidates.length);
     });
+
+    it('wraps jsx-expression replacements in braces (template literal case)', () => {
+      const originalContent = `
+import React from 'react';
+
+export function Example() {
+  return <p>Template literal inline: {` + "`backtick ${'value'}`" + `}</p>;
+}
+`;
+
+      const scanCandidates = adapter.scan('Example.tsx', originalContent);
+      const target = scanCandidates.find((c) => c.kind === 'jsx-expression');
+      expect(target).toBeDefined();
+
+      const candidates: TransformCandidate[] = [
+        {
+          ...(target as ScanCandidate),
+          suggestedKey: 'common.app.template-literal-inline.dca888',
+          hash: target?.hash || 'defaultHash',
+          status: 'pending' as const,
+        },
+      ];
+
+      const result = adapter.mutate('Example.tsx', originalContent, candidates, {
+        config,
+        workspaceRoot: '/tmp',
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+      });
+
+      expect(result.didMutate).toBe(true);
+  // t() call may include interpolation params for template-literal expressions
+  expect(result.content).toMatch(/Template literal inline: \{t\('common\.app\.template-literal-inline\.dca888'(, \{[^}]+\})?\)\}/);
+    });
+
+    it('does not corrupt concatenation replacement with trailing fragments', () => {
+      const originalContent = `
+import React from 'react';
+
+export function Example() {
+  return <p>Simple concatenation: {'Hello, ' + 'world!'}</p>;
+}
+`;
+
+      const scanCandidates = adapter.scan('Example.tsx', originalContent);
+      const target = scanCandidates.find(
+        (c) => c.kind === 'jsx-expression' && (c.text?.includes('Hello, world!') || c.text?.includes('{'))
+      ) ?? scanCandidates.find((c) => c.kind === 'jsx-expression');
+      expect(target).toBeDefined();
+
+      const candidates: TransformCandidate[] = [
+        {
+          ...(target as ScanCandidate),
+          suggestedKey: 'common.app.hello-world.552585',
+          hash: target?.hash || 'defaultHash',
+          status: 'pending' as const,
+        },
+      ];
+
+      const result = adapter.mutate('Example.tsx', originalContent, candidates, {
+        config,
+        workspaceRoot: '/tmp',
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+      });
+
+      expect(result.didMutate).toBe(true);
+      expect(result.content).toContain("<p>Simple concatenation: {t('common.app.hello-world.552585')}</p>");
+      expect(result.content).not.toContain("+ 'world!'");
+    });
+
+    it('preserves dynamic variable expressions when only static jsx-text is transformed', () => {
+      const originalContent = `
+import React from 'react';
+
+export function Example({ userName }: { userName: string }) {
+  return <p>User name: {userName}</p>;
+}
+`;
+
+      const scanCandidates = adapter.scan('Example.tsx', originalContent);
+      const staticTextCandidate = scanCandidates.find(
+        (c) => c.kind === 'jsx-text' && c.text?.includes('User name:')
+      );
+      expect(staticTextCandidate).toBeDefined();
+
+      const candidates: TransformCandidate[] = [
+        {
+          ...(staticTextCandidate as ScanCandidate),
+          suggestedKey: 'common.app.user-name.7ada35',
+          hash: staticTextCandidate?.hash || 'defaultHash',
+          status: 'pending' as const,
+        },
+      ];
+
+      const result = adapter.mutate('Example.tsx', originalContent, candidates, {
+        config,
+        workspaceRoot: '/tmp',
+        translationAdapter: { module: 'react-i18next', hookName: 'useTranslation' },
+      });
+
+      expect(result.didMutate).toBe(true);
+      expect(result.content).toContain("{t('common.app.user-name.7ada35')}");
+      expect(result.content).toContain('{userName}');
+    });
   });
 
   describe('registry integration', () => {

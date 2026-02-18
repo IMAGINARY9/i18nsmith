@@ -7,6 +7,7 @@
 
 import { Node } from 'ts-morph';
 import { analyzeJsxExpression, ExpressionType, DynamicPart } from './expression-analyzer.js';
+import { generateKey as sharedGenerateKey } from './text-filters.js';
 
 /**
  * Strategy for handling string concatenation
@@ -276,10 +277,5 @@ function buildInterpolationTemplate(staticParts: string[], dynamicParts: Dynamic
   return result;
 }
 
-function generateKey(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .substring(0, 50);
-}
+// Use the shared generateKey from text-filters which includes toKeySafeText cleanup
+const generateKey = sharedGenerateKey;

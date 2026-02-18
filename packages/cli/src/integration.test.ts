@@ -427,6 +427,38 @@ export function App() {
       expect(result.output).toContain('Planning transform (dry-run)');
       expect(result.exitCode).toBe(0);
     });
+
+    it('extraction should not include structural opening punctuation (Items ({count}) case)', async () => {
+      const content = `export function App() {
+  const count = 5;
+  const items = ['a','b'];
+  return (
+    <>
+      <p>Items ({count}): {items.join(', ')}</p>
+      <p>{'Items (' + count + ')'}</p>
+    </>
+  );
+}`;
+
+      await fs.writeFile(path.join(tmpDir, 'src', 'App.tsx'), content);
+
+      const result = runCli(['transform', '--json'], { cwd: tmpDir });
+      expect(result.exitCode).toBe(0);
+      const parsed = extractJson<any>(result.output);
+      const candidates = parsed.candidates || [];
+
+      // No candidate text should include the structural '(' token before the placeholder
+      const hasBadText = candidates.some((c: any) => typeof c.text === 'string' && c.text.includes('Items ('));
+      expect(hasBadText).toBe(false);
+
+      // Find the Items-related candidate and assert its suggestedKey is derived from the static "Items"
+      const itemsCandidate = candidates.find((c: any) => typeof c.text === 'string' && /Items/.test(c.text));
+      expect(itemsCandidate).toBeDefined();
+      expect(itemsCandidate.text).not.toContain('(');
+      if (itemsCandidate.interpolation) {
+        expect(itemsCandidate.interpolation.template).not.toMatch(/Items \(/);
+      }
+    });
   });
 
   describe('check command', () => {

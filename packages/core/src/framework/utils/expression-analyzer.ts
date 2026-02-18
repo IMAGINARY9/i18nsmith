@@ -7,6 +7,7 @@
  */
 
 import { Node, SyntaxKind } from 'ts-morph';
+import { generateKey as sharedGenerateKey, stripAdjacentPunctuation } from './text-filters.js';
 
 /**
  * Types of expressions that can be found in JSX
@@ -565,7 +566,9 @@ function buildInterpolationTemplateFromParts(parts: Node[]): string {
   let result = '';
   let varIndex = 0;
   
-  for (const part of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    
     if (Node.isStringLiteral(part)) {
       result += part.getLiteralText();
     } else if (Node.isNoSubstitutionTemplateLiteral(part)) {
@@ -576,13 +579,9 @@ function buildInterpolationTemplateFromParts(parts: Node[]): string {
     }
   }
   
-  return result;
+  // Strip structural punctuation adjacent to placeholders (e.g., "Items ({count})" → "Items {count})")
+  return stripAdjacentPunctuation(result);
 }
 
-function generateSuggestedKey(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .substring(0, 50);
-}
+// Use the shared generateKey from text-filters which includes toKeySafeText cleanup
+const generateSuggestedKey = sharedGenerateKey;

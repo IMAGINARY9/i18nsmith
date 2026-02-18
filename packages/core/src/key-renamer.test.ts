@@ -80,7 +80,6 @@ export function Profile() {
   it('renames occurrences and locale entries when write flag is set', async () => {
     const renamer = new KeyRenamer(baseConfig, { workspaceRoot: tempDir });
     const summary = await renamer.rename('old.key', 'new.key', { write: true });
-
     expect(summary.filesUpdated).toEqual(['src/App.tsx']);
     expect(summary.localeStats.length).toBeGreaterThan(0);
 
@@ -111,10 +110,11 @@ export function Profile() {
       { write: true }
     );
 
-    expect(summary.mappingSummaries).toHaveLength(2);
+  expect(summary.mappingSummaries).toHaveLength(2);
     const oldKeyMapping = summary.mappingSummaries.find((entry) => entry.from === 'old.key');
     expect(oldKeyMapping?.occurrences).toBe(1);
-    expect(summary.filesUpdated).toEqual(['src/App.tsx']);
+  // batch rename should update all source files that contain mapped keys
+  expect(summary.filesUpdated).toEqual(expect.arrayContaining(['src/App.tsx', 'src/Profile.tsx']));
 
     const enContents = JSON.parse(await fs.readFile(path.join(tempDir, 'locales', 'en.json'), 'utf8'));
     expect(enContents).toMatchObject({ 'new.key': 'Hello', 'profile.salutation': 'Hi profile' });
