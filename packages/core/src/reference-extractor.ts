@@ -11,7 +11,8 @@ import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
-import { getToolVersion, hashConfig } from './cache-utils.js';
+import { getToolVersion, hashConfig, getParsersSignature } from './cache-utils.js';
+import { CacheValidator, CacheStatsCollector, type CacheValidationContext } from './cache/index.js';
 import { createDefaultProject } from './project-factory.js';
 import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
 
@@ -102,6 +103,7 @@ export interface ReferenceCacheFile {
   translationIdentifier: string;
   configHash: string;
   toolVersion: string;
+  parserSignature?: string;
   files: Record<string, ReferenceCacheEntry>;
 }
 
@@ -115,7 +117,8 @@ export interface ExtractionResult {
 
 // Bumped from 2 → 3 to invalidate stale caches from before the Vue parser
 // resolution fix (parser was resolved from CLI location instead of project).
-const REFERENCE_CACHE_VERSION = 4;
+// Bumped to 5 to include parser implementation signature in cache validation.
+const REFERENCE_CACHE_VERSION = 5;
 
 export interface ReferenceExtractorOptions {
   workspaceRoot: string;
@@ -138,6 +141,9 @@ export class ReferenceExtractor {
   private readonly parserRegistry: ParserRegistry;
   private readonly configHash: string;
   private readonly toolVersion: string;
+  private readonly parserSignature: string;
+  private readonly cacheValidator: CacheValidator;
+  private readonly cacheStats: CacheStatsCollector;
 
   constructor(
     private readonly config: I18nConfig,
@@ -159,6 +165,18 @@ export class ReferenceExtractor {
     this.referenceCachePath = path.join(this.cacheDir, 'references.json');
     this.configHash = hashConfig(config);
     this.toolVersion = getToolVersion();
+    this.parserSignature = getParsersSignature();
+    
+    // Initialize cache validator with current context
+    const validationContext: CacheValidationContext = {
+      currentVersion: REFERENCE_CACHE_VERSION,
+      expectedTranslationIdentifier: this.translationIdentifier,
+      currentConfigHash: this.configHash,
+      currentToolVersion: this.toolVersion,
+      currentParserSignature: this.parserSignature,
+    };
+    this.cacheValidator = new CacheValidator(validationContext);
+    this.cacheStats = new CacheStatsCollector();
   }
 
   /**
@@ -337,6 +355,13 @@ export class ReferenceExtractor {
     await fs.rm(this.referenceCachePath, { force: true }).catch(() => {});
   }
 
+  /**
+   * Get cache statistics for debugging and telemetry.
+   */
+  public getCacheStats() {
+    return this.cacheStats.getStats();
+  }
+
   private async collectReferences(
     filePaths: string[],
     assumedKeys: Set<string>,
@@ -465,30 +490,34 @@ export class ReferenceExtractor {
 
   private async loadCache(invalidate?: boolean): Promise<ReferenceCacheFile | undefined> {
     if (invalidate) {
+      this.cacheStats.recordMiss();
       await this.clearCache();
       return undefined;
     }
 
     try {
       const raw = await fs.readFile(this.referenceCachePath, 'utf8');
-      const parsed = JSON.parse(raw) as ReferenceCacheFile;
-      if (parsed.version !== REFERENCE_CACHE_VERSION) {
+      const parsed = JSON.parse(raw);
+      
+      // Validate cache using unified validator
+      const validation = this.cacheValidator.validate(parsed);
+      if (!validation.valid) {
+        this.cacheStats.recordInvalidation(validation.reasons);
+        this.cacheStats.recordMiss();
         return undefined;
       }
-      if (parsed.translationIdentifier !== this.translationIdentifier) {
+      
+      // Additional check for files structure
+      const cacheData = parsed as ReferenceCacheFile;
+      if (!cacheData.files || typeof cacheData.files !== 'object') {
+        this.cacheStats.recordMiss();
         return undefined;
       }
-      if (parsed.configHash !== this.configHash) {
-        return undefined;
-      }
-      if (parsed.toolVersion !== this.toolVersion) {
-        return undefined;
-      }
-      if (!parsed.files || typeof parsed.files !== 'object') {
-        return undefined;
-      }
-      return parsed;
+      
+      this.cacheStats.recordHit();
+      return cacheData;
     } catch {
+      this.cacheStats.recordMiss();
       return undefined;
     }
   }
@@ -499,6 +528,7 @@ export class ReferenceExtractor {
       translationIdentifier: this.translationIdentifier,
       configHash: this.configHash,
       toolVersion: this.toolVersion,
+      parserSignature: this.parserSignature,
       files: entries,
     };
 

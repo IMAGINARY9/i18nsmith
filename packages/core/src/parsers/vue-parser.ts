@@ -251,7 +251,16 @@ export class VueParser implements Parser {
           }
           break;
         case 'VElement':
-          // Vue template element
+          // Vue template element — walk both bound-attribute expressions
+          // (e.g. :placeholder="$t(...)") and child nodes.
+          if (node.startTag && Array.isArray(node.startTag.attributes)) {
+            node.startTag.attributes.forEach((attr: any) => {
+              // Only directive attributes carry a VExpressionContainer value
+              if (attr.directive && attr.value && attr.value.type === 'VExpressionContainer') {
+                this.walkVueAST(attr.value, visitor);
+              }
+            });
+          }
           if (node.children && Array.isArray(node.children)) {
             node.children.forEach((child: any) => this.walkVueAST(child, visitor));
           }

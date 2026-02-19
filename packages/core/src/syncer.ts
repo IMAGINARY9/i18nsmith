@@ -57,7 +57,7 @@ import {
   collectPatternMatchedKeys,
 } from './syncer/pattern-matcher.js';
 import { buildDynamicKeyCoverage, expandDynamicKeys, type DynamicKeyCoverage } from './dynamic-keys.js';
-import { hashConfig, getToolVersion } from './cache-utils.js';
+import { hashConfig, getToolVersion, getParsersSignature } from './cache-utils.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -242,10 +242,11 @@ export class Syncer {
     const parserAvailability = this.getParserAvailability();
     const configHash = hashConfig(this.config);
     const toolVersion = getToolVersion();
+    const parserSignature = getParsersSignature();
     const cacheState = await loadReferenceCache(
       this.referenceCachePath,
       this.translationIdentifier,
-      { invalidate: runOptions.invalidateCache, parserAvailability, configHash, toolVersion }
+      { invalidate: runOptions.invalidateCache, parserAvailability, configHash, toolVersion, parserSignature }
     );
     const nextCacheEntries: Record<string, ReferenceCacheEntry> = targetFilter
       ? { ...(cacheState?.files ?? {}) }
@@ -463,7 +464,7 @@ export class Syncer {
       this.cacheDir,
       this.translationIdentifier,
       nextCacheEntries,
-      { parserAvailability, configHash, toolVersion }
+      { parserAvailability, configHash, toolVersion, parserSignature: getParsersSignature() }
     );
 
     const actionableItems = buildActionableItems({
@@ -866,10 +867,9 @@ export class Syncer {
         fileWarnings = cachedEntry.dynamicKeyWarnings;
         nextCacheEntries[relativePath] = cachedEntry;
       } else {
-        let extracted: { references: TranslationReference[]; dynamicKeyWarnings: DynamicKeyWarning[] };
-        
         const sourceFile = this.project.addSourceFileAtPath(absolutePath);
-        extracted = this.extractor.extractFromFile(sourceFile);
+        const extracted: { references: TranslationReference[]; dynamicKeyWarnings: DynamicKeyWarning[] } =
+          this.extractor.extractFromFile(sourceFile);
         
         fileReferences = extracted.references;
         fileWarnings = extracted.dynamicKeyWarnings;

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { I18nConfig } from './config.js';
-import { getToolVersion, hashConfig } from './cache-utils.js';
+import { getToolVersion, hashConfig, getParsersSignature } from './cache-utils.js';
 import type { ReferenceCacheFile as ExtractorCacheFile } from './reference-extractor.js';
 import type { ReferenceCacheFile as SyncCacheFile } from './syncer/reference-cache.js';
 
@@ -15,6 +15,7 @@ export class CacheManager {
   private readonly workspaceRoot: string;
   private readonly configHash: string;
   private readonly toolVersion: string;
+  private readonly parserSignature: string;
   private readonly extractorCachePath: string;
   private readonly syncCachePath: string;
   private readonly previewDir: string;
@@ -23,6 +24,7 @@ export class CacheManager {
     this.workspaceRoot = workspaceRoot;
     this.configHash = hashConfig(config);
     this.toolVersion = getToolVersion();
+  this.parserSignature = getParsersSignature();
     this.extractorCachePath = path.join(workspaceRoot, 'node_modules', '.cache', 'i18nsmith', 'references.json');
     this.syncCachePath = path.join(workspaceRoot, '.i18nsmith', 'cache', 'sync-references.json');
     this.previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
@@ -83,6 +85,14 @@ export class CacheManager {
       }
       if (parsed.toolVersion && parsed.toolVersion !== this.toolVersion) {
         return 'tool version changed';
+      }
+      // If the cache stores a parser signature and it differs from the current
+      // runtime parser signature, consider the cache stale.
+      // (Use a type-unsafe access because different cache file shapes may or
+      // may not include parserSignature.)
+      const maybe = parsed as unknown as { parserSignature?: string };
+      if (maybe.parserSignature && maybe.parserSignature !== this.parserSignature) {
+        return 'parser implementation changed';
       }
       return undefined;
     } catch {

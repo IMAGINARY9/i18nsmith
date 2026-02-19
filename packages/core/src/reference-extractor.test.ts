@@ -190,4 +190,41 @@ describe('ReferenceExtractor', () => {
     expect(result.keySet.has('assumed.key.two')).toBe(true);
     expect(result.referencesByKey.has('assumed.key.one')).toBe(true);
   });
+
+  it('extracts $t() from bound attributes (:attr) in Vue SFC templates', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ref-extractor-vue-bound-'));
+    const srcDir = path.join(tempDir, 'src');
+    await fs.mkdir(srcDir, { recursive: true });
+
+    await fs.writeFile(
+      path.join(srcDir, 'Input.vue'),
+      `
+<template>
+  <div>
+    <input :placeholder="$t('form.placeholder.name')" :aria-label="$t('form.aria.name')" />
+    <p v-if="show">{{ $t('form.hint') }}</p>
+  </div>
+</template>
+`,
+      'utf8'
+    );
+
+    const config: I18nConfig = {
+      sourceLanguage: 'en',
+      targetLanguages: [],
+      localesDir: path.join(tempDir!, 'locales'),
+      include: ['src/**/*.vue'],
+    };
+
+    const extractor = new ReferenceExtractor(config, { workspaceRoot: tempDir });
+    const result = await extractor.extract({ invalidateCache: true });
+
+    const keys = result.references.map((r) => r.key);
+    // All three $t() calls — two in bound attributes, one in mustache — must be found
+    expect(keys).toContain('form.placeholder.name');
+    expect(keys).toContain('form.aria.name');
+    expect(keys).toContain('form.hint');
+    // None should be reported as missing references
+    expect(result.dynamicKeyWarnings).toHaveLength(0);
+  });
 });
