@@ -24,7 +24,7 @@ export const program = new Command();
 program
   .name('i18nsmith')
   .description('Universal Automated i18n Library')
-  .version('0.4.4');
+  .version('0.5.0');
 
 registerInit(program);
 registerScaffoldAdapter(program);

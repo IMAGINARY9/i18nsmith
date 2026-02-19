@@ -16,7 +16,7 @@ All notable changes to this extension will be documented in this file.
 - Improve Vue parser error handling and fallback extraction behavior.
 - Fix diff-preview editor state issues and reduce false-positive warnings in extraction.
 
-## [0.4.4] - 2026-02-19
+## [0.5.0] - 2026-02-19
 ### Enhancement
 - Minor/medium updates: caching, CLI JSON output, adapter improvements, and reliability fixes.
 
