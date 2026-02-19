@@ -4,15 +4,21 @@ All notable changes to this extension will be documented in this file.
 
 ## [Unreleased]
 
-### Enhancement
-- Add dynamic key coverage UX and exportable CLI coverage view.
-- Implement dependency installation prompts and DependencyCacheManager for better dependency notifications.
-- Add prebuild script to generate version file during builds.
+### Features & Enhancements
+- Add dynamic key coverage export (CLI JSON output) and dynamic coverage UX improvements.
+- Implement cache improvements: parser signature validation, build-time parser signature for optimized cache, and test-friendly cache paths.
+- CLI: JSON-output support (logs on stderr) for machine-readable consumption.
+- Enhance ReactAdapter and VueAdapter extraction and transform parity (JSX/Expression handling, rename support).
+- Add DependencyCacheManager and improved dependency resolution notifications (auto-install prompts).
+- Multiple core improvements: EditConflictDetector, PatternDetector, template literal and concatenation handlers for JSX transforms.
 
-### Fix
-- Improve Vue parser error handling and fallback extraction logic.
-- Fix diff preview handling for editor state.
-- Warn on missing Vue parser and reduce false positives.
+### Fixes
+- Improve Vue parser error handling and fallback extraction behavior.
+- Fix diff-preview editor state issues and reduce false-positive warnings in extraction.
+
+## [0.4.4] - 2026-02-19
+### Enhancement
+- Minor/medium updates: caching, CLI JSON output, adapter improvements, and reliability fixes.
 
 ## [0.4.3] - 2026-02-11
 ### Enhancement
