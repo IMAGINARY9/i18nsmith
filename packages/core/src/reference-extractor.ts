@@ -208,6 +208,11 @@ export class ReferenceExtractor {
 
     try {
       const content = file.getFullText();
+      // Debug: optionally inspect the raw content passed to the framework parser
+      if (process.env.DEBUG_REFEXT === '1') {
+        // eslint-disable-next-line no-console
+        console.log(`refext.debug: parseFile content includes demo.card.greeting? ${content.includes("demo.card.greeting")}`);
+      }
       const result = parser.parseFile(filePath, content, this.translationIdentifier, this.workspaceRoot);
       return result;
     } catch (error) {

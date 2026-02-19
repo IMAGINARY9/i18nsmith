@@ -61,7 +61,9 @@ export class VueParser implements Parser {
     translationIdentifier: string,
     workspaceRoot?: string
   ): ParseResult {
-    console.log(`[DEBUG] VueParser.parseFile called for ${filePath}, identifier: ${translationIdentifier}`);
+    if (process.env.DEBUG_VUE_PARSER === '1') {
+      console.log(`[DEBUG] VueParser.parseFile called for ${filePath}, identifier: ${translationIdentifier}`);
+    }
     const references: TranslationReference[] = [];
     const dynamicKeyWarnings: DynamicKeyWarning[] = [];
 
@@ -101,29 +103,41 @@ export class VueParser implements Parser {
 
       let ast: any;
       try {
-        console.log(`[DEBUG] VueParser: Attempting to parse, hasTypescriptParser = ${hasTypescriptParser}, parser = ${parserOptions.parser}`);
-        console.log(`[DEBUG] VueParser: Content first 200 chars:`, content.substring(0, 200));
+        if (process.env.DEBUG_VUE_PARSER === '1') {
+          console.log(`[DEBUG] VueParser: Attempting to parse, hasTypescriptParser = ${hasTypescriptParser}, parser = ${parserOptions.parser}`);
+          console.log(`[DEBUG] VueParser: Content first 200 chars:`, content.substring(0, 200));
+        }
         ast = parse(content, parserOptions);
-        console.log(`[DEBUG] VueParser: Parse returned, ast type =`, typeof ast, 'ast.type =', ast?.type);
+        if (process.env.DEBUG_VUE_PARSER === '1') {
+          console.log(`[DEBUG] VueParser: Parse returned, ast type =`, typeof ast, 'ast.type =', ast?.type);
+        }
       } catch (parseError) {
-        console.log(`[DEBUG] VueParser: Initial parse failed:`, parseError);
+        if (process.env.DEBUG_VUE_PARSER === '1') {
+          // Debug-only: surface parse error when debugging parser behavior
+          // eslint-disable-next-line no-console
+          console.log(`[DEBUG] VueParser: Initial parse failed:`, parseError);
+        }
         // If parsing failed (likely due to TypeScript syntax without TS parser),
         // try parsing with parser: false which only parses the template
         try {
-          console.log(`[DEBUG] VueParser: Trying fallback with parser: false`);
+          if (process.env.DEBUG_VUE_PARSER === '1') console.log(`[DEBUG] VueParser: Trying fallback with parser: false`);
           ast = parse(content, {
             ...parserOptions,
             parser: false, // Skip script parsing, only parse template
           });
-          console.log(`[DEBUG] VueParser: Fallback parse succeeded, ast.type = ${ast?.type}`);
+          if (process.env.DEBUG_VUE_PARSER === '1') console.log(`[DEBUG] VueParser: Fallback parse succeeded, ast.type = ${ast?.type}`);
         } catch (fallbackError) {
-          console.log(`[DEBUG] VueParser: Fallback parse also failed:`, fallbackError);
+          if (process.env.DEBUG_VUE_PARSER === '1') {
+            // Debug-only: surface fallback parse error
+            // eslint-disable-next-line no-console
+            console.log(`[DEBUG] VueParser: Fallback parse also failed:`, fallbackError);
+          }
           throw parseError; // Rethrow original error
         }
       }
 
       // Extract references from the AST
-      console.log(`[DEBUG] VueParser: ast.type = ${ast.type}, has templateBody = ${!!ast.templateBody}`);
+      if (process.env.DEBUG_VUE_PARSER === '1') console.log(`[DEBUG] VueParser: ast.type = ${ast.type}, has templateBody = ${!!ast.templateBody}`);
       this.extractReferencesFromVueAST(
         filePath,
         ast,
@@ -139,7 +153,7 @@ export class VueParser implements Parser {
       console.warn(`Failed to parse Vue file ${filePath}:`, error);
     }
     
-    console.log(`[DEBUG] VueParser found ${references.length} references in ${filePath}`);
+    if (process.env.DEBUG_VUE_PARSER === '1') console.log(`[DEBUG] VueParser found ${references.length} references in ${filePath}`);
     return { references, dynamicKeyWarnings };
   }
 
@@ -251,6 +265,32 @@ export class VueParser implements Parser {
             this.walkVueAST(node.expression, visitor);
           }
           break;
+        case 'ObjectExpression':
+          // Walk object properties so nested expressions (e.g. $t(...) inside
+          // an object literal passed as an argument) are visited.
+          if (node.properties && Array.isArray(node.properties)) {
+            node.properties.forEach((p: any) => this.walkVueAST(p, visitor));
+          }
+          break;
+        case 'Property':
+          // Property nodes have key and value
+          if (node.key) this.walkVueAST(node.key, visitor);
+          if (node.value) this.walkVueAST(node.value, visitor);
+          break;
+        case 'ArrayExpression':
+          if (node.elements && Array.isArray(node.elements)) {
+            node.elements.forEach((el: any) => this.walkVueAST(el, visitor));
+          }
+          break;
+        case 'TemplateLiteral':
+          if (node.quasis && Array.isArray(node.quasis)) node.quasis.forEach((q: any) => this.walkVueAST(q, visitor));
+          if (node.expressions && Array.isArray(node.expressions)) node.expressions.forEach((e: any) => this.walkVueAST(e, visitor));
+          break;
+        case 'ConditionalExpression':
+          if (node.test) this.walkVueAST(node.test, visitor);
+          if (node.consequent) this.walkVueAST(node.consequent, visitor);
+          if (node.alternate) this.walkVueAST(node.alternate, visitor);
+          break;
       }
     } else if (Array.isArray(node)) {
       // Handle arrays of nodes
@@ -269,7 +309,9 @@ export class VueParser implements Parser {
       const calleeName = node.callee.name;
       // Support both 't' and '$t' style calls
       const isMatch = calleeName === translationIdentifier || calleeName === `$${translationIdentifier}`;
-      if (isMatch) {
+      if (isMatch && process.env.DEBUG_VUE_PARSER === '1') {
+        // Debug logging only when explicitly enabled
+        // eslint-disable-next-line no-console
         console.log(`[DEBUG] VueParser: Found translation call ${calleeName}(...)`);
       }
       return isMatch;

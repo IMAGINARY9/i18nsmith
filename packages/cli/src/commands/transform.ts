@@ -227,7 +227,14 @@ export function registerTransform(program: Command) {
         : writeEnabled
         ? 'Running transform (write mode)...'
         : 'Planning transform (dry-run)...';
-      console.log(chalk.blue(banner));
+      // When JSON output is requested, avoid human-readable preamble on stdout
+      // so callers can reliably parse the JSON summary. Send banner to stderr
+      // when --json is used.
+      if (options.json) {
+        console.error(chalk.blue(banner));
+      } else {
+        console.log(chalk.blue(banner));
+      }
 
       try {
         const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);

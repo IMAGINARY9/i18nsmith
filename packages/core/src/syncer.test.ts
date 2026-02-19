@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nConfig } from './config.js';
 import { Syncer } from './syncer.js';
+import { ReferenceExtractor } from './reference-extractor.js';
 
 const baseConfig: I18nConfig = {
   version: 1,
@@ -182,6 +183,52 @@ export default Component;
 
     // Should still add new keys
     expect(enContents).toHaveProperty('new.key');
+  });
+
+  it('preserves extractor-discovered references through the full sync pipeline (end-to-end)', async () => {
+    // Create a Vue SFC with a nested $t(...) used as an interpolation parameter
+    const vue = `
+<template>
+  <p v-if="name">{{ $t('common.components.i18ndemo.arg0-name.4ac48a', { arg0: $t('demo.card.greeting'), name }) }}</p>
+</template>
+`;
+
+    await fs.mkdir(path.join(tempDir, 'src', 'components'), { recursive: true });
+    await fs.writeFile(path.join(tempDir, 'src', 'components', 'I18nDemo.vue'), vue);
+
+    // Locales already include the nested key — sync should *not* mark it as unused
+    const en = {
+      common: { components: { i18ndemo: { 'arg0-name': '{arg0} {name}' } } },
+      demo: { card: { greeting: 'Hello' } },
+    };
+    const fr = JSON.parse(JSON.stringify(en));
+
+    await fs.writeFile(path.join(tempDir, 'locales', 'en.json'), JSON.stringify(en, null, 2));
+    await fs.writeFile(path.join(tempDir, 'locales', 'fr.json'), JSON.stringify(fr, null, 2));
+
+    // Use a config that includes .vue files so both extractor and syncer see them
+    const cfg: I18nConfig = {
+      ...baseConfig,
+      include: ['src/**/*.vue', 'src/**/*.{ts,tsx,js,jsx}'],
+    };
+
+    const extractor = new ReferenceExtractor(cfg, { workspaceRoot: tempDir });
+    const extracted = await extractor.extract({ invalidateCache: true });
+    const extractedKeys = new Set(extracted.references.map((r) => r.key));
+
+    const syncer = new Syncer(cfg, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ invalidateCache: true });
+    const summaryRefKeys = new Set(summary.references.map((r) => r.key));
+
+    // Every key discovered by the file-level extractor must appear in the
+    // SyncSummary.references (invariant across the pipeline).
+    for (const k of extractedKeys) {
+      expect(summaryRefKeys.has(k)).toBe(true);
+    }
+
+    // Sanity: the nested interpolation key must *not* be listed as unused.
+    const unused = summary.unusedKeys.map((u) => u.key);
+    expect(unused).not.toContain('demo.card.greeting');
   });
 
   it('skips auto-writing suspicious keys by default', async () => {

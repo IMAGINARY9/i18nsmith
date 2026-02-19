@@ -873,6 +873,13 @@ export class Syncer {
         
         fileReferences = extracted.references;
         fileWarnings = extracted.dynamicKeyWarnings;
+        // Debug: optionally dump per-file references when troubleshooting
+        // Enable by setting DEBUG_SYNC_REF=1 in the environment.
+        // This helps diagnose cases where parser and sync disagree about keys.
+        if (process.env.DEBUG_SYNC_REF === '1') {
+          // eslint-disable-next-line no-console
+          console.log(`sync.debug: ${relativePath} -> ${fileReferences.map(r=>r.key).join(', ')}`);
+        }
         nextCacheEntries[relativePath] = {
           fingerprint,
           references: fileReferences,

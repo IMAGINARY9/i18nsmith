@@ -186,7 +186,11 @@ export function registerCheck(program: Command) {
 
 export async function runCheck(options: CheckCommandOptions): Promise<void> {
   const auditEnabled = Boolean(options.audit || options.auditStrict);
-  console.log(chalk.blue('Running guided repository health check...'));
+  if (options.json) {
+    console.error(chalk.blue('Running guided repository health check...'));
+  } else {
+    console.log(chalk.blue('Running guided repository health check...'));
+  }
   try {
     const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);
 

@@ -2,7 +2,7 @@ import MagicString from 'magic-string';
 import type { I18nConfig } from '../../config.js';
 import type { ScanCandidate, CandidateKind, SkippedCandidate } from '../../scanner.js';
 import type { FrameworkAdapter, TransformCandidate, MutationResult, AdapterScanOptions, AdapterMutateOptions } from '../types.js';
-import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, extractTranslatablePrefix } from '../utils/text-filters.js';
+import { shouldExtractText, generateKey, hashText, compilePatterns, type TextFilterConfig, extractTranslatablePrefix, decodeHtmlEntities } from '../utils/text-filters.js';
 import { analyzeVueExpression, analyzeVueAdjacentContent, generateVueReplacement, generateVueAttributeReplacement } from '../utils/vue-expression-handler.js';
 import { requireFromWorkspace, isPackageResolvable } from '../../utils/dependency-resolution.js';
 
@@ -663,9 +663,15 @@ export class VueAdapter implements FrameworkAdapter {
   }
 
   private extractScriptStringLiteral(node: any, content: string, filePath: string, candidates: ScanCandidate[], scanCalls: boolean): void {
-    const text = node.value;
+    let text = node.value;
     if (!text || typeof text !== 'string') {
       return;
+    }
+
+    // Decode HTML entities so the locale value reflects what the user sees,
+    // not the raw HTML-escaped source (e.g. &lt; → <).
+    if (this.decodeHtmlEntities) {
+      text = decodeHtmlEntities(text);
     }
 
     // When scanCalls is true (rename mode), we want to capture literal key-like
@@ -942,7 +948,13 @@ export class VueAdapter implements FrameworkAdapter {
 
   private extractTextNode(node: any, content: string, filePath: string, candidates: ScanCandidate[], hasAdjacentExpression: boolean, scanCalls: boolean): void {
   const rawText = content.slice(node.range[0], node.range[1]);
-  let trimmedText = rawText.trim();
+  // Decode HTML entities (e.g. &lt; → <, &amp; → &) before key generation
+  // and display text so the locale value reflects what the user sees.
+  // The fullRange stored on the candidate still references the original
+  // source bytes, so mutation (overwrite) is unaffected.
+  let trimmedText = this.decodeHtmlEntities
+    ? decodeHtmlEntities(rawText).trim()
+    : rawText.trim();
 
   // If the text contains an embedded SQL-like fragment, only keep the
   // human-facing prefix for extraction (don't extract SQL snippets).
@@ -1102,7 +1114,10 @@ export class VueAdapter implements FrameworkAdapter {
       }
 
       if (attr.value.type === 'VLiteral' && typeof attr.value.value === 'string') {
-        const text = attr.value.value;
+        // Decode HTML entities in attribute values (e.g. placeholder="Search &amp; filter")
+        const text = this.decodeHtmlEntities
+          ? decodeHtmlEntities(attr.value.value)
+          : attr.value.value;
         
         // When scanCalls is true (rename mode), capture literal key-like strings
         if (scanCalls && /^[\w-]+(\.[\w-]+)+$/.test(text)) {
@@ -1282,7 +1297,28 @@ export class VueAdapter implements FrameworkAdapter {
     } else {
       translationCall = `{{ $t('${candidate.suggestedKey}') }}`;
     }
-    magicString.overwrite(startPos, endPos, translationCall);
+
+    // Preserve any leading/trailing whitespace that belonged to the original
+    // text node so we don't accidentally join adjacent nodes when both
+    // are transformed (e.g. </strong> + text node).  Some template ASTs do
+    // not include the visible space in the node.range, so also check the
+    // character immediately outside the range and preserve a single
+    // interstitial space if present.
+    const originalSegment = magicString.original.slice(startPos, endPos);
+    const leading = (originalSegment.match(/^\s+/) || [''])[0];
+    const trailing = (originalSegment.match(/\s+$/) || [''])[0];
+
+    // Preserve a single space that may exist immediately *before* the
+    // node range (e.g. between a closing tag and this text node) but was
+    // not included in node.range by the parser. Only preserve ordinary
+    // space characters here (not newlines/indentation).
+    let externalLeading = '';
+    if (startPos > 0) {
+      const ch = magicString.original[startPos - 1];
+      if (ch === ' ') externalLeading = ' ';
+    }
+
+    magicString.overwrite(startPos, endPos, `${externalLeading}${leading}${translationCall}${trailing}`);
     return true;
   }
 
@@ -1345,6 +1381,45 @@ export class VueAdapter implements FrameworkAdapter {
     // The fullRange should point to the literal including quotes.
     const original = magicString.original.slice(startPos, endPos);
     const hasMustache = original.includes('{{') || original.includes('}}') || original.trim().startsWith('{{');
+
+    // If the candidate's fullRange covers a full element (e.g. <p ...>...</p>),
+    // we must *not* replace the wrapper tag or its attributes (v-if, class, etc.).
+    // Instead replace only the inner content between the opening and closing tag.
+    const trimmed = original.trimStart();
+    if (trimmed.startsWith('<') && original.includes('</')) {
+      // Find the end of the opening tag and the start of the closing tag
+      const openingEnd = magicString.original.indexOf('>', startPos);
+      const closingStart = magicString.original.lastIndexOf('</', endPos - 1);
+      if (openingEnd !== -1 && closingStart !== -1 && openingEnd + 1 <= closingStart) {
+        const innerStart = openingEnd + 1;
+        const innerEnd = closingStart;
+
+        if (candidate.interpolation && candidate.interpolation.variables && candidate.interpolation.variables.length > 0) {
+          const params = Object.fromEntries(candidate.interpolation.variables.map(v => [v.name, v.expression]));
+          const attrReplacement = generateVueAttributeReplacement(candidate.suggestedKey || '', params, { useDoubleQuotes: false });
+          const tmplReplacement = generateVueReplacement(candidate.suggestedKey || '', params, { useDoubleQuotes: false });
+          // Debug: log replacements when running tests to aid in diagnosing whitespace/wrapper issues
+          // (kept intentionally lightweight and will be removed once tests pass)
+          // eslint-disable-next-line no-console
+          if (process.env.DEBUG_VUE_MUTATE === '1') {
+            console.log('vue.mutate: element-inner-replace', { innerStart, innerEnd, hasMustache });
+            // show raw string with escapes to detect hidden newlines/whitespace
+            // eslint-disable-next-line no-console
+            console.log('vue.mutate: tmplReplacement (raw)', JSON.stringify(tmplReplacement));
+            // eslint-disable-next-line no-console
+            console.log('vue.mutate: attrReplacement (raw)', JSON.stringify(attrReplacement));
+          }
+          magicString.overwrite(innerStart, innerEnd, hasMustache ? tmplReplacement : attrReplacement);
+        } else {
+          const simpleAttr = `$t('${candidate.suggestedKey}')`;
+          const simpleTmpl = `{{ $t('${candidate.suggestedKey}') }}`;
+          // eslint-disable-next-line no-console
+          if (process.env.DEBUG_VUE_MUTATE === '1') console.log('vue.mutate: element-inner-replace simple', { innerStart, innerEnd, hasMustache, simpleTmpl, simpleAttr });
+          magicString.overwrite(innerStart, innerEnd, hasMustache ? simpleTmpl : simpleAttr);
+        }
+        return true;
+      }
+    }
 
     // Build replacement (use full {{ $t(...) }} when the original content
     // was a template interpolation; otherwise use attribute-style $t(...).

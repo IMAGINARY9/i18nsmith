@@ -57,7 +57,14 @@ export function registerScan(program: Command) {
     .option('--exclude <patterns...>', 'Override exclude globs from config (comma or space separated)', collectTargetPatterns, [])
     .action(
       withErrorHandling(async (options: ScanOptions) => {
-        console.log(chalk.blue('Starting scan...'));
+        // When JSON output is requested, avoid human-readable preamble on stdout
+        // so callers can reliably parse the JSON summary. Send banner to stderr
+        // when --json is used.
+        if (options.json) {
+          console.error(chalk.blue('Starting scan...'));
+        } else {
+          console.log(chalk.blue('Starting scan...'));
+        }
 
         try {
           const { config, projectRoot, configPath } = await loadConfigWithMeta(options.config);

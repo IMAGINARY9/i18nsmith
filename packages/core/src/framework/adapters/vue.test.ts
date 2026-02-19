@@ -341,6 +341,86 @@ export default {
         expect(result.content).toMatch(/\{\{ \$t\('select_the_travel_dates'\) \}\}(?:\s*<|$)/);
       }
     });
+      it('preserves wrapper element and attributes when replacing adjacent content (v-if)', () => {
+        const content = `
+  <template>
+    <div>
+      <p v-if="name">{{ $t('greeting') }}, {{ name }}!</p>
+    </div>
+  </template>
+  `;
+
+        // The scanner may not always produce a merged/adjacent candidate for
+        // this synthetic input, so construct an element-level transform
+        // candidate (the form produced by analyzeVueAdjacentContent) to
+        // validate that mutation preserves wrapper attributes.
+        const opening = content.indexOf('<p');
+        const closing = content.indexOf('</p>') + 4;
+        const transformCandidate: TransformCandidate = {
+          id: '/test/Component.vue:4:6',
+          kind: 'jsx-expression',
+          filePath: '/test/Component.vue',
+          text: '{arg0}, {name}!',
+          position: { line: 4, column: 6 },
+          suggestedKey: 'composite.greeting',
+          hash: 'h-vue-1',
+          status: 'pending',
+          fullRange: [opening, closing],
+          interpolation: {
+            template: '{arg0}, {name}!',
+            variables: [
+              { name: 'arg0', expression: "$t('greeting')" },
+              { name: 'name', expression: 'name' },
+            ],
+            localeValue: '{arg0}, {name}!',
+          },
+        } as TransformCandidate;
+
+        const result = adapter.mutate('/test/Component.vue', content, [transformCandidate], {
+          config,
+          workspaceRoot: '/tmp',
+          translationAdapter: { module: 'vue-i18n', hookName: 'useI18n' },
+          allowFallback: true,
+        });
+    expect(result.didMutate).toBe(true);
+    expect(result.content).toContain('<p v-if="name">');
+    // allow either simple $t('key') or $t('key', { ... }) forms when interpolation params exist
+    expect(result.content).toMatch(/<p v-if="name">\s*\{\{ \$t\('composite.greeting'/);
+      });
+
+      it('preserves spacing between adjacent transformed nodes (label + text)', () => {
+        const content = `
+  <template>
+    <div>
+      <p><strong>Label:</strong> This is the value</p>
+    </div>
+  </template>
+  `;
+
+        const candidates = adapter.scan('/test/Component.vue', content);
+        const label = candidates.find(c => c.text === 'Label:');
+        const value = candidates.find(c => c.text === 'This is the value');
+        expect(label).toBeDefined();
+        expect(value).toBeDefined();
+
+        const tLabel: TransformCandidate = { ...(label as any), suggestedKey: 'label', hash: 'h1', status: 'pending' };
+        const tValue: TransformCandidate = { ...(value as any), suggestedKey: 'value', hash: 'h2', status: 'pending' };
+
+        const result = adapter.mutate('/test/Component.vue', content, [tLabel, tValue], {
+          config,
+          workspaceRoot: '/tmp',
+          translationAdapter: { module: 'vue-i18n', hookName: 'useI18n' },
+          allowFallback: true,
+        });
+
+  expect(result.didMutate).toBe(true);
+  // Ensure both translation calls are present and there remains at least
+  // one whitespace character between the closing tag and the following
+  // transformed fragment (preserve visible spacing outside the <strong>). 
+  expect(result.content).toContain("{{ $t('label') }}");
+  expect(result.content).toContain("{{ $t('value') }}");
+  expect(result.content).toMatch(/<\/strong>\s+\{\{/);
+      });
 
     it('should handle Unicode text correctly', () => {
       const content = `
@@ -523,6 +603,133 @@ export default {
         } else if (hello) {
           expect(result.content).toContain("$t('hello')");
         }
+      }
+    });
+  });
+
+  // ── HTML entity decoding ──────────────────────────────────────────────────
+  describe('HTML entity decoding', () => {
+    let decodingAdapter: VueAdapter;
+
+    beforeEach(() => {
+      const decodingConfig = normalizeConfig({
+        sourceLanguage: 'en',
+        targetLocales: [],
+        localesDir: '/tmp/locales',
+        include: ['**/*.vue'],
+        extraction: { decodeHtmlEntities: true },
+      });
+      decodingAdapter = new VueAdapter(decodingConfig, '/tmp');
+    });
+
+    it('decodes &lt; and &gt; in template text nodes', () => {
+      const content = `
+<template>
+  <p>This component uses the classic Options API (no &lt;script setup&gt;).</p>
+</template>
+`;
+      const candidates = decodingAdapter.scan('/test/Comp.vue', content);
+      const c = candidates.find((x) => x.text.includes('Options API'));
+      expect(c).toBeDefined();
+      // The stored text must be human-readable, NOT the raw HTML-escaped form
+      expect(c!.text).toContain('<script setup>');
+      expect(c!.text).not.toContain('&lt;');
+      expect(c!.text).not.toContain('&gt;');
+    });
+
+    it('decodes &amp; in template text nodes', () => {
+      const content = `
+<template>
+  <p>Search &amp; Filter</p>
+</template>
+`;
+      const candidates = decodingAdapter.scan('/test/Comp.vue', content);
+      const c = candidates.find((x) => x.text.includes('Search'));
+      expect(c).toBeDefined();
+      expect(c!.text).toBe('Search & Filter');
+      expect(c!.text).not.toContain('&amp;');
+    });
+
+    it('uses decoded text for suggestedKey generation', () => {
+      const content = `
+<template>
+  <p>This component uses &lt;script setup&gt; without TypeScript.</p>
+</template>
+`;
+      const candidates = decodingAdapter.scan('/test/Comp.vue', content);
+      const c = candidates.find((x) => x.text.includes('without TypeScript'));
+      expect(c).toBeDefined();
+      // The key must be derived from the decoded form, not the raw escaped one
+      expect(c!.suggestedKey).not.toContain('lt;');
+      expect(c!.suggestedKey).not.toContain('gt;');
+    });
+
+    it('decodes &lt;/&gt; in static attribute values', () => {
+      const content = `
+<template>
+  <input placeholder="Enter &lt;name&gt;" />
+</template>
+`;
+      const candidates = decodingAdapter.scan('/test/Comp.vue', content);
+      const c = candidates.find((x) => x.text.includes('name'));
+      expect(c).toBeDefined();
+      expect(c!.text).toBe('Enter <name>');
+      expect(c!.text).not.toContain('&lt;');
+    });
+
+    it('still correctly replaces the original raw bytes in the source on mutate', () => {
+      // Even though candidate.text is decoded, mutation must rewrite the original
+      // encoded source range, not search for the decoded string.
+      const content = `
+<template>
+  <p>Uses &lt;script setup&gt; syntax.</p>
+</template>
+`;
+      const candidates = decodingAdapter.scan('/test/Comp.vue', content);
+      const c = candidates.find((x) => x.text.includes('script setup'));
+      expect(c).toBeDefined();
+
+      const transforms: TransformCandidate[] = [{
+        ...(c as any),
+        suggestedKey: 'my.key',
+        status: 'pending' as const,
+      }];
+
+      const result = decodingAdapter.mutate('/test/Comp.vue', content, transforms, {
+        config,
+        workspaceRoot: '/tmp',
+        translationAdapter: { module: 'vue-i18n', hookName: 'useI18n' },
+        allowFallback: true,
+      });
+
+      expect(result.didMutate).toBe(true);
+      // The entire encoded text range is replaced; no leftover entity fragments
+      expect(result.content).not.toContain('&lt;');
+      expect(result.content).toContain("$t('my.key')");
+    });
+
+    it('does not double-decode when decodeHtmlEntities is false', () => {
+      const rawConfig = normalizeConfig({
+        sourceLanguage: 'en',
+        targetLocales: [],
+        localesDir: '/tmp/locales',
+        include: ['**/*.vue'],
+        extraction: { decodeHtmlEntities: false },
+      });
+      const rawAdapter = new VueAdapter(rawConfig, '/tmp');
+
+      const content = `
+<template>
+  <p>Search &amp; Filter</p>
+</template>
+`;
+      const candidates = rawAdapter.scan('/test/Comp.vue', content);
+      // When decoding is disabled the raw entity form is kept as-is
+      const c = candidates.find((x) => x.text.includes('Search'));
+      // The text may or may not be extracted (the HTML entity check may skip it),
+      // but if extracted it should NOT have been decoded.
+      if (c) {
+        expect(c.text).toContain('&amp;');
       }
     });
   });

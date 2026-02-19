@@ -93,4 +93,88 @@ function login() {
     expect(unusedKeys).not.toContain('common.login');
     expect(unusedKeys).not.toContain('auth.success');
   });
+
+  it('detects nested $t() used as interpolation params inside template calls', async () => {
+    const vueContent = `
+<template>
+  <div>
+    <!-- nested $t used as interpolation param -->
+    <p>{{ $t('parent.key', { inner: $t('nested.key') }) }}</p>
+  </div>
+</template>
+
+<script setup lang="ts">
+// intentionally empty
+</script>
+`;
+
+    await fs.writeFile(path.join(srcDir, 'Nested.vue'), vueContent);
+
+    const en = {
+      parent: { key: 'Parent: {inner}' },
+      nested: { key: 'Inner' },
+    };
+    await fs.writeFile(path.join(localesDir, 'en.json'), JSON.stringify(en, null, 2));
+
+    const config: I18nConfig = {
+      localesDir: 'locales',
+      sourceLanguage: 'en',
+      targetLanguages: ['en'],
+      include: ['src/**/*.vue'],
+    };
+
+    const syncer = new Syncer(config, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ invalidateCache: true });
+
+    // Both keys should be detected as references (not unused)
+    const unused = summary.unusedKeys.map(u => u.key);
+    expect(unused).not.toContain('parent.key');
+    expect(unused).not.toContain('nested.key');
+  });
+
+  it('I18nDemo.vue nested interpolation key is preserved end-to-end', async () => {
+    const vueContent = `
+<template>
+  <div class="i18n-demo">
+    <p v-if="name">{{ $t('common.components.i18ndemo.arg0-name.4ac48a', { arg0: $t('demo.card.greeting'), name: name }) }}</p>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue';
+const name = ref('');
+</script>
+`;
+
+    await fs.writeFile(path.join(srcDir, 'I18nDemo.vue'), vueContent);
+
+    const en = {
+      common: { components: { i18ndemo: { 'arg0-name': 'Hello {arg0}, {name}', 'placeholder': '' } } },
+      demo: { card: { greeting: 'Good morning' } }
+    };
+    const es = {
+      common: { components: { i18ndemo: { 'arg0-name': 'Hola {arg0}, {name}' } } },
+      demo: { card: { greeting: 'Buenos días' } }
+    };
+    await fs.writeFile(path.join(localesDir, 'en.json'), JSON.stringify(en, null, 2));
+    await fs.writeFile(path.join(localesDir, 'es.json'), JSON.stringify(es, null, 2));
+
+    const config: I18nConfig = {
+      localesDir: 'locales',
+      sourceLanguage: 'en',
+      targetLanguages: ['es'],
+      include: ['src/**/*.vue'],
+    };
+
+    const syncer = new Syncer(config, { workspaceRoot: tempDir });
+    const summary = await syncer.run({ invalidateCache: true });
+
+    // The nested key 'demo.card.greeting' should be detected as a reference
+    // and therefore must NOT appear in unusedKeys
+    const unused = summary.unusedKeys.map(u => u.key);
+    const referenced = summary.references.map(r => r.key);
+
+    expect(referenced).toContain('demo.card.greeting');
+    expect(unused).not.toContain('demo.card.greeting');
+  });
 });

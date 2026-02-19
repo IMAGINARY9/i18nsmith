@@ -23,16 +23,25 @@ function runCli(
   args: string[],
   options: { cwd?: string } = {}
 ): { stdout: string; stderr: string; output: string; exitCode: number } {
+  // Clear known debug env vars so the test output is deterministic even when
+  // developer environments set DEBUG_* flags. Preserve essential env vars.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CI: 'true',
+    NO_COLOR: '1',
+    FORCE_COLOR: '0',
+  };
+  // Remove any DEBUG_* flags that may leak into the spawned CLI process
+  delete env.DEBUG_VUE_PARSER;
+  delete env.DEBUG_REFEXT;
+  delete env.DEBUG_SYNC_REF;
+  delete env.DEBUG_VUE_MUTATE;
+
   const result = spawnSync('node', [CLI_PATH, ...args], {
     cwd: options.cwd ?? process.cwd(),
     encoding: 'utf8',
     timeout: 30000,
-    env: {
-      ...process.env,
-      CI: 'true',
-      NO_COLOR: '1',
-      FORCE_COLOR: '0',
-    },
+    env,
   });
 
   // Log errors for debugging
@@ -53,11 +62,48 @@ function runCli(
 
 // Helper to extract JSON from CLI output (may contain log messages before JSON)
 function extractJson<T>(output: string): T {
-  const jsonMatch = output.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
+  // Use brace-counting to find all complete top-level JSON objects in the output.
+  // This correctly handles nested braces (arrays/objects inside the top-level object).
+  const candidates: string[] = [];
+  let i = 0;
+  while (i < output.length) {
+    if (output[i] === '{') {
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let j = i;
+      for (; j < output.length; j++) {
+        const ch = output[j];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) { candidates.push(output.slice(i, j + 1)); break; }
+        }
+      }
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+
+  if (!candidates.length) {
     throw new Error(`No JSON found in output: ${output.slice(0, 200)}...`);
   }
-  return JSON.parse(jsonMatch[0]);
+
+  // Prefer the largest candidate (most likely the top-level summary).
+  candidates.sort((a, b) => b.length - a.length);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (_err) {
+      // try next candidate
+    }
+  }
+  throw new Error(`No valid JSON block found in output: ${output.slice(0, 400)}...`);
 }
 
 describe('CLI Integration Tests', () => {
@@ -188,7 +234,7 @@ export function App() {
       );
 
       const result = runCli(['scan', '--json'], { cwd: tmpDir });
-      const parsed = extractJson<{ filesScanned: number; candidates: unknown[] }>(result.stdout);
+  const parsed = extractJson<{ filesScanned: number; candidates: unknown[] }>(result.output);
 
       expect(parsed).toHaveProperty('filesScanned');
       expect(parsed).toHaveProperty('candidates');
@@ -331,6 +377,61 @@ export function App() {
       const backupDir = path.join(tmpDir, '.i18nsmith-backup');
       const backupExists = await fs.access(backupDir).then(() => true).catch(() => false);
       expect(backupExists).toBe(true);
+    });
+
+    it('CLI end-to-end: detects nested $t inside template object args (I18nDemo.vue)', async () => {
+      // Setup Vue SFC that uses a nested $t(...) inside an interpolation object
+      const vue = `
+<template>
+  <p v-if="name">{{ $t('common.components.i18ndemo.arg0-name.4ac48a', { arg0: $t('demo.card.greeting'), name }) }}</p>
+</template>
+`;
+
+      await fs.mkdir(path.join(tmpDir, 'src', 'components'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'src', 'components', 'I18nDemo.vue'), vue);
+
+      const en = {
+        common: { components: { i18ndemo: { 'arg0-name': '{arg0} {name}' } } },
+        demo: { card: { greeting: 'Hello' } }
+      };
+      const es = {
+        common: { components: { i18ndemo: { 'arg0-name': '{arg0} {name}' } } },
+        demo: { card: { greeting: 'Hola' } }
+      };
+
+      await fs.writeFile(path.join(tmpDir, 'locales', 'en.json'), JSON.stringify(en, null, 2));
+      await fs.writeFile(path.join(tmpDir, 'locales', 'fr.json'), JSON.stringify(es, null, 2));
+
+      // Update config to include .vue files for this test
+      const cfgPath = path.join(tmpDir, 'i18n.config.json');
+      const cfg = JSON.parse(await fs.readFile(cfgPath, 'utf8'));
+      cfg.include = ['src/**/*.vue', 'src/**/*.{ts,js,tsx}'];
+      await fs.writeFile(cfgPath, JSON.stringify(cfg, null, 2));
+
+  const result = runCli(['sync', '--json'], { cwd: tmpDir });
+  expect(result.exitCode).toBe(0);
+
+  // Sanity check: CLI output should contain the quoted key somewhere so
+  // editors/CI that scan the output can detect the reference even when
+  // there are additional log lines present.
+  expect(result.output).toContain('"demo.card.greeting"');
+
+      // Also try to parse JSON summary if possible and validate references.
+      // If parsing fails during CI or debugging, print raw output for diagnosis.
+      try {
+        const parsed = extractJson<any>(result.output);
+        const referenced = parsed.references.map((r: any) => r.key);
+        const unused = parsed.unusedKeys.map((u: any) => u.key);
+
+        expect(referenced).toContain('demo.card.greeting');
+        expect(unused).not.toContain('demo.card.greeting');
+      } catch (err) {
+        // Dump output for debugging in test logs then rethrow so CI shows failure
+        // (this helps capture the raw CLI output when test fails).
+        // eslint-disable-next-line no-console
+        console.error('CLI raw output (truncated):', result.output.slice(0, 4000));
+        throw err;
+      }
     });
 
     it('should skip backup with --no-backup', async () => {
@@ -509,7 +610,7 @@ export function App() {
       );
 
       const result = runCli(['check', '--json'], { cwd: tmpDir });
-      const parsed = extractJson<{ diagnostics: unknown; sync: unknown }>(result.stdout);
+  const parsed = extractJson<{ diagnostics: unknown; sync: unknown }>(result.output);
 
       expect(parsed).toHaveProperty('diagnostics');
       expect(parsed).toHaveProperty('sync');
@@ -556,7 +657,7 @@ export function App() {
       );
 
       const result = runCli(['check', '--audit', '--json'], { cwd: tmpDir });
-      const parsed = extractJson<{ audit?: { totalQualityIssues: number } }>(result.stdout);
+  const parsed = extractJson<{ audit?: { totalQualityIssues: number } }>(result.output);
 
       expect(parsed).toHaveProperty('audit');
       expect(parsed.audit?.totalQualityIssues ?? 0).toBeGreaterThan(0);
