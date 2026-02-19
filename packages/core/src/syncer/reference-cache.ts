@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import type { TranslationReference, DynamicKeyWarning } from '../reference-extractor.js';
-import { getToolVersion } from '../cache-utils.js';
+import { getToolVersion, computeCacheVersion, getParsersSignature } from '../cache-utils.js';
 import { CacheValidator, type CacheValidationContext, type CacheInvalidationReason } from '../cache/index.js';
 
 export interface FileFingerprint {
@@ -27,12 +27,19 @@ export interface ReferenceCacheFile {
   files: Record<string, ReferenceCacheEntry>;
 }
 
-// Bumped from 2 → 3 to invalidate stale caches that stored empty Vue references
-// because vue-eslint-parser wasn't resolved from the project's node_modules.
-// Bumped from 4 → 5 to invalidate stale caches that missed `:bound-attr="$t(...)"` references
-// because walkVueAST did not traverse VElement.startTag.attributes.
-const CACHE_VERSION = 5;
-export const REFERENCE_CACHE_VERSION = CACHE_VERSION;
+// Cache schema version - only increment when cache structure changes (new/removed fields, type changes)
+// Parser signature is automatically included in version computation, so no manual bumps needed
+// for parser logic changes.
+const CACHE_SCHEMA_VERSION = 1;
+
+// Compute version automatically based on schema + parser signature
+// This eliminates manual CACHE_VERSION bumps when parser code changes
+function getSyncCacheVersion(): number {
+  return computeCacheVersion(getParsersSignature(), CACHE_SCHEMA_VERSION);
+}
+
+// Legacy export for compatibility
+export const REFERENCE_CACHE_VERSION = getSyncCacheVersion();
 
 export interface LoadReferenceCacheResult {
   cache?: ReferenceCacheFile;
@@ -64,7 +71,7 @@ export async function loadReferenceCache(
     
     // Build validation context - only include fields that should be validated
     const validationContext: CacheValidationContext = {
-      currentVersion: CACHE_VERSION,
+      currentVersion: getSyncCacheVersion(),
       expectedTranslationIdentifier: translationIdentifier,
       // Only include these if explicitly provided for validation
       currentConfigHash: currentConfigHash ?? (data.configHash as string | undefined) ?? '',
@@ -95,7 +102,7 @@ export async function saveReferenceCache(
   options?: { parserAvailability?: Record<string, boolean>; configHash?: string; toolVersion?: string; parserSignature?: string }
 ): Promise<void> {
   const data: ReferenceCacheFile = {
-    version: CACHE_VERSION,
+    version: getSyncCacheVersion(),
     translationIdentifier,
     configHash: options?.configHash,
     toolVersion: options?.toolVersion ?? getToolVersion(),

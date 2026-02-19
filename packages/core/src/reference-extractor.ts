@@ -11,7 +11,7 @@ import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
-import { getToolVersion, hashConfig, getParsersSignature } from './cache-utils.js';
+import { getToolVersion, hashConfig, getParsersSignature, computeCacheVersion } from './cache-utils.js';
 import { CacheValidator, CacheStatsCollector, type CacheValidationContext } from './cache/index.js';
 import { createDefaultProject } from './project-factory.js';
 import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
@@ -115,10 +115,16 @@ export interface ExtractionResult {
   filesScanned: number;
 }
 
-// Bumped from 2 → 3 to invalidate stale caches from before the Vue parser
-// resolution fix (parser was resolved from CLI location instead of project).
-// Bumped to 5 to include parser implementation signature in cache validation.
-const REFERENCE_CACHE_VERSION = 5;
+// Cache schema version - only increment when cache structure changes (new/removed fields, type changes)
+// Parser signature is automatically included in version computation, so no manual bumps needed
+// for parser logic changes.
+const CACHE_SCHEMA_VERSION = 1;
+
+// Compute version automatically based on schema + parser signature
+// This eliminates manual CACHE_VERSION bumps when parser code changes
+function getReferenceCacheVersion(): number {
+  return computeCacheVersion(getParsersSignature(), CACHE_SCHEMA_VERSION);
+}
 
 export interface ReferenceExtractorOptions {
   workspaceRoot: string;
@@ -169,7 +175,7 @@ export class ReferenceExtractor {
     
     // Initialize cache validator with current context
     const validationContext: CacheValidationContext = {
-      currentVersion: REFERENCE_CACHE_VERSION,
+      currentVersion: getReferenceCacheVersion(),
       expectedTranslationIdentifier: this.translationIdentifier,
       currentConfigHash: this.configHash,
       currentToolVersion: this.toolVersion,
@@ -524,7 +530,7 @@ export class ReferenceExtractor {
 
   private async saveCache(entries: Record<string, ReferenceCacheEntry>): Promise<void> {
     const payload: ReferenceCacheFile = {
-      version: REFERENCE_CACHE_VERSION,
+      version: getReferenceCacheVersion(),
       translationIdentifier: this.translationIdentifier,
       configHash: this.configHash,
       toolVersion: this.toolVersion,
