@@ -57,7 +57,7 @@ import {
   collectPatternMatchedKeys,
 } from './syncer/pattern-matcher.js';
 import { buildDynamicKeyCoverage, expandDynamicKeys, type DynamicKeyCoverage } from './dynamic-keys.js';
-import { hashConfig, getToolVersion, getParsersSignature } from './cache-utils.js';
+import { hashConfig, getToolVersion, getParsersSignature, getCacheDir } from './cache-utils.js';
 
 export { SuspiciousKeyReason } from './key-validator.js';
 
@@ -227,7 +227,7 @@ export class Syncer {
       .map((pattern) => pattern.trim())
       .filter(Boolean)
       .map((pattern) => compileGlob(pattern));
-    this.cacheDir = path.join(this.workspaceRoot, '.i18nsmith', 'cache');
+    this.cacheDir = getCacheDir(this.workspaceRoot, 'sync');
     this.referenceCachePath = path.join(this.cacheDir, 'sync-references.json');
   }
 

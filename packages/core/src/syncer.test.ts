@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nConfig } from './config.js';
 import { Syncer } from './syncer.js';
 import { ReferenceExtractor } from './reference-extractor.js';
+import { getCachePath } from './cache-utils.js';
 
 const baseConfig: I18nConfig = {
   version: 1,
@@ -643,7 +644,7 @@ export default Component;
 
   it('caches translation references and honors explicit invalidation', async () => {
     await writeFixtures();
-    const cachePath = path.join(tempDir, '.i18nsmith', 'cache', 'sync-references.json');
+    const cachePath = getCachePath(tempDir, 'sync');
 
     const initial = new Syncer(baseConfig, { workspaceRoot: tempDir });
     await initial.run();

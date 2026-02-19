@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import path from 'path';
+import os from 'os';
 import type { I18nConfig } from './config.js';
 import { packageVersion } from './version.js';
 import { VueParser } from './parsers/vue-parser.js';
@@ -107,6 +109,87 @@ export function computeCacheVersion(
   // Schema version in millions place, signature in lower places
   // Example: schema=1, sig=0x12345678 -> 1000000 + (0x12345678 % 1000000)
   return schemaVersion * 1000000 + (signaturePrefix % 1000000);
+}
+
+/**
+ * Detect if code is running in a test environment.
+ * Used to provide isolated cache paths for tests.
+ */
+export function isTestEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' ||
+    process.env.VITEST === 'true' ||
+    process.env.JEST_WORKER_ID !== undefined ||
+    // Vitest/Jest set global test functions
+    typeof (globalThis as Record<string, unknown>).it === 'function' ||
+    typeof (globalThis as Record<string, unknown>).describe === 'function'
+  );
+}
+
+/**
+ * Get the appropriate cache directory path for the given cache type.
+ * In test environments, returns isolated temp directories per process.
+ * In production, returns standard cache locations.
+ * 
+ * @param workspaceRoot - Root directory of the workspace
+ * @param cacheType - Type of cache ('extractor' or 'sync')
+ * @returns Absolute path to cache directory
+ */
+export function getCacheDir(
+  workspaceRoot: string,
+  cacheType: 'extractor' | 'sync'
+): string {
+  if (isTestEnvironment()) {
+    // Use process-isolated temp cache in tests for perfect isolation
+    const testId = process.pid;
+    return path.join(
+      os.tmpdir(),
+      'i18nsmith-test-cache',
+      String(testId),
+      cacheType
+    );
+  }
+
+  // Production cache paths
+  if (cacheType === 'extractor') {
+    return path.join(workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
+  }
+  return path.join(workspaceRoot, '.i18nsmith', 'cache');
+}
+
+/**
+ * Get the full cache file path for the given cache type.
+ * 
+ * @param workspaceRoot - Root directory of the workspace
+ * @param cacheType - Type of cache ('extractor' or 'sync')
+ * @returns Absolute path to cache file
+ */
+export function getCachePath(
+  workspaceRoot: string,
+  cacheType: 'extractor' | 'sync'
+): string {
+  const cacheDir = getCacheDir(workspaceRoot, cacheType);
+  return path.join(cacheDir, cacheType === 'extractor' ? 'references.json' : 'sync-references.json');
+}
+
+/**
+ * Clean up test cache directory for the current process.
+ * Should be called in afterAll() or afterEach() hooks in tests.
+ * Safe to call in production (no-op).
+ */
+export async function cleanupTestCache(): Promise<void> {
+  if (!isTestEnvironment()) {
+    return; // No-op in production
+  }
+
+  const { rm } = await import('fs/promises');
+  const testCacheDir = path.join(os.tmpdir(), 'i18nsmith-test-cache', String(process.pid));
+  
+  try {
+    await rm(testCacheDir, { recursive: true, force: true });
+  } catch {
+    // Ignore errors (cache might not exist)
+  }
 }
 
 function stableStringify(value: unknown): string {

@@ -11,7 +11,7 @@ import { createRequire } from 'module';
 import fg from 'fast-glob';
 import { CallExpression, Node, Project, SourceFile } from 'ts-morph';
 import { I18nConfig } from './config.js';
-import { getToolVersion, hashConfig, getParsersSignature, computeCacheVersion } from './cache-utils.js';
+import { getToolVersion, hashConfig, getParsersSignature, computeCacheVersion, getCacheDir } from './cache-utils.js';
 import { CacheValidator, CacheStatsCollector, type CacheValidationContext } from './cache/index.js';
 import { createDefaultProject } from './project-factory.js';
 import { createDefaultParserRegistry, type ParserRegistry } from './parsers/index.js';
@@ -157,7 +157,7 @@ export class ReferenceExtractor {
   ) {
     this.workspaceRoot = options.workspaceRoot;
     this.project = options.project ?? createDefaultProject();
-    this.cacheDir = options.cacheDir ?? path.join(this.workspaceRoot, 'node_modules', '.cache', 'i18nsmith');
+    this.cacheDir = options.cacheDir ?? getCacheDir(this.workspaceRoot, 'extractor');
     this.parserRegistry = options.parserRegistry ?? createDefaultParserRegistry(this.project);
     const adapterHook = config.translationAdapter?.hookName?.trim();
     const inferredIdentifier = adapterHook && !adapterHook.startsWith('use')

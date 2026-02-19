@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { I18nConfig } from './config.js';
-import { getToolVersion, hashConfig, getParsersSignature } from './cache-utils.js';
+import { getToolVersion, hashConfig, getParsersSignature, getCachePath } from './cache-utils.js';
 import type { ReferenceCacheFile as ExtractorCacheFile } from './reference-extractor.js';
 import type { ReferenceCacheFile as SyncCacheFile } from './syncer/reference-cache.js';
 
@@ -25,8 +25,8 @@ export class CacheManager {
     this.configHash = hashConfig(config);
     this.toolVersion = getToolVersion();
   this.parserSignature = getParsersSignature();
-    this.extractorCachePath = path.join(workspaceRoot, 'node_modules', '.cache', 'i18nsmith', 'references.json');
-    this.syncCachePath = path.join(workspaceRoot, '.i18nsmith', 'cache', 'sync-references.json');
+    this.extractorCachePath = getCachePath(workspaceRoot, 'extractor');
+    this.syncCachePath = getCachePath(workspaceRoot, 'sync');
     this.previewDir = path.join(workspaceRoot, '.i18nsmith', 'previews');
   }
 
