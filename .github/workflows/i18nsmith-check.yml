@@ -53,6 +53,8 @@ jobs:
           cache: 'pnpm'
       - name: Install deps
         run: pnpm install --frozen-lockfile
+      - name: Check no top-level await
+        run: pnpm node ./scripts/check-no-top-level-await.mjs
       - name: Build workspaces
         run: pnpm -r build
       - name: Drift / diagnostics check

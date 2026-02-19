@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
+    "check:no-top-level-await": "node ./scripts/check-no-top-level-await.mjs",
     "build:packages": "pnpm --filter \"@i18nsmith/*\" build",
     "build:workspace": "pnpm -w -r run build",
     "package:extension": "pnpm --filter i18nsmith-vscode exec -- vsce package --no-dependencies",

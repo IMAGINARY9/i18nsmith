@@ -17,6 +17,11 @@ console.log('Bundling CLI as a single, self-contained CommonJS file (no external
 
 // Produce a single CommonJS bundle so `npx`/npm-installed binaries run consistently
 // (some deps perform dynamic require() calls which fail under ESM bundles).
+// Run a static check to prevent accidentally introducing top-level await in
+// packages that are bundled into the CJS CLI. Top-level await breaks esbuild
+// when producing `format: 'cjs'` bundles.
+await import('../../scripts/check-no-top-level-await.mjs').then((m) => m.default());
+
 await esbuild.build({
   entryPoints: ['src/index.ts'],
   bundle: true,
