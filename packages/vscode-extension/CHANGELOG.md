@@ -12,9 +12,15 @@ All notable changes to this extension will be documented in this file.
 - Add DependencyCacheManager and improved dependency resolution notifications (auto-install prompts).
 - Multiple core improvements: EditConflictDetector, PatternDetector, template literal and concatenation handlers for JSX transforms.
 
-### Fixes
+### Fix
 - Improve Vue parser error handling and fallback extraction behavior.
 - Fix diff-preview editor state issues and reduce false-positive warnings in extraction.
+- CI/workflow: run workspace-built CLI in `i18nsmith-check` workflow to avoid npx/pnpm-exec resolution failures.
+- Prevent top-level-await causing CJS bundle issues by adding a pre-check in CI.
+
+## [0.5.1] - 2026-02-20
+### Fix
+- Small fixes: CI workflow robustness and pre-build check to avoid top-level await in sources.
 
 ## [0.5.0] - 2026-02-19
 ### Enhancement
